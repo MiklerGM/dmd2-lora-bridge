@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- DMD2 registers its LoRa receiver demanding this permission of senders whenever the
+         genuine DMD-LoRa package is absent, so we must define it (nobody else will) and hold
+         it. See docs/PROTOCOL.md §1. -->
+    <permission
+        android:name="com.thorkracing.dmdlora.permission.LORA_BRIDGE"
+        android:protectionLevel="normal" />
+    <uses-permission android:name="com.thorkracing.dmdlora.permission.LORA_BRIDGE" />
+
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@android:drawable/ic_menu_compass"
+        android:label="DMD LoRa Bridge"
+        android:supportsRtl="true">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="DMD LoRa Bridge">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Class path is mandatory: DMD2 targets it by explicit ComponentName. -->
+        <receiver
+            android:name=".receiver.Dmd2CommandReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.thorkracing.dmdlora.SEND_GROUP_DATA" />
+                <action android:name="com.thorkracing.dmdlora.SEND_CHAT_MESSAGE" />
+                <action android:name="com.thorkracing.dmdlora.SET_FREQUENCY" />
+                <action android:name="com.thorkracing.dmdlora.STOP" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Likewise mandatory: DMD2 calls startForegroundService on this exact component. -->
+        <service
+            android:name=".service.LoraService"
+            android:exported="true"
+            android:foregroundServiceType="connectedDevice" />
+    </application>
+</manifest>
