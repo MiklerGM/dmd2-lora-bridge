@@ -8,7 +8,7 @@ Evidence tags: **[static]** derived from decompiled code · **[bench]** passed o
 
 ---
 
-## M1 — Does DMD2 accept us at all?  *(no hardware, no radio)*
+## M1 — Does DMD2 accept us at all?  *(no hardware, no radio)* — **built, awaiting a device**
 
 The whole project rests on one untested assumption. Test it before spending anything.
 
@@ -25,7 +25,7 @@ The whole project rests on one untested assumption. Test it before spending anyt
 
 ---
 
-## M2 — Codec in Kotlin  *(no hardware)*
+## M2 — Codec in Kotlin  *(no hardware)* — **done**
 
 Port the reference codec. Encode + decode, CRC-16/CCITT-FALSE, CRC-32 group hash,
 SHA-256 XOR pad, u24 fields, base64 no-padding wire, 9-rider cap.
@@ -33,9 +33,11 @@ SHA-256 XOR pad, u24 fields, base64 no-padding wire, 9-rider cap.
 **Accept:** unit tests reproduce the reference vectors byte-for-byte, including the known
 42-byte / 56-char two-rider vector, and round-trip through decode.
 
+**Result:** passing. 36 JVM tests cover the codec, dedup, pacing and the receive path.
+
 ---
 
-## M3 — Inject a synthetic rider  *(no hardware)*
+## M3 — Inject a synthetic rider  *(no hardware)* — **built, awaiting a device**
 
 Broadcast `GROUP_DATA_RECEIVED` with one fabricated rider and step its coordinates.
 
@@ -44,10 +46,13 @@ Together with M1 this closes the entire Android question. Never test against a l
 
 ---
 
-## M4 — ESP32 bridge  *(hardware arrives)*
+## M4 — ESP32 bridge  *(hardware arrives)* — **built and compiling, awaiting hardware**
 
 BLE (Nordic UART Service) ↔ UART to the E220, plus module configuration commands.
 Start from the `remote-serial` skeleton; WiFi/TCP is an acceptable stand-in for BLE at this stage.
+
+**Result:** firmware builds (RAM 9.4%, flash 30.6%) and the phone-side BLE client is written.
+Neither has met real hardware.
 
 **Accept:** phone sends an arbitrary line, it appears on the module UART, and bytes from the
 module arrive back at the phone. Module reports its firmware code and the applied config.

@@ -4,8 +4,6 @@ import android.content.Context
 import com.thorkracing.dmdLora.Bridge
 import com.thorkracing.dmdLora.EventLog
 import com.thorkracing.dmdLora.Session
-import com.thorkracing.dmdLora.protocol.Codec
-import com.thorkracing.dmdLora.protocol.Decoded
 
 /**
  * Joins the DMD2 side to the radio side. Everything protocol-shaped happens here or in Codec;
@@ -24,7 +22,7 @@ object Radio {
     var link: RadioLink? = null
         private set
 
-    private val dedup = Dedup()
+    private val router = WireRouter()
     private val pacer = TxPacer()
 
     val connected: Boolean get() = link?.connected == true
@@ -42,7 +40,7 @@ object Radio {
         link?.close()
         link = null
         Session.radioAttached = false
-        dedup.clear()
+        router.reset()
         pacer.reset()
     }
 
@@ -69,31 +67,19 @@ object Radio {
     }
 
     private fun onWire(context: Context, wire: String) {
-        // Both the group hash check and the XOR pad are derived from the group id, so nothing
-        // can be decoded until DMD2 has told us which group we are in.
-        val groupId = Session.groupId
-        if (groupId.isNullOrEmpty()) {
-            EventLog.log("RX ignored — no active group yet")
-            return
-        }
-        val packet = runCatching { Codec.fromWire(wire) }.getOrNull()
-        if (packet == null) {
-            EventLog.log("RX ignored — not valid base64")
-            return
-        }
-        val ownHash = Session.senderUserId?.takeIf { it.isNotEmpty() }?.let { Codec.uidHash(it) }
-
-        when (val decoded = Codec.decode(packet, groupId, ownHash)) {
-            is Decoded.Group -> {
-                if (dedup.seenBefore(decoded.senderHash, decoded.seq)) return
-                EventLog.log("RX ${decoded.riders.size} rider(s) from ${"%04X".format(decoded.senderHash)}")
-                Bridge.sendGroupDataReceived(context, Bridge.ridersJson(decoded), groupId)
+        when (val action = router.route(wire, Session.groupId, Session.senderUserId)) {
+            is RxAction.InjectRiders -> {
+                val g = action.group
+                EventLog.log("RX ${g.riders.size} rider(s) from ${"%04X".format(g.senderHash)}")
+                Bridge.sendGroupDataReceived(context, Bridge.ridersJson(g), Session.groupId)
             }
-            is Decoded.Chat -> {
-                if (dedup.seenBefore(decoded.senderHash, decoded.seq)) return
-                Bridge.sendChatReceived(context, decoded.senderName, decoded.senderHash, decoded.text)
+            is RxAction.InjectChat -> {
+                val c = action.chat
+                Bridge.sendChatReceived(context, c.senderName, c.senderHash, c.text)
             }
-            is Decoded.Error -> EventLog.log("RX dropped — ${decoded.reason}")
+            // Duplicates are the normal case, not a fault: every rider rebroadcasts its roster.
+            is RxAction.Drop ->
+                if (action.reason != "DUPLICATE") EventLog.log("RX dropped — ${action.reason}")
         }
     }
 }
