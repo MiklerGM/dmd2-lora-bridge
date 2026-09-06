@@ -23,9 +23,20 @@ Read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) first, then [`docs/ROADMAP.m
 
 ## Status
 
-Nothing is proven on hardware yet. The protocol is fully recovered from static analysis;
-the first milestone exists specifically to test the one assumption everything rests on.
-See `docs/ROADMAP.md` — **M1 needs no radio and no hardware budget.**
+Both components build and their logic is covered by tests that need neither a phone nor a
+radio — `make check` runs all of it.
+
+| | State |
+|---|---|
+| Packet codec, receive path, injection contract | 41 JVM tests pass, including byte-for-byte reproduction of the reference vectors |
+| E220 register packing | host test passes under plain gcc |
+| Companion app | builds; **never run against DMD2 yet** |
+| ESP32 firmware | builds (RAM 9.4%, flash 30.6%); **never met a radio yet** |
+
+Nothing is proven on hardware. The protocol was recovered by static analysis, and the first
+milestone exists specifically to test the one assumption everything else rests on: that a
+same-named package is accepted by stock DMD2 at all. See `docs/ROADMAP.md` — **M1 needs no
+radio and no hardware budget**, and `docs/BUILDING.md` has the procedure.
 
 ## Hard constraints (not negotiable, they come from DMD2's code)
 
