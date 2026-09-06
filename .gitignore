@@ -9,6 +9,5 @@ local.properties
 .vscode/
 __pycache__/
 *.pyc
-gradle/wrapper/gradle-wrapper.jar
 firmware/.pio/
 firmware/sdkconfig.esp32dev
