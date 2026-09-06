@@ -1,7 +1,7 @@
 #pragma once
 #include <stdbool.h>
-#include <stdint.h>
 #include <stddef.h>
+#include <stdint.h>
 
 /*
  * EBYTE E220 (LLCC68) UART module driver.
@@ -21,21 +21,7 @@
  * Pass an index that is legal where the bridge is actually used (3 = 21 dBm is the lowest).
  */
 
-typedef struct {
-    uint16_t address;      /* 0 for the group profile */
-    uint8_t  channel;      /* frequency = 850.125 MHz + channel */
-    uint8_t  air_rate;     /* index; 2 = 2.4 kbps */
-    uint8_t  power;        /* index; 0=30 1=27 2=24 3=21 dBm */
-    uint8_t  packet_size;  /* index; 0 = 200 bytes */
-    bool     transparent;  /* true for the group profile */
-    bool     lbt;
-    uint16_t key;          /* 0 for the group profile */
-} e220_config_t;
-
-#define E220_DEFAULT_GROUP_CONFIG                                       \
-    (e220_config_t) { .address = 0, .channel = 18, .air_rate = 2,       \
-                      .power = 3, .packet_size = 0, .transparent = true,\
-                      .lbt = false, .key = 0 }
+#include "e220_regs.h"
 
 void e220_init(void);
 

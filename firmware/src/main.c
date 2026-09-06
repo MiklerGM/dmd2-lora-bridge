@@ -157,7 +157,7 @@ void app_main(void) {
     }
     ESP_ERROR_CHECK(err);
 
-    s_cfg = E220_DEFAULT_GROUP_CONFIG;
+    s_cfg = E220_GROUP_CONFIG;
     s_tx_queue = xQueueCreate(8, sizeof(char *));
 
     e220_init();

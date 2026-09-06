@@ -75,24 +75,8 @@ static void wait_aux(uint32_t timeout_ms) {
 }
 
 bool e220_apply(const e220_config_t *cfg) {
-    uint8_t reg[8] = {0};
-    reg[0] = (uint8_t)(cfg->address >> 8);
-    reg[1] = (uint8_t)(cfg->address & 0xFF);
-    /* REG0: baud 9600 (index 3) << 5 | parity 8N1 (0) << 3 | air rate */
-    reg[2] = (uint8_t)((3 << 5) | (0 << 3) | (cfg->air_rate & 0x07));
-    /* REG1: sub-packet << 6 | power. Ambient-RSSI bit left clear. */
-    reg[3] = (uint8_t)(((cfg->packet_size & 0x03) << 6) | (cfg->power & 0x03));
-    reg[4] = cfg->channel;
-    /* REG3: bit7 RSSI byte off, bit6 fixed-mode (0 = transparent), bit4 LBT, WOR cycle 0 */
-    reg[5] = (uint8_t)((cfg->transparent ? 0 : (1 << 6)) | (cfg->lbt ? (1 << 4) : 0));
-    reg[6] = (uint8_t)(cfg->key >> 8);
-    reg[7] = (uint8_t)(cfg->key & 0xFF);
-
-    uint8_t frame[3 + sizeof(reg)];
-    frame[0] = CMD_HEAD_WRITE;
-    frame[1] = 0x00; /* start register */
-    frame[2] = sizeof(reg);
-    memcpy(&frame[3], reg, sizeof(reg));
+    uint8_t frame[E220_FRAME_LEN];
+    e220_build_frame(cfg, frame);
 
     e220_mode_config();
     uart_flush_input(E220_UART);
@@ -103,7 +87,7 @@ bool e220_apply(const e220_config_t *cfg) {
     int n = uart_read_bytes(E220_UART, resp, sizeof(resp), pdMS_TO_TICKS(500));
     e220_mode_normal();
 
-    /* The module echoes the block back with C1 as the head. */
+    /* The module answers a write with the same block, headed C1. */
     bool ok = (n >= 3) && (resp[0] == CMD_HEAD_READ || resp[0] == CMD_HEAD_WRITE);
     ESP_LOGI(TAG, "apply ch=%u rate=%u power=%u lbt=%d -> %s (%d bytes back)",
              cfg->channel, cfg->air_rate, cfg->power, (int)cfg->lbt, ok ? "ok" : "FAILED", n);
