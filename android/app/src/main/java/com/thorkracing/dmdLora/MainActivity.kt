@@ -10,6 +10,10 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import com.thorkracing.dmdLora.radio.Radio
 import com.thorkracing.dmdLora.service.LoraService
 
 /**
@@ -62,12 +66,14 @@ class MainActivity : Activity() {
                 "Walk on/off" to { toggleWalk() },
             ))
             addView(row(
+                "Radio state" to { EventLog.log("radio connected=${Radio.connected}") },
                 "Clear log" to { EventLog.clear() },
             ))
             addView(ScrollView(this@MainActivity).apply { addView(logView) })
         }
         setContentView(root)
 
+        requestBlePermissions()
         EventLog.onChange = { ui.post { render() } }
         EventLog.log("UI started; waiting for DMD2 to talk to us")
         render()
@@ -77,6 +83,14 @@ class MainActivity : Activity() {
         EventLog.onChange = null
         ui.removeCallbacks(walk)
         super.onDestroy()
+    }
+
+    /** Scanning and connecting need runtime consent from Android 12 onward. */
+    private fun requestBlePermissions() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        val needed = listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
+            .filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+        if (needed.isNotEmpty()) requestPermissions(needed.toTypedArray(), 1)
     }
 
     private fun row(vararg buttons: Pair<String, () -> Unit>) =

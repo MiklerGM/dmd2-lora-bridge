@@ -16,6 +16,8 @@ import com.thorkracing.dmdLora.DmdLora
 import com.thorkracing.dmdLora.EventLog
 import com.thorkracing.dmdLora.MainActivity
 import com.thorkracing.dmdLora.Session
+import com.thorkracing.dmdLora.radio.BleRadioLink
+import com.thorkracing.dmdLora.radio.Radio
 
 /**
  * Foreground service at the exact path DMD2 targets with startForegroundService when our
@@ -28,6 +30,8 @@ class LoraService : Service() {
 
     private val heartbeat = object : Runnable {
         override fun run() {
+            // Claim connected even with no radio attached: DMD2 sends us nothing at all until
+            // it believes a radio is up, and milestone 1 is precisely about getting it to talk.
             Bridge.sendStatusUpdate(this@LoraService, connected = true)
             handler.postDelayed(this, HEARTBEAT_MS)
         }
@@ -48,11 +52,20 @@ class LoraService : Service() {
             beating = true
             handler.post(heartbeat)
         }
+        if (Radio.link == null) connectBridge()
         return START_STICKY
+    }
+
+    /** Best effort: with no bridge in range the app still runs, it just cannot transmit. */
+    private fun connectBridge() {
+        val link = BleRadioLink(this)
+        Radio.attach(this, link)
+        link.start()
     }
 
     override fun onDestroy() {
         handler.removeCallbacks(heartbeat)
+        Radio.detach()
         beating = false
         Bridge.sendStatusUpdate(this, connected = false)
         EventLog.log("service destroyed")

@@ -9,6 +9,7 @@ import com.thorkracing.dmdLora.EventLog
 import com.thorkracing.dmdLora.Session
 import com.thorkracing.dmdLora.protocol.Codec
 import com.thorkracing.dmdLora.protocol.TxRider
+import com.thorkracing.dmdLora.radio.Radio
 import com.thorkracing.dmdLora.service.LoraService
 import org.json.JSONArray
 
@@ -46,10 +47,11 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
 
         val packet = Codec.encodeGroup(groupId, sender, riders, Session.nextSeq())
         Session.packetsEncoded++
+        val wire = Codec.toWire(packet)
+        val sent = Radio.transmit(wire)
         EventLog.log(
-            "TX encoded ${riders.size} rider(s), ${packet.size} B -> ${Codec.toWire(packet)}"
+            "TX ${riders.size} rider(s), ${packet.size} B ${if (sent) "->" else "(no radio)"} $wire"
         )
-        // TODO(M4): hand the wire string to the ESP32 bridge over BLE.
     }
 
     private fun onSendChat(intent: Intent) {
@@ -58,7 +60,9 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
         val packet = Codec.encodeChat(
             groupId, Session.senderUserId.orEmpty(), "", text, Session.nextSeq()
         )
-        EventLog.log("TX chat ${packet.size} B -> ${Codec.toWire(packet)}")
+        val wire = Codec.toWire(packet)
+        Radio.transmit(wire)
+        EventLog.log("TX chat ${packet.size} B -> $wire")
     }
 
     private fun onSetFrequency(context: Context, intent: Intent) {
@@ -70,7 +74,7 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
             "config ch=${Session.channel} (${Bridge.freqLabel(Session.channel)}) " +
                 "power=${Session.power} lbt=${Session.lbt} region=${Session.regionDesc}"
         )
-        // TODO(M4): forward to the bridge, clamping power to what is locally legal.
+        Radio.applyConfig()
         LoraService.start(context)
     }
 
