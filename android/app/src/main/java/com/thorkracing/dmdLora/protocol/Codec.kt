@@ -79,11 +79,13 @@ object Codec {
         header(buf, groupId, senderUserId, seq, TYPE_GROUP, ttl)
         for (r in take) {
             buf.u16(uidHash(r.userId))
-            buf.u24(((r.lat + 90.0) * LAT_SCALE).toInt())
-            buf.u24(((r.lon + 180.0) * LON_SCALE).toInt())
-            buf.u16(minOf((r.speedKmh * 10.0).toInt(), 0xFFFF))
+            // Out-of-range or non-finite input must not alias into a plausible position:
+            // the 24-bit fields wrap, so an unclamped value lands somewhere real-looking.
+            buf.u24(encodeLat(r.lat))
+            buf.u24(encodeLon(r.lon))
+            buf.u16(((r.speedKmh * 10.0).toIntClamped()).coerceIn(0, 0xFFFF))
             buf.u8(r.status)
-            buf.u24(minOf(r.positionAgeS, 0xFFFFFF))
+            buf.u24(r.positionAgeS.coerceIn(0, 0xFFFFFF))
         }
         return finish(buf, groupId)
     }
@@ -187,6 +189,22 @@ object Codec {
         while (n > 0 && (b[n].toInt() and 0xC0) == 0x80) n--
         return b.copyOf(n)
     }
+
+    /** NaN would silently become 0, which decodes as a rider sitting at -90/-180. */
+    private fun Double.toIntClamped(): Int = when {
+        isNaN() -> 0
+        this <= Int.MIN_VALUE.toDouble() -> Int.MIN_VALUE
+        this >= Int.MAX_VALUE.toDouble() -> Int.MAX_VALUE
+        else -> toInt()
+    }
+
+    internal fun encodeLat(lat: Double): Int =
+        (((if (lat.isNaN()) 0.0 else lat.coerceIn(-90.0, 90.0)) + 90.0) * LAT_SCALE)
+            .toIntClamped().coerceIn(0, 0xFFFFFF)
+
+    internal fun encodeLon(lon: Double): Int =
+        (((if (lon.isNaN()) 0.0 else lon.coerceIn(-180.0, 180.0)) + 180.0) * LON_SCALE)
+            .toIntClamped().coerceIn(0, 0xFFFFFF)
 
     private fun round6(v: Double): Double = Math.round(v * 1_000_000.0) / 1_000_000.0
     private fun be16(b: ByteArray, o: Int) = ((b[o].toInt() and 0xFF) shl 8) or (b[o + 1].toInt() and 0xFF)

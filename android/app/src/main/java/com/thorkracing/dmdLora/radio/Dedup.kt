@@ -9,6 +9,9 @@ class Dedup(private val capacity: Int = 64) {
     private val seen = HashSet<Int>()
     private var pos = 0
 
+    /** Any Int is a valid key, so there is no safe sentinel: count the slots instead. */
+    private var filled = 0
+
     /** Identity of a packet: sender plus sequence number. */
     fun key(senderHash: Int, seq: Int): Int = (senderHash shl 16) or (seq and 0xFFFF)
 
@@ -17,7 +20,7 @@ class Dedup(private val capacity: Int = 64) {
     fun seenBefore(senderHash: Int, seq: Int): Boolean {
         val k = key(senderHash, seq)
         if (k in seen) return true
-        seen.remove(ring[pos])
+        if (filled == capacity) seen.remove(ring[pos]) else filled++
         ring[pos] = k
         seen.add(k)
         pos = (pos + 1) % capacity
@@ -25,5 +28,5 @@ class Dedup(private val capacity: Int = 64) {
     }
 
     @Synchronized
-    fun clear() { seen.clear(); ring.fill(0); pos = 0 }
+    fun clear() { seen.clear(); ring.fill(0); pos = 0; filled = 0 }
 }

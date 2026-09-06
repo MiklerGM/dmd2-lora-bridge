@@ -28,10 +28,11 @@ class LoraService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private var beating = false
 
-    /** Frequent enough to release a held transmission promptly, cheap enough to ignore. */
+    /** Frequent enough to release a held transmission and to re-apply config after a
+     *  reconnect promptly, cheap enough to ignore. */
     private val flusher = object : Runnable {
         override fun run() {
-            Radio.flush()
+            Radio.tick()
             handler.postDelayed(this, FLUSH_MS)
         }
     }
@@ -50,8 +51,17 @@ class LoraService : Service() {
     override fun onCreate() {
         super.onCreate()
         createChannel()
-        startForeground(NOTIFICATION_ID, notification())
-        EventLog.log("service created")
+        // A connectedDevice foreground service needs the Bluetooth permission already granted
+        // on API 34+. DMD2 can start us before the user has been through that dialog, and an
+        // uncaught throw here takes the whole app down at exactly the wrong moment.
+        try {
+            startForeground(NOTIFICATION_ID, notification())
+            EventLog.log("service created")
+        } catch (e: Exception) {
+            EventLog.log("cannot start in foreground (${e.javaClass.simpleName}); " +
+                "grant Bluetooth permission in the app, then start it again")
+            stopSelf()
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

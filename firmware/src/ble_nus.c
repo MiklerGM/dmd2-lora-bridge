@@ -23,7 +23,7 @@ static const ble_uuid128_t UUID_TX = BLE_UUID128_INIT(
     0x9e, 0xca, 0xdc, 0x24, 0x0e, 0xe5, 0xa9, 0xe0,
     0x93, 0xf3, 0xa3, 0xb5, 0x03, 0x00, 0x40, 0x6e);
 
-#define LINE_MAX 512
+#define NUS_LINE_MAX 512
 
 static ble_nus_line_cb s_on_line;
 static const char *s_name;
@@ -32,8 +32,11 @@ static uint16_t s_tx_handle;
 static uint8_t s_addr_type;
 
 /* Reassembly: BLE writes arrive in MTU-sized chunks, so lines must be stitched back. */
-static char s_line[LINE_MAX];
+static char s_line[NUS_LINE_MAX];
 static size_t s_line_len;
+/* Once a line has overflowed, everything up to the next newline is rubbish too. Without this
+ * the tail of an oversized line gets dispatched as if it were a command of its own. */
+static bool s_discarding;
 
 static void advertise(void);
 
@@ -41,15 +44,21 @@ static void feed(const uint8_t *data, size_t len) {
     for (size_t i = 0; i < len; i++) {
         char c = (char)data[i];
         if (c == '\n' || c == '\r') {
-            if (s_line_len > 0) {
+            if (s_discarding) {
+                s_discarding = false;
+                s_line_len = 0;
+            } else if (s_line_len > 0) {
                 s_line[s_line_len] = '\0';
                 if (s_on_line) s_on_line(s_line, s_line_len);
                 s_line_len = 0;
             }
-        } else if (s_line_len < LINE_MAX - 1) {
+        } else if (s_discarding) {
+            /* skip */
+        } else if (s_line_len < NUS_LINE_MAX - 1) {
             s_line[s_line_len++] = c;
         } else {
-            ESP_LOGW(TAG, "line overflow, dropping");
+            ESP_LOGW(TAG, "line overflow, discarding to end of line");
+            s_discarding = true;
             s_line_len = 0;
         }
     }
@@ -102,6 +111,7 @@ static int on_gap(struct ble_gap_event *event, void *arg) {
             if (event->connect.status == 0) {
                 s_conn = event->connect.conn_handle;
                 s_line_len = 0;
+                s_discarding = false;
                 /* MTU is negotiated by the central: a full packet is ~270 base64
                  * characters, so the phone must request more than the 23-byte default.
                  * We only advertise a large preferred MTU (see sdkconfig.defaults). */
@@ -177,11 +187,34 @@ bool ble_nus_connected(void) { return s_conn != BLE_HS_CONN_HANDLE_NONE; }
 
 void ble_nus_send_line(const char *line) {
     if (!ble_nus_connected()) return;
+
+    /* A notification carries at most ATT_MTU-3 bytes and the stack silently truncates the
+     * rest. Lines here reach ~250 characters, and if the MTU request failed we are still on
+     * the 23-byte default, so fragmenting is not optional. The receiver reassembles on the
+     * newline, which is why the terminator must go out in the final fragment. */
+    uint16_t mtu = ble_att_mtu(s_conn);
+    size_t chunk = (mtu > 3) ? (size_t)(mtu - 3) : 20;
+
     size_t len = strlen(line);
-    struct os_mbuf *om = ble_hs_mbuf_from_flat(line, len);
-    if (!om) return;
-    /* Append the delimiter in the same buffer so a line is never split across notifications
-     * in a way that loses its terminator. */
-    os_mbuf_append(om, "\n", 1);
-    ble_gatts_notify_custom(s_conn, s_tx_handle, om);
+    size_t sent = 0;
+    bool terminated = false;
+
+    while (sent < len) {
+        size_t take = len - sent;
+        if (take > chunk) take = chunk;
+        struct os_mbuf *om = ble_hs_mbuf_from_flat(line + sent, take);
+        if (!om) return;
+        sent += take;
+        if (sent == len && take < chunk) {
+            os_mbuf_append(om, "\n", 1);
+            terminated = true;
+        }
+        if (ble_gatts_notify_custom(s_conn, s_tx_handle, om) != 0) return;
+    }
+
+    if (!terminated) {
+        /* The terminator did not fit in the final fragment, so it goes on its own. */
+        struct os_mbuf *om = ble_hs_mbuf_from_flat("\n", 1);
+        if (om) ble_gatts_notify_custom(s_conn, s_tx_handle, om);
+    }
 }

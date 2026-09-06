@@ -28,8 +28,8 @@ object Bridge {
             putExtra(DmdLora.EX_FIRMWARE, "bridge-0.1")
             // Open mode would make DMD2 disable its own group logic. Never claim it.
             putExtra(DmdLora.EX_OPEN_MODE, false)
-            putExtra("packets_sent", Session.packetsEncoded)
-            putExtra("packets_received", Session.groupDataReceived)
+            putExtra("packets_sent", Session.packetsEncoded.get())
+            putExtra("packets_received", Session.groupDataReceived.get())
         }
         context.sendBroadcast(i)
     }
@@ -44,7 +44,7 @@ object Bridge {
             }
         }
         context.sendBroadcast(i)
-        Session.groupDataReceived++
+        Session.groupDataReceived.incrementAndGet()
         EventLog.log("inject -> DMD2: ${riders.length()} rider(s)")
     }
 

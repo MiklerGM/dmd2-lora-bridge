@@ -35,5 +35,10 @@ size_t e220_read_firmware(char *out, size_t out_len);
  * closes a packet on a UART idle gap, so a stray newline would become part of the payload. */
 void e220_write(const uint8_t *data, size_t len);
 
-/* Blocking read of one air packet, framed by a UART idle gap. Returns byte count. */
-size_t e220_read_packet(uint8_t *out, size_t out_len, uint32_t idle_gap_ms);
+/*
+ * Reads one air packet, framed by a UART idle gap. Waits at most first_wait_ms for the first
+ * byte and returns 0 if none arrives, so the caller can release the port and let a
+ * configuration change through. Returns byte count.
+ */
+size_t e220_read_packet(uint8_t *out, size_t out_len, uint32_t idle_gap_ms,
+                        uint32_t first_wait_ms);

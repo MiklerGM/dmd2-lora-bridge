@@ -6,6 +6,7 @@
 #include "driver/uart.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 
 #define TAG "e220"
@@ -18,6 +19,21 @@
 #define PIN_AUX GPIO_NUM_23
 
 #define UART_BUF 1024
+#define UART_LOCK_WAIT_MS 2000
+
+/*
+ * One port, three users: the receive loop, the transmit task and configuration. Without this
+ * lock a config write lands while the receive loop is blocked in a read, so the module's reply
+ * is swallowed as if it were an air packet — and worse, a payload can be transmitted while
+ * M0/M1 still hold the module in configuration mode.
+ */
+static SemaphoreHandle_t s_uart_lock;
+
+static bool uart_lock(void) {
+    return xSemaphoreTake(s_uart_lock, pdMS_TO_TICKS(UART_LOCK_WAIT_MS)) == pdTRUE;
+}
+
+static void uart_unlock(void) { xSemaphoreGive(s_uart_lock); }
 #define CMD_HEAD_WRITE 0xC0
 #define CMD_HEAD_READ 0xC1
 
@@ -35,6 +51,7 @@ static void e220_mode_config(void) {
 }
 
 void e220_init(void) {
+    s_uart_lock = xSemaphoreCreateMutex();
     gpio_config_t io = {
         .pin_bit_mask = (1ULL << PIN_M0) | (1ULL << PIN_M1),
         .mode = GPIO_MODE_OUTPUT,
@@ -78,6 +95,10 @@ bool e220_apply(const e220_config_t *cfg) {
     uint8_t frame[E220_FRAME_LEN];
     e220_build_frame(cfg, frame);
 
+    if (!uart_lock()) {
+        ESP_LOGW(TAG, "apply: uart busy");
+        return false;
+    }
     e220_mode_config();
     uart_flush_input(E220_UART);
     uart_write_bytes(E220_UART, (const char *)frame, sizeof(frame));
@@ -86,6 +107,7 @@ bool e220_apply(const e220_config_t *cfg) {
     uint8_t resp[16] = {0};
     int n = uart_read_bytes(E220_UART, resp, sizeof(resp), pdMS_TO_TICKS(500));
     e220_mode_normal();
+    uart_unlock();
 
     /* The module answers a write with the same block, headed C1. */
     bool ok = (n >= 3) && (resp[0] == CMD_HEAD_READ || resp[0] == CMD_HEAD_WRITE);
@@ -98,32 +120,54 @@ size_t e220_read_firmware(char *out, size_t out_len) {
     /* The stock DMD firmware answers AT+FWCODE=?; a distributor module may not. Harmless
      * either way — an unanswered probe just yields nothing. */
     const char *probe = "AT+FWCODE=?\r\n";
+    if (!uart_lock()) return 0;
     e220_mode_config();
     uart_flush_input(E220_UART);
     uart_write_bytes(E220_UART, probe, strlen(probe));
     int n = uart_read_bytes(E220_UART, (uint8_t *)out, out_len - 1, pdMS_TO_TICKS(300));
     e220_mode_normal();
+    uart_unlock();
     if (n <= 0) return 0;
-    out[n] = '\0';
-    return (size_t)n;
+
+    /* The reply carries CR/LF. It ends up inside a newline-delimited status line, so anything
+     * that is not printable has to go or the phone sees the line split in two. */
+    size_t kept = 0;
+    for (int i = 0; i < n; i++) {
+        char c = out[i];
+        if (c >= 0x20 && c < 0x7F) out[kept++] = c;
+    }
+    out[kept] = '\0';
+    return kept;
 }
 
 void e220_write(const uint8_t *data, size_t len) {
+    if (!uart_lock()) {
+        ESP_LOGW(TAG, "write: uart busy, packet dropped");
+        return;
+    }
     uart_write_bytes(E220_UART, (const char *)data, len);
     uart_wait_tx_done(E220_UART, pdMS_TO_TICKS(1000));
+    uart_unlock();
 }
 
-size_t e220_read_packet(uint8_t *out, size_t out_len, uint32_t idle_gap_ms) {
-    size_t used = 0;
-    /* Block until the first byte, then keep reading until the line goes quiet. That idle gap
-     * is the packet boundary — the same rule the module itself uses to close a transmission. */
-    int n = uart_read_bytes(E220_UART, out, 1, portMAX_DELAY);
-    if (n <= 0) return 0;
-    used = 1;
+size_t e220_read_packet(uint8_t *out, size_t out_len, uint32_t idle_gap_ms,
+                        uint32_t first_wait_ms) {
+    if (!uart_lock()) return 0;
+
+    /* Wait a bounded time for the first byte, then keep reading until the line goes quiet.
+     * That idle gap is the packet boundary — the same rule the module itself uses to close a
+     * transmission. Bounding the first wait is what lets configuration get the port. */
+    int n = uart_read_bytes(E220_UART, out, 1, pdMS_TO_TICKS(first_wait_ms));
+    if (n <= 0) {
+        uart_unlock();
+        return 0;
+    }
+    size_t used = 1;
     while (used < out_len) {
         n = uart_read_bytes(E220_UART, out + used, out_len - used, pdMS_TO_TICKS(idle_gap_ms));
         if (n <= 0) break;
         used += (size_t)n;
     }
+    uart_unlock();
     return used;
 }

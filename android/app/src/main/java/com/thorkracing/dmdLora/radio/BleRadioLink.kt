@@ -34,10 +34,13 @@ class BleRadioLink(context: Context) : RadioLink {
     private val appContext = context.applicationContext
     private val handler = Handler(Looper.getMainLooper())
 
-    private var gatt: BluetoothGatt? = null
-    private var rxChar: BluetoothGattCharacteristic? = null  // we write here
-    private var txChar: BluetoothGattCharacteristic? = null  // we get notified here
-    private var mtu = DEFAULT_MTU
+    // Touched from the BLE callback thread and from callers; keep it visible across both.
+    @Volatile private var gatt: BluetoothGatt? = null
+    @Volatile private var rxChar: BluetoothGattCharacteristic? = null  // we write here
+    @Volatile private var txChar: BluetoothGattCharacteristic? = null  // we get notified here
+    @Volatile private var mtu = DEFAULT_MTU
+    @Volatile private var scanning = false
+    @Volatile private var closed = false
 
     private val inbound = StringBuilder()
     private val outbound = ConcurrentLinkedQueue<ByteArray>()
@@ -54,40 +57,65 @@ class BleRadioLink(context: Context) : RadioLink {
     // ---- connection ----
 
     fun start() {
+        if (closed || connected || scanning) return
         val manager = appContext.getSystemService(BluetoothManager::class.java)
         val adapter: BluetoothAdapter? = manager?.adapter
         if (adapter == null || !adapter.isEnabled) {
             EventLog.log("BLE unavailable or disabled")
+            retryLater()
             return
         }
-        val scanner = adapter.bluetoothLeScanner ?: return
+        val scanner = adapter.bluetoothLeScanner
+        if (scanner == null) {
+            retryLater()
+            return
+        }
         val filter = ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE_UUID)).build()
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
+        scanning = true
         EventLog.log("BLE scanning for the bridge")
         scanner.startScan(listOf(filter), settings, scanCallback)
 
         // A scan that never finds anything should not run forever and drain the battery.
         handler.postDelayed({
-            if (!connected) {
-                scanner.stopScan(scanCallback)
+            if (scanning && !connected) {
+                stopScan()
                 EventLog.log("BLE scan timed out")
+                retryLater()
             }
         }, SCAN_TIMEOUT_MS)
+    }
+
+    private fun stopScan() {
+        if (!scanning) return
+        scanning = false
+        runCatching {
+            appContext.getSystemService(BluetoothManager::class.java)
+                ?.adapter?.bluetoothLeScanner?.stopScan(scanCallback)
+        }
+    }
+
+    /** A bridge that is out of range now may be in range later; keep trying, gently. */
+    private fun retryLater() {
+        if (closed) return
+        handler.postDelayed({ start() }, RETRY_MS)
     }
 
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             val device: BluetoothDevice = result.device ?: return
-            val manager = appContext.getSystemService(BluetoothManager::class.java)
-            manager?.adapter?.bluetoothLeScanner?.stopScan(this)
+            if (!scanning) return
+            stopScan()
             EventLog.log("BLE found ${device.address}, connecting")
             gatt = device.connectGatt(appContext, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
         }
 
         override fun onScanFailed(errorCode: Int) {
+            scanning = false
             EventLog.log("BLE scan failed: $errorCode")
+            retryLater()
         }
     }
 
@@ -99,10 +127,9 @@ class BleRadioLink(context: Context) : RadioLink {
                 // every single one. The central has to ask for this.
                 g.requestMtu(PREFERRED_MTU)
             } else {
-                connected = false
-                rxChar = null
-                txChar = null
                 EventLog.log("BLE disconnected (status $status)")
+                teardown()
+                retryLater()
             }
         }
 
@@ -154,13 +181,14 @@ class BleRadioLink(context: Context) : RadioLink {
         override fun onCharacteristicWrite(
             g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int,
         ) {
-            writeInFlight = false
+            synchronized(this@BleRadioLink) { writeInFlight = false }
             pump()
         }
     }
 
     // ---- line framing ----
 
+    @Synchronized
     private fun onInbound(bytes: ByteArray) {
         inbound.append(String(bytes, Charsets.US_ASCII))
         while (true) {
@@ -196,7 +224,9 @@ class BleRadioLink(context: Context) : RadioLink {
         sendLine(config.toCommand())
     }
 
+    @Synchronized
     private fun sendLine(line: String) {
+        if (closed) return
         val payload = (line + "\n").toByteArray(Charsets.US_ASCII)
         var offset = 0
         val chunk = (mtu - ATT_OVERHEAD).coerceAtLeast(20)
@@ -208,14 +238,21 @@ class BleRadioLink(context: Context) : RadioLink {
         pump()
     }
 
+    /**
+     * One write at a time: the stack rejects a second while the first is outstanding. A
+     * rejected write must be retried, otherwise writeInFlight stays true and the link goes
+     * quiet for good.
+     */
+    @Synchronized
     private fun pump() {
         if (writeInFlight) return
         val g = gatt ?: return
         val c = rxChar ?: return
-        val next = outbound.poll() ?: return
-        writeInFlight = true
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            g.writeCharacteristic(c, next, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+        val next = outbound.peek() ?: return
+
+        val ok = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            g.writeCharacteristic(c, next, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) ==
+                BluetoothGatt.GATT_SUCCESS
         } else {
             @Suppress("DEPRECATION")
             c.value = next
@@ -224,13 +261,36 @@ class BleRadioLink(context: Context) : RadioLink {
             @Suppress("DEPRECATION")
             g.writeCharacteristic(c)
         }
+
+        if (ok) {
+            outbound.poll()
+            writeInFlight = true
+        } else {
+            // Busy or not ready. Leave it queued and come back to it.
+            handler.postDelayed({ pump() }, WRITE_RETRY_MS)
+        }
+    }
+
+    private fun teardown() {
+        connected = false
+        rxChar = null
+        txChar = null
+        mtu = DEFAULT_MTU
+        synchronized(this) {
+            writeInFlight = false
+            outbound.clear()
+            inbound.setLength(0)
+        }
+        gatt?.let { runCatching { it.close() } }
+        gatt = null
     }
 
     override fun close() {
+        closed = true
         onWire = null
-        connected = false
-        gatt?.close()
-        gatt = null
+        handler.removeCallbacksAndMessages(null)
+        stopScan()
+        teardown()
     }
 
     companion object {
@@ -244,5 +304,7 @@ class BleRadioLink(context: Context) : RadioLink {
         private const val ATT_OVERHEAD = 3
         private const val MAX_LINE = 4096
         private const val SCAN_TIMEOUT_MS = 30_000L
+        private const val RETRY_MS = 10_000L
+        private const val WRITE_RETRY_MS = 50L
     }
 }

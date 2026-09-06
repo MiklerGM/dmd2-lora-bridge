@@ -46,7 +46,7 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
         }
 
         val packet = Codec.encodeGroup(groupId, sender, riders, Session.nextSeq())
-        Session.packetsEncoded++
+        Session.packetsEncoded.incrementAndGet()
         val wire = Codec.toWire(packet)
         val sent = Radio.transmit(wire)
         EventLog.log(
@@ -74,7 +74,8 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
             "config ch=${Session.channel} (${Bridge.freqLabel(Session.channel)}) " +
                 "power=${Session.power} lbt=${Session.lbt} region=${Session.regionDesc}"
         )
-        Radio.applyConfig()
+        // Records the request; the service applies it once a radio is actually attached.
+        Radio.requestConfig()
         LoraService.start(context)
     }
 
@@ -84,12 +85,18 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
             val id = o.optString("user_id")
-            if (id.isNullOrEmpty() || !o.has("lat") || !o.has("lon")) continue
+            if (id.isNullOrEmpty()) continue
+            // optDouble yields NaN for a missing or non-numeric value, which would encode as
+            // a rider parked at -90/-180 rather than being skipped.
+            val lat = o.optDouble("lat", Double.NaN)
+            val lon = o.optDouble("lon", Double.NaN)
+            if (!lat.isFinite() || !lon.isFinite()) continue
+            if (lat !in -90.0..90.0 || lon !in -180.0..180.0) continue
             add(
                 TxRider(
                     userId = id,
-                    lat = o.optDouble("lat"),
-                    lon = o.optDouble("lon"),
+                    lat = lat,
+                    lon = lon,
                     speedKmh = o.optDouble("speed", 0.0),
                     status = o.optInt("status", 0),
                     positionAgeS = o.optLong("position_age_s", 0L).toInt(),

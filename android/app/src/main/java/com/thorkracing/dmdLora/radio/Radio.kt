@@ -25,6 +25,10 @@ object Radio {
     private val router = WireRouter()
     private val scheduler = TxScheduler()
 
+    /** What the radio should be set to, and what it was last actually set to. */
+    @Volatile private var desired: RadioConfig? = null
+    @Volatile private var applied: RadioConfig? = null
+
     val connected: Boolean get() = link?.connected == true
 
     fun attach(context: Context, newLink: RadioLink) {
@@ -32,6 +36,7 @@ object Radio {
         link?.close()
         newLink.onWire = { wire -> onWire(app, wire) }
         link = newLink
+        applied = null   // a new link is a new module; whatever it booted with is unknown
         Session.radioAttached = true
         EventLog.log("radio link attached")
     }
@@ -39,6 +44,7 @@ object Radio {
     fun detach() {
         link?.close()
         link = null
+        applied = null
         Session.radioAttached = false
         router.reset()
         scheduler.reset()
@@ -62,23 +68,40 @@ object Radio {
         return true
     }
 
-    /** Called on a timer: releases a held payload once the interval has passed. */
-    fun flush() {
+    /**
+     * Called on a timer. Pushes any pending configuration and releases a held payload once the
+     * pacing interval has passed. Doing both here means a reconnect re-configures itself
+     * without any extra plumbing.
+     */
+    fun tick() {
         val l = link ?: return
         if (!l.connected) return
+
+        val want = desired
+        if (want != null && want != applied) {
+            EventLog.log("configuring radio: ch=${want.channel} power=${want.powerIndex}")
+            l.configure(want)
+            applied = want
+        }
+
         val wire = scheduler.poll(System.currentTimeMillis()) ?: return
         EventLog.log("TX released held position")
         l.send(wire)
     }
 
-    /** Apply the channel DMD2 picked for this group, at a power we are allowed to use. */
-    fun applyConfig() {
-        val l = link ?: return
+    /**
+     * Record the channel DMD2 picked for this group, at a power we are allowed to use.
+     *
+     * This only records it. DMD2 typically asks for a frequency before any radio is attached,
+     * and a link can drop and come back on a module that booted with different registers, so
+     * the request is stored and [tick] pushes it whenever the two disagree.
+     */
+    fun requestConfig() {
         val power = maxOf(Session.power, WEAKEST_POWER_INDEX)
         if (power != Session.power) {
             EventLog.log("power index ${Session.power} requested, using $power (local limits)")
         }
-        l.configure(RadioConfig(channel = Session.channel, powerIndex = power, lbt = Session.lbt))
+        desired = RadioConfig(channel = Session.channel, powerIndex = power, lbt = Session.lbt)
     }
 
     private fun onWire(context: Context, wire: String) {

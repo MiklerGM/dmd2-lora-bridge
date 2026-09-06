@@ -30,8 +30,9 @@
 
 #define TAG "bridge"
 #define PACKET_MAX 256
-#define LINE_MAX 512
+#define OUT_LINE_MAX 512
 #define IDLE_GAP_MS 50
+#define RX_POLL_MS 100
 
 static e220_config_t s_cfg;
 static char s_fw[48] = "";
@@ -60,22 +61,40 @@ static bool kv_int(const char *args, const char *key, long *out) {
     return false;
 }
 
+/* Range must be checked on the parsed value, not after narrowing: ch=274 truncates to 18,
+ * which then passes a check against 80 and silently configures the wrong channel. */
+static bool in_range(long v, long lo, long hi) { return v >= lo && v <= hi; }
+
 static void handle_cfg(const char *args) {
     e220_config_t next = s_cfg;
     long v;
-    if (kv_int(args, "addr", &v)) next.address = (uint16_t)v;
-    if (kv_int(args, "ch", &v)) next.channel = (uint8_t)v;
-    if (kv_int(args, "rate", &v)) next.air_rate = (uint8_t)v;
-    if (kv_int(args, "power", &v)) next.power = (uint8_t)v;
-    if (kv_int(args, "packet", &v)) next.packet_size = (uint8_t)v;
+    if (kv_int(args, "addr", &v)) {
+        if (!in_range(v, 0, 0xFFFF)) goto bad_range;
+        next.address = (uint16_t)v;
+    }
+    if (kv_int(args, "ch", &v)) {
+        if (!in_range(v, 0, 80)) goto bad_range;
+        next.channel = (uint8_t)v;
+    }
+    if (kv_int(args, "rate", &v)) {
+        if (!in_range(v, 0, 7)) goto bad_range;
+        next.air_rate = (uint8_t)v;
+    }
+    if (kv_int(args, "power", &v)) {
+        if (!in_range(v, 0, 3)) goto bad_range;
+        next.power = (uint8_t)v;
+    }
+    if (kv_int(args, "packet", &v)) {
+        if (!in_range(v, 0, 3)) goto bad_range;
+        next.packet_size = (uint8_t)v;
+    }
+    if (kv_int(args, "key", &v)) {
+        if (!in_range(v, 0, 0xFFFF)) goto bad_range;
+        next.key = (uint16_t)v;
+    }
     if (kv_int(args, "trans", &v)) next.transparent = (v != 0);
-    if (kv_int(args, "key", &v)) next.key = (uint16_t)v;
     if (kv_int(args, "lbt", &v)) next.lbt = (v != 0);
 
-    if (next.channel > 80 || next.air_rate > 7 || next.power > 3 || next.packet_size > 3) {
-        ble_nus_send_line("ERR range");
-        return;
-    }
     if (e220_apply(&next)) {
         s_cfg = next;
         ble_nus_send_line("OK");
@@ -83,6 +102,10 @@ static void handle_cfg(const char *args) {
     } else {
         ble_nus_send_line("ERR module did not acknowledge");
     }
+    return;
+
+bad_range:
+    ble_nus_send_line("ERR range");
 }
 
 static void handle_tx(const char *b64) {
@@ -137,9 +160,10 @@ static void tx_task(void *arg) {
 static void rx_task(void *arg) {
     (void)arg;
     static uint8_t buf[PACKET_MAX + 1];
-    static char line[LINE_MAX];
+    static char line[OUT_LINE_MAX];
     for (;;) {
-        size_t n = e220_read_packet(buf, PACKET_MAX, IDLE_GAP_MS);
+        /* A bounded wait, so configuration can take the port between packets. */
+        size_t n = e220_read_packet(buf, PACKET_MAX, IDLE_GAP_MS, RX_POLL_MS);
         if (n == 0) continue;
         buf[n] = '\0';
         ESP_LOGI(TAG, "rx %u bytes", (unsigned)n);

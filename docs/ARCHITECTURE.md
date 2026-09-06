@@ -127,3 +127,8 @@ on a periodic heartbeat. Without it DMD2 treats the radio as down and sends noth
 6. **Version drift.** The contract was recovered from specific DMD2/DMD-LoRa versions. Record the
    versions we test against; re-check after DMD2 updates.
 7. **Package collision.** Cannot be installed next to the genuine DMD-LoRa app.
+8. **The command receiver is unprotected.** Any app on the same phone can broadcast to it and
+   push fake positions into a ride, or move our radio to another channel. Protecting it with
+   `LORA_BRIDGE` would shut that door, but DMD2 only began holding that permission in 4.013;
+   on 4.009 it would lock out DMD2 itself. The genuine DMD-LoRa app makes the same trade.
+   Revisit once every rider is known to be on a version that holds the permission.

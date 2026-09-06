@@ -1,6 +1,7 @@
 package com.thorkracing.dmdLora
 
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.random.Random
 
 /** What DMD2 has told us about the current ride. Written by the receiver, read by the service. */
@@ -19,8 +20,10 @@ object Session {
      *  milestone 1, because DMD2 sends us nothing at all unless it believes a radio is up. */
     @Volatile var radioAttached: Boolean = false
 
-    @Volatile var packetsEncoded: Long = 0
-    @Volatile var groupDataReceived: Long = 0
+    // Incremented from the receiver and the BLE callback thread; volatile would not make
+    // ++ atomic, and these are reported to DMD2 as counters.
+    val packetsEncoded = AtomicLong(0)
+    val groupDataReceived = AtomicLong(0)
 
     private val seq = AtomicInteger(Random.nextInt(0x10000))
     fun nextSeq(): Int = seq.incrementAndGet() and 0xFFFF
