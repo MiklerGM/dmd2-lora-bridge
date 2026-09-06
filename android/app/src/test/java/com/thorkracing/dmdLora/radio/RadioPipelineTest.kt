@@ -5,6 +5,7 @@ import com.thorkracing.dmdLora.protocol.Decoded
 import com.thorkracing.dmdLora.protocol.TxRider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -112,5 +113,55 @@ class LoopbackPipelineTest {
         assertTrue(cmd, cmd.contains("trans=1"))
         assertTrue(cmd, cmd.contains("key=0"))
         assertTrue(cmd, cmd.contains("ch=18"))
+    }
+}
+
+/**
+ * Pacing must not cost us the newest position: a payload offered during the hold-off replaces
+ * whatever was waiting, rather than queueing behind it.
+ */
+class TxSchedulerTest {
+
+    @Test fun firstOfferGoesOutImmediately() {
+        val s = TxScheduler(TxPacer(1_500))
+        assertEquals("first", s.offer("first", 10_000))
+    }
+
+    @Test fun anOfferInsideTheWindowIsHeld() {
+        val s = TxScheduler(TxPacer(1_500))
+        s.offer("first", 10_000)
+        assertNull(s.offer("second", 10_200))
+        assertTrue(s.hasPending())
+    }
+
+    @Test fun theNewestHeldPayloadWins() {
+        val s = TxScheduler(TxPacer(1_500))
+        s.offer("first", 10_000)
+        s.offer("stale", 10_200)
+        s.offer("freshest", 10_400)
+        assertNull("still inside the window", s.poll(11_000))
+        assertEquals("freshest", s.poll(11_500))
+    }
+
+    @Test fun pollingDrainsOnlyOnce() {
+        val s = TxScheduler(TxPacer(1_500))
+        s.offer("first", 10_000)
+        s.offer("held", 10_100)
+        assertEquals("held", s.poll(11_500))
+        assertNull(s.poll(20_000))
+        assertFalse(s.hasPending())
+    }
+
+    @Test fun pollingIsANoOpWithNothingHeld() {
+        val s = TxScheduler(TxPacer(1_500))
+        assertNull(s.poll(99_999))
+    }
+
+    @Test fun sendingImmediatelyClearsAnythingHeld() {
+        val s = TxScheduler(TxPacer(1_500))
+        s.offer("first", 10_000)
+        s.offer("held", 10_100)
+        assertEquals("later", s.offer("later", 11_500))
+        assertFalse("the held payload was superseded", s.hasPending())
     }
 }

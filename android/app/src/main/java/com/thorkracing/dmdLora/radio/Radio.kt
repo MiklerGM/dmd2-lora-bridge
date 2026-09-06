@@ -23,7 +23,7 @@ object Radio {
         private set
 
     private val router = WireRouter()
-    private val pacer = TxPacer()
+    private val scheduler = TxScheduler()
 
     val connected: Boolean get() = link?.connected == true
 
@@ -41,19 +41,34 @@ object Radio {
         link = null
         Session.radioAttached = false
         router.reset()
-        pacer.reset()
+        scheduler.reset()
     }
 
-    /** Push our own group data out. Silently paced — DMD2 offers data faster than the air allows. */
+    /**
+     * Offer our own group data to the air. If the pacing window is closed the payload is held
+     * and supersedes anything already waiting, so [flush] always sends the freshest position
+     * rather than a queued stale one.
+     */
     fun transmit(wire: String): Boolean {
         val l = link
         if (l == null || !l.connected) return false
-        if (!pacer.allow(System.currentTimeMillis())) {
-            EventLog.log("TX held back by pacing (${pacer.waitMs(System.currentTimeMillis())} ms to go)")
+        val now = System.currentTimeMillis()
+        val send = scheduler.offer(wire, now)
+        if (send == null) {
+            EventLog.log("TX held ${scheduler.waitMs(now)} ms, newest position kept")
             return false
         }
-        l.send(wire)
+        l.send(send)
         return true
+    }
+
+    /** Called on a timer: releases a held payload once the interval has passed. */
+    fun flush() {
+        val l = link ?: return
+        if (!l.connected) return
+        val wire = scheduler.poll(System.currentTimeMillis()) ?: return
+        EventLog.log("TX released held position")
+        l.send(wire)
     }
 
     /** Apply the channel DMD2 picked for this group, at a power we are allowed to use. */

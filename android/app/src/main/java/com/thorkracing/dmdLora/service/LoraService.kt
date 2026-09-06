@@ -28,6 +28,14 @@ class LoraService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private var beating = false
 
+    /** Frequent enough to release a held transmission promptly, cheap enough to ignore. */
+    private val flusher = object : Runnable {
+        override fun run() {
+            Radio.flush()
+            handler.postDelayed(this, FLUSH_MS)
+        }
+    }
+
     private val heartbeat = object : Runnable {
         override fun run() {
             // Claim connected even with no radio attached: DMD2 sends us nothing at all until
@@ -51,6 +59,7 @@ class LoraService : Service() {
         if (!beating) {
             beating = true
             handler.post(heartbeat)
+            handler.post(flusher)
         }
         if (Radio.link == null) connectBridge()
         return START_STICKY
@@ -65,6 +74,7 @@ class LoraService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacks(heartbeat)
+        handler.removeCallbacks(flusher)
         Radio.detach()
         beating = false
         Bridge.sendStatusUpdate(this, connected = false)
@@ -102,6 +112,7 @@ class LoraService : Service() {
         private const val CHANNEL_ID = "lora_bridge"
         private const val NOTIFICATION_ID = 1001
         private const val HEARTBEAT_MS = 10_000L
+        private const val FLUSH_MS = 500L
 
         fun start(context: Context) {
             val i = Intent(context, LoraService::class.java).setAction(DmdLora.ACTION_START)
