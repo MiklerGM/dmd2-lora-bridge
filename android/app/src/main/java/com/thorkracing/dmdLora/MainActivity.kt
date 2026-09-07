@@ -1,127 +1,277 @@
 package com.thorkracing.dmdLora
 
+import android.Manifest
 import android.app.Activity
+import android.content.pm.PackageManager
+import android.graphics.Color
+import android.graphics.Typeface
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.text.method.ScrollingMovementMethod
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
 import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup.LayoutParams.MATCH_PARENT
+import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import android.Manifest
-import android.content.pm.PackageManager
-import android.os.Build
 import com.thorkracing.dmdLora.radio.Radio
 import com.thorkracing.dmdLora.service.LoraService
 
 /**
- * A window onto the bridge. Milestone 1 is watching whether DMD2 talks to us at all;
- * milestone 3 is the inject button.
+ * A small console for the bridge: live status, a synthetic-rider injector for milestone 3,
+ * and a colour-coded log. Built programmatically to keep the app free of resource and
+ * AppCompat dependencies.
  */
 class MainActivity : Activity() {
 
-    private lateinit var logView: TextView
     private val ui = Handler(Looper.getMainLooper())
 
-    // Milestone 3: a fabricated rider we can walk across the map.
-    private var testHash = 0x1234
-    private var testLat = 52.520008
-    private var testLon = 13.404954
+    private lateinit var statusView: TextView
+    private lateinit var logView: TextView
+    private lateinit var logScroll: ScrollView
+    private lateinit var hashField: EditText
+    private lateinit var latField: EditText
+    private lateinit var lonField: EditText
+    private lateinit var speedField: EditText
+    private lateinit var walkButton: Button
+
     private var walking = false
 
     private val walk = object : Runnable {
         override fun run() {
-            testLat += 0.0003
-            testLon += 0.0003
+            latField.setText(fmt(readDouble(latField, 0.0) + 0.0003))
+            lonField.setText(fmt(readDouble(lonField, 0.0) + 0.0003))
             inject()
             ui.postDelayed(this, 5_000)
         }
     }
 
+    private val statusTick = object : Runnable {
+        override fun run() {
+            renderStatus()
+            ui.postDelayed(this, 1_000)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        logView = TextView(this).apply {
-            textSize = 11f
-            typeface = android.graphics.Typeface.MONOSPACE
-            movementMethod = ScrollingMovementMethod()
-        }
-
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(24, 48, 24, 24)
-            addView(TextView(this@MainActivity).apply {
-                text = "DMD LoRa Bridge — no radio attached yet"
-                textSize = 16f
-                gravity = Gravity.CENTER
-            })
-            addView(row(
-                "Start service" to { LoraService.start(this@MainActivity) },
-                "Stop" to { LoraService.stop(this@MainActivity) },
-            ))
-            addView(row(
-                "Inject rider" to { inject() },
-                "Walk on/off" to { toggleWalk() },
-            ))
-            addView(row(
-                "Radio state" to { EventLog.log("radio connected=${Radio.connected}") },
-                "Clear log" to { EventLog.clear() },
-            ))
-            addView(ScrollView(this@MainActivity).apply { addView(logView) })
-        }
-        setContentView(root)
-
         requestBlePermissions()
-        EventLog.onChange = { ui.post { render() } }
+        setContentView(buildUi())
+
+        EventLog.onChange = { ui.post { renderLog() } }
         EventLog.log("UI started; waiting for DMD2 to talk to us")
-        render()
+        renderLog()
+        renderStatus()
+        ui.post(statusTick)
     }
 
     override fun onDestroy() {
         EventLog.onChange = null
         ui.removeCallbacks(walk)
+        ui.removeCallbacks(statusTick)
         super.onDestroy()
     }
 
-    /** Scanning and connecting need runtime consent from Android 12 onward. */
-    private fun requestBlePermissions() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
-        val needed = listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
-            .filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
-        if (needed.isNotEmpty()) requestPermissions(needed.toTypedArray(), 1)
-    }
+    // ---- layout ----
 
-    private fun row(vararg buttons: Pair<String, () -> Unit>) =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            for ((label, action) in buttons) {
-                addView(Button(this@MainActivity).apply {
-                    text = label
-                    textSize = 12f
-                    setOnClickListener { action() }
-                }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-            }
+    private fun buildUi(): View {
+        val pad = dp(12)
+
+        statusView = TextView(this).apply {
+            textSize = 12f
+            setPadding(pad, pad, pad, pad)
+            setBackgroundColor(Color.parseColor("#11000000"))
         }
 
+        logView = TextView(this).apply {
+            textSize = 11f
+            typeface = Typeface.MONOSPACE
+            setPadding(pad, pad, pad, pad)
+            setTextIsSelectable(true)
+        }
+        logScroll = ScrollView(this).apply { addView(logView) }
+
+        hashField = field("1234", "hash")
+        latField = field("52.520008", "lat")
+        lonField = field("13.404954", "lon")
+        speedField = field("42", "km/h")
+
+        val injectRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(pad, dp(4), pad, dp(4))
+            addView(labeled("Rider #", hashField), weight(1f))
+            addView(labeled("Lat", latField), weight(1.3f))
+            addView(labeled("Lon", lonField), weight(1.3f))
+            addView(labeled("Speed", speedField), weight(0.9f))
+        }
+
+        walkButton = Button(this).apply {
+            text = "Walk"
+            setOnClickListener { toggleWalk() }
+        }
+        val injectButtons = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(pad, 0, pad, dp(4))
+            addView(button("Inject rider") { inject() }, weight(1f))
+            addView(walkButton, weight(1f))
+        }
+
+        val serviceButtons = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(pad, 0, pad, dp(4))
+            addView(button("Start service") { LoraService.start(this@MainActivity) }, weight(1f))
+            addView(button("Stop") { LoraService.stop(this@MainActivity) }, weight(0.7f))
+            addView(button("Clear log") { EventLog.clear() }, weight(1f))
+        }
+
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            fitsSystemWindows = true
+            setPadding(0, dp(24), 0, 0)
+            addView(TextView(this@MainActivity).apply {
+                text = "DMD LoRa Bridge"
+                textSize = 18f
+                gravity = Gravity.CENTER
+                setPadding(0, 0, 0, dp(6))
+            })
+            addView(statusView, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+            addView(sectionLabel("Synthetic rider  ·  test group only"))
+            addView(injectRow)
+            addView(injectButtons)
+            addView(serviceButtons)
+            addView(sectionLabel("Log"))
+            addView(logScroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+        }
+    }
+
+    private fun field(default: String, hint: String) = EditText(this).apply {
+        setText(default)
+        this.hint = hint
+        textSize = 13f
+        setSingleLine()
+    }
+
+    private fun labeled(label: String, input: EditText) = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(2), 0, dp(2), 0)
+        addView(TextView(this@MainActivity).apply { text = label; textSize = 10f })
+        addView(input)
+    }
+
+    private fun button(label: String, action: () -> Unit) = Button(this).apply {
+        text = label
+        setOnClickListener { action() }
+    }
+
+    private fun sectionLabel(text: String) = TextView(this).apply {
+        this.text = text
+        textSize = 11f
+        setPadding(dp(12), dp(8), dp(12), dp(2))
+        setTextColor(Color.parseColor("#888888"))
+    }
+
+    private fun weight(w: Float) =
+        LinearLayout.LayoutParams(0, WRAP_CONTENT, w)
+
+    // ---- actions ----
+
     private fun inject() {
+        val hash = readHex(hashField)
+        val lat = readDouble(latField, Double.NaN)
+        val lon = readDouble(lonField, Double.NaN)
+        if (hash == null || !lat.isFinite() || !lon.isFinite() ||
+            lat !in -90.0..90.0 || lon !in -180.0..180.0
+        ) {
+            EventLog.log("inject skipped — check hash / lat / lon")
+            return
+        }
         Bridge.sendGroupDataReceived(
             this,
-            Bridge.syntheticRider(testHash, testLat, testLon, 42.0),
-            // Leave the group hash out: when it is present it must match DMD2's active group,
-            // and during the injection test we may not know it yet.
+            // Leave the group hash out: present, it must match DMD2's active group, and during
+            // the injection test we may not know it. See docs/PROTOCOL.md.
+            Bridge.syntheticRider(hash, lat, lon, readDouble(speedField, 0.0)),
             groupId = null,
         )
     }
 
     private fun toggleWalk() {
         walking = !walking
+        walkButton.text = if (walking) "Stop walk" else "Walk"
         if (walking) ui.post(walk) else ui.removeCallbacks(walk)
         EventLog.log(if (walking) "walking test rider" else "test rider stopped")
     }
 
-    private fun render() {
-        logView.text = EventLog.snapshot().joinToString("\n")
+    private fun requestBlePermissions() {
+        val needed = listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
+            .filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+        if (needed.isNotEmpty()) requestPermissions(needed.toTypedArray(), 1)
     }
+
+    // ---- rendering ----
+
+    private fun renderStatus() {
+        val g = Session.groupId
+        val radio = if (Session.radioAttached) {
+            if (Radio.connected) "connected" else "attached, no bridge"
+        } else "none"
+        statusView.text = buildString {
+            append("service: "); append(if (isServiceLikelyUp()) "running" else "stopped")
+            append("   radio: "); append(radio)
+            append('\n')
+            append("group: "); append(g ?: "—")
+            append("   ch ${Session.channel} (${bridgeFreq()})")
+            append('\n')
+            append("TX ${Session.packetsEncoded.get()}   RX→DMD2 ${Session.groupDataReceived.get()}")
+        }
+    }
+
+    /** No binder, so infer liveness from whether a heartbeat has run recently. Good enough here. */
+    private fun isServiceLikelyUp(): Boolean = Session.radioAttached || Session.packetsEncoded.get() > 0
+
+    private fun bridgeFreq(): String = "%.3f MHz".format(850.125 + Session.channel)
+
+    private fun renderLog() {
+        val lines = EventLog.snapshot().asReversed() // chronological, oldest first
+        val sb = SpannableStringBuilder()
+        for (line in lines) {
+            val start = sb.length
+            sb.append(line).append('\n')
+            val color = colorFor(line)
+            if (color != null) {
+                sb.setSpan(ForegroundColorSpan(color), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+        }
+        logView.text = sb
+        logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
+    }
+
+    private fun colorFor(line: String): Int? = when {
+        line.contains("dropped") || line.contains("ERR") || line.contains("error", true) ||
+            line.contains("denied") || line.contains("failed") || line.contains("cannot") ||
+            line.contains("skipped") -> Color.parseColor("#E06C75")
+        line.contains("RX ") || line.contains("inject") -> Color.parseColor("#98C379")
+        line.contains("TX ") -> Color.parseColor("#61AFEF")
+        line.contains("config") || line.contains("connected") || line.contains("ready") ->
+            Color.parseColor("#E5C07B")
+        else -> null
+    }
+
+    // ---- parsing helpers ----
+
+    private fun readHex(f: EditText): Int? =
+        f.text.toString().trim().removePrefix("0x").toIntOrNull(16)?.and(0xFFFF)
+
+    private fun readDouble(f: EditText, fallback: Double): Double =
+        f.text.toString().trim().toDoubleOrNull() ?: fallback
+
+    private fun fmt(v: Double): String = "%.6f".format(v)
+
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 }
