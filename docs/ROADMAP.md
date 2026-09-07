@@ -44,16 +44,20 @@ SHA-256 XOR pad, u24 fields, base64 no-padding wire, 9-rider cap.
 
 ---
 
-## M3 — Inject a synthetic rider  *(no hardware)* — **observed on a device (confirm the marker)**
+## M3 — Inject a synthetic rider  *(no hardware)* — **PROVEN on a device**
 
 Broadcast `GROUP_DATA_RECEIVED` with one fabricated rider and step its coordinates.
 
 **Accept:** a `Rider XXXX` appears on the stock DMD2 map in a **throwaway test group** and moves.
 Together with M1 this closes the entire Android question. Never test against a live rider group.
 
-**Result [TEST], 2026-09-07:** injecting a synthetic rider put a green "R" marker on the stock
-DMD2 map at the injected coordinates, moving as Walk stepped them. Confirm the marker's name
-reads "Rider 1234" to rule out a real member, then this is closed.
+**Result [TEST], 2026-09-07:** the injected rider appears in the stock DMD2 member list as a
+first-class member — name "Rider 1234", a purple **LoRa** badge, live speed (42 km/h), distance
+(2.1 km) and freshness ("2s ago") updating as Walk stepped it, with the same IGNORE control as
+real members. Indistinguishable from a genuine LoRa rider. Closed.
+
+Together with M1 this settles the entire Android question: an unmodified DMD2, no root, no
+repack, renders a third-party data source as a native group member.
 
 ---
 
