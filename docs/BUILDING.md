@@ -21,25 +21,31 @@ Two board targets, one source — pick the environment for the board in front of
 ```sh
 cd firmware
 pio run -e esp32dev                    # classic ESP32-WROOM
+pio run -e esp32s3                     # ESP32-S3 (Xtensa, native USB)
 pio run -e esp32c3                     # ESP32-C3 (RISC-V)
 pio run -e esp32dev -t upload          # flash
 pio device monitor                     # 115200
 ```
 
-On a C3 with two USB-C sockets, flash over the **UART** port; the other one is native USB.
+On a board with two USB-C sockets, flash over the **UART** port; the other is native USB.
 
-Wiring to the E220 — the pin maps differ, the C3 has no GPIO 16/17/22/23 at all
-(set in `platformio.ini` as build flags):
+Wiring to the E220 — pin maps differ per chip, so they are build flags in `platformio.ini`
+rather than constants. The C3 has no GPIO 16/17/22/23 at all; on the S3, GPIO 19/20 are USB,
+26–32 are flash/PSRAM and 45/46 are strapping pins, so those are avoided.
 
-| E220 | ESP32-WROOM | ESP32-C3 | Note |
-|---|---|---|---|
-| RX | GPIO17 | GPIO5 | |
-| TX | GPIO16 | GPIO4 | |
-| M0 | GPIO21 | GPIO6 | mode select |
-| M1 | GPIO22 | GPIO7 | mode select |
-| AUX | GPIO23 | GPIO10 | module busy/ready |
-| VCC | 3V3 | 3V3 | a supply that can source transmit bursts, not the USB-serial pin |
-| GND | GND | GND | |
+| E220 | WROOM | S3 | C3 | Note |
+|---|---|---|---|---|
+| RX | GPIO17 | GPIO17 | GPIO5 | |
+| TX | GPIO16 | GPIO16 | GPIO4 | |
+| M0 | GPIO21 | GPIO15 | GPIO6 | mode select |
+| M1 | GPIO22 | GPIO7 | GPIO7 | mode select |
+| AUX | GPIO23 | GPIO6 | GPIO10 | module busy/ready |
+| VCC | 3V3 | 3V3 | 3V3 | a supply that can source transmit bursts, not the USB-serial pin |
+| GND | GND | GND | GND | |
+
+> **If the board has an onboard display**, check which pins its panel uses first — small C3/S3
+> boards often drive an OLED on GPIO5/6, which collides with the defaults above. Moving ours is
+> a one-line change to the `build_flags` for that environment.
 
 **Never power the module without an antenna attached** — transmitting into an open port can
 destroy the output stage.
