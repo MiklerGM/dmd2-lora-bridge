@@ -45,3 +45,32 @@ them).
    needed if a correctly-configured E220 still cannot hear a NOR7E, or if we ever want to move
    off EBYTE hardware. It is a fallback diagnostic, not a first step.
 3. The unknown closes empirically the moment a matching E220 receives a NOR7E packet (M5 → M6).
+
+## If we ever do try a raw SX1262 — the first combination to attempt
+
+Worth recording because the odds are better than "brute force" suggests. Our inferred E220
+setting (SF9 / BW125) is also RadioLib's default for the SX1262, so a stock board may already
+be sitting on the right parameters with only the frequency to change:
+
+```
+frequency = 868.125 MHz      (channel 18)
+SF        = 9
+BW        = 125 kHz
+sync word = 0x12             (LoRa private; the usual EBYTE default)
+header    = explicit,  IQ = normal
+```
+
+Note that **coding rate does not have to match**: in explicit-header mode the CR is carried in
+the packet header and the receiver recovers it, so a 4/5 vs 4/7 difference blocks nothing in
+either direction. Only frequency, SF, BW and sync word have to line up.
+
+Second candidate if that fails: SF10 / BW250 (the other combination matching the -129 dBm
+typical sensitivity), then sync word 0x34.
+
+**How to know instantly whether a decode is real:** a DMD payload is ASCII base64 and every
+packet starts `0xD2 0x03`, which encodes as **`0g`**. Printable base64 beginning with `0g` is a
+hit; anything else is noise. That also reveals whether the E220 wraps the payload in framing of
+its own — extra bytes would show up around the `0g…` run.
+
+This is not Meshtastic-compatible: Meshtastic uses sync word 0x2B and its own presets and frame
+format. The hardware can be reused, the firmware cannot.
