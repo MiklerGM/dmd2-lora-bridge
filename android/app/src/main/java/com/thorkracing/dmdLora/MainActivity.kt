@@ -21,6 +21,7 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import java.util.Locale
 import com.thorkracing.dmdLora.radio.Radio
 import com.thorkracing.dmdLora.service.LoraService
 
@@ -269,9 +270,11 @@ class MainActivity : Activity() {
         f.text.toString().trim().removePrefix("0x").toIntOrNull(16)?.and(0xFFFF)
 
     private fun readDouble(f: EditText, fallback: Double): Double =
-        f.text.toString().trim().toDoubleOrNull() ?: fallback
+        f.text.toString().trim().replace(',', '.').toDoubleOrNull() ?: fallback
 
-    private fun fmt(v: Double): String = "%.6f".format(v)
+    // Always a dot, whatever the phone locale: these strings are read back by readDouble,
+    // and a German-locale comma would fail to parse and collapse the field to zero.
+    private fun fmt(v: Double): String = String.format(Locale.US, "%.6f", v)
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 }

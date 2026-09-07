@@ -88,6 +88,11 @@ Only once M6 passes:
 - BLE reconnect, backgrounding, Android battery-optimisation exemptions, boot restart.
 - Power budget and an enclosure for the bridge; antenna mounting on the bike.
 - Chat (`SEND_CHAT_MESSAGE` / `CHAT_MESSAGE_RECEIVED`) — the protocol supports it; low priority.
+- **Match the bridge by device name, not the service UUID alone.** Observed on a real phone:
+  the scan filters only on the Nordic UART Service UUID, which many unrelated DIY/IoT devices
+  also advertise, so the app repeatedly connected to strangers' devices (GATT status 133/147)
+  and retried. Harmless — the loop self-recovers — but it should also require the advertised
+  name `DMD-LoRa-Bridge` so it does not knock on other people's radios.
 
 ---
 
