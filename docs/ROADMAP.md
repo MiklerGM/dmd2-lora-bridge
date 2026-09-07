@@ -8,7 +8,7 @@ Evidence tags: **[static]** derived from decompiled code · **[bench]** passed o
 
 ---
 
-## M1 — Does DMD2 accept us at all?  *(no hardware, no radio)* — **built, awaiting a device**
+## M1 — Does DMD2 accept us at all?  *(no hardware, no radio)* — **PROVEN on a device**
 
 The whole project rests on one untested assumption. Test it before spending anything.
 
@@ -22,6 +22,13 @@ The whole project rests on one untested assumption. Test it before spending anyt
 **Accept:** during a DMD2 group ride, we receive `SEND_GROUP_DATA` with a real `riders_json`.
 **If it fails:** we spent an afternoon, not a hardware budget. Capture the DMD2 logcat
 (`DMD2PGLora` tag) — it names the exact gate that rejected us.
+
+**Result [TEST], 2026-09-07:** a live DMD2 (Android 14 phone, real group, online) accepted the
+same-named package and broadcast **`SET_FREQUENCY`** to our receiver — `region_desc="EU 868MHz",
+channel=18, power=0, lbt=false`. That confirms the load-bearing assumption: unmodified DMD2
+talks to a replacement `com.thorkracing.dmdLora`, holds/accepts our permission, believes our
+radio is up from our `STATUS_UPDATE(connected=true)`, and pushes the group's channel to us.
+The `SEND_GROUP_DATA` half additionally needs location sharing on; still to be observed.
 
 ---
 
@@ -37,12 +44,16 @@ SHA-256 XOR pad, u24 fields, base64 no-padding wire, 9-rider cap.
 
 ---
 
-## M3 — Inject a synthetic rider  *(no hardware)* — **built, awaiting a device**
+## M3 — Inject a synthetic rider  *(no hardware)* — **observed on a device (confirm the marker)**
 
 Broadcast `GROUP_DATA_RECEIVED` with one fabricated rider and step its coordinates.
 
 **Accept:** a `Rider XXXX` appears on the stock DMD2 map in a **throwaway test group** and moves.
 Together with M1 this closes the entire Android question. Never test against a live rider group.
+
+**Result [TEST], 2026-09-07:** injecting a synthetic rider put a green "R" marker on the stock
+DMD2 map at the injected coordinates, moving as Walk stepped them. Confirm the marker's name
+reads "Rider 1234" to rule out a real member, then this is closed.
 
 ---
 
