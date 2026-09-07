@@ -28,7 +28,16 @@ same-named package and broadcast **`SET_FREQUENCY`** to our receiver — `region
 channel=18, power=0, lbt=false`. That confirms the load-bearing assumption: unmodified DMD2
 talks to a replacement `com.thorkracing.dmdLora`, holds/accepts our permission, believes our
 radio is up from our `STATUS_UPDATE(connected=true)`, and pushes the group's channel to us.
-The `SEND_GROUP_DATA` half additionally needs location sharing on; still to be observed.
+**Update, same day:** with "Share My Location to Active Group" enabled, DMD2 also broadcast
+`SEND_GROUP_DATA` carrying the rider's own real position, which our codec encoded to 28 bytes.
+That it flows at all confirms DMD2 received our `STATUS_UPDATE(connected=true)` and set
+loraConnected — so both directions of the whole IPC contract (SET_FREQUENCY, SEND_GROUP_DATA,
+STATUS_UPDATE, GROUP_DATA_RECEIVED) are now proven on a live device. The Android question is
+closed end to end; only the radio (Question B) remains, gated on the E220 modules.
+
+Note for users: the sharing toggle is not in the group screen at all — it is on the groups
+*list* ("Share My Location to Active Group", English / "Meinen Standort für die aktive Gruppe
+freigeben", German), and only takes effect once a group is set ACTIVE. Found by decompiling.
 
 ---
 
