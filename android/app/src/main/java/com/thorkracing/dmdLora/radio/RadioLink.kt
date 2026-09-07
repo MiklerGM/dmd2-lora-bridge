@@ -16,6 +16,12 @@ interface RadioLink {
     /** Called for every complete wire string received from the air. */
     var onWire: ((String) -> Unit)?
 
+    /** Called with each status line the bridge reports (the part after "ST "). */
+    var onStatus: ((String) -> Unit)?
+
+    /** Called whenever the link (re)establishes, including after a bridge reboot. */
+    var onConnected: (() -> Unit)?
+
     fun close()
 }
 
@@ -44,6 +50,8 @@ data class RadioConfig(
 class LoopbackLink : RadioLink {
     override val connected = true
     override var onWire: ((String) -> Unit)? = null
+    override var onStatus: ((String) -> Unit)? = null
+    override var onConnected: (() -> Unit)? = null
     val configured = mutableListOf<RadioConfig>()
 
     override fun send(wire: String) { onWire?.invoke(wire) }

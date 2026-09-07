@@ -11,7 +11,10 @@ android {
         // Not a choice. DMD2 addresses the LoRa companion by explicit ComponentName,
         // so this exact application id and the class paths below are mandatory.
         applicationId 'com.thorkracing.dmdLora'
-        minSdk 26
+        // DMD2 is minSdk 32, so no device that can run it is below Android 12. Targeting 31
+        // means the modern runtime Bluetooth permission model always applies and the legacy
+        // BLUETOOTH / location permissions are never needed.
+        minSdk 31
         targetSdk 35
         versionCode 1
         versionName '0.1'
@@ -25,6 +28,12 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = '17' }
+
+    lint {
+        // A red lint gate is part of "make check"; warnings do not block, errors do.
+        abortOnError true
+        checkReleaseBuilds false
+    }
 }
 
 dependencies {

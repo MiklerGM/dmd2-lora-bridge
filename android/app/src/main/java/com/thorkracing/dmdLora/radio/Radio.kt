@@ -4,6 +4,7 @@ import android.content.Context
 import com.thorkracing.dmdLora.Bridge
 import com.thorkracing.dmdLora.EventLog
 import com.thorkracing.dmdLora.Session
+import java.util.concurrent.ConcurrentLinkedQueue
 
 /**
  * Joins the DMD2 side to the radio side. Everything protocol-shaped happens here or in Codec;
@@ -25,9 +26,15 @@ object Radio {
     private val router = WireRouter()
     private val scheduler = TxScheduler()
 
-    /** What the radio should be set to, and what it was last actually set to. */
+    // Chat is rare and must not be lost, so it does not share the latest-only position slot;
+    // it waits in its own queue and is drained ahead of position updates.
+    private val chatQueue = ConcurrentLinkedQueue<String>()
+
+    /** What the radio should be set to, what was confirmed, and when we last tried. */
     @Volatile private var desired: RadioConfig? = null
     @Volatile private var applied: RadioConfig? = null
+    @Volatile private var lastConfigSentMs = 0L
+    private const val CONFIG_RETRY_MS = 3_000L
 
     val connected: Boolean get() = link?.connected == true
 
@@ -35,8 +42,11 @@ object Radio {
         val app = context.applicationContext
         link?.close()
         newLink.onWire = { wire -> onWire(app, wire) }
+        newLink.onStatus = { status -> onBridgeStatus(status) }
+        newLink.onConnected = { onBridgeConnected() }
         link = newLink
         applied = null   // a new link is a new module; whatever it booted with is unknown
+        lastConfigSentMs = 0L
         Session.radioAttached = true
         EventLog.log("radio link attached")
     }
@@ -46,6 +56,7 @@ object Radio {
         link = null
         applied = null
         Session.radioAttached = false
+        chatQueue.clear()
         router.reset()
         scheduler.reset()
     }
@@ -68,6 +79,46 @@ object Radio {
         return true
     }
 
+    /** Queue a chat line. Unlike position, chat is never coalesced away. */
+    fun transmitChat(wire: String): Boolean {
+        val l = link
+        if (l == null || !l.connected) return false
+        chatQueue.add(wire)
+        return true
+    }
+
+    /**
+     * A (re)connect means the module is back on unknown registers - a fresh module, or one
+     * that rebooted. Forget what we thought was applied so [tick] re-configures it, and drop
+     * any held position so a stale one is not fired after the gap.
+     */
+    private fun onBridgeConnected() {
+        applied = null
+        lastConfigSentMs = 0L
+        scheduler.reset()
+        EventLog.log("radio (re)connected; configuration will be re-applied")
+    }
+
+    /** The bridge reports its live registers here; a match confirms our configuration landed. */
+    private fun onBridgeStatus(status: String) {
+        val want = desired ?: return
+        val ch = parseField(status, "ch=") ?: return
+        val power = parseField(status, "power=")
+        if (ch == want.channel && (power == null || power == want.powerIndex)) {
+            if (applied != want) EventLog.log("radio config confirmed: ch=$ch")
+            applied = want
+        }
+    }
+
+    private fun parseField(s: String, key: String): Int? {
+        val i = s.indexOf(key)
+        if (i < 0) return null
+        val start = i + key.length
+        var j = start
+        while (j < s.length && s[j].isDigit()) j++
+        return s.substring(start, j).toIntOrNull()
+    }
+
     /**
      * Called on a timer. Pushes any pending configuration and releases a held payload once the
      * pacing interval has passed. Doing both here means a reconnect re-configures itself
@@ -76,15 +127,25 @@ object Radio {
     fun tick() {
         val l = link ?: return
         if (!l.connected) return
+        val now = System.currentTimeMillis()
 
+        // Push configuration until the bridge confirms it via ST; do not assume it landed.
         val want = desired
-        if (want != null && want != applied) {
+        if (want != null && want != applied && now - lastConfigSentMs >= CONFIG_RETRY_MS) {
             EventLog.log("configuring radio: ch=${want.channel} power=${want.powerIndex}")
             l.configure(want)
-            applied = want
+            lastConfigSentMs = now
         }
 
-        val wire = scheduler.poll(System.currentTimeMillis()) ?: return
+        // One transmission per pacing window: chat first (rare, must not drop), else position.
+        if (chatQueue.peek() != null) {
+            if (scheduler.tryPace(now)) {
+                l.send(chatQueue.poll())
+                EventLog.log("TX chat released")
+            }
+            return
+        }
+        val wire = scheduler.poll(now) ?: return
         EventLog.log("TX released held position")
         l.send(wire)
     }

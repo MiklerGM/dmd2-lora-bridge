@@ -151,8 +151,9 @@ static void tx_task(void *arg) {
             e220_write((const uint8_t *)payload, len);
             ESP_LOGI(TAG, "tx %u bytes", (unsigned)len);
             free(payload);
-            /* Let the module return to receive before the next transmission. */
-            vTaskDelay(pdMS_TO_TICKS(20));
+            /* e220_write already blocked until the module returned to idle (AUX high), so no
+             * fixed settling delay is needed here; pacing is the phone's job. */
+            taskYIELD();
         }
     }
 }

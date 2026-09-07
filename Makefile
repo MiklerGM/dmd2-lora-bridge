@@ -2,8 +2,8 @@
 check: check-android check-firmware
 
 check-android:
-	@cd android && ./gradlew --console=plain -q :app:testDebugUnitTest :app:assembleDebug
-	@echo "android: tests pass, apk built"
+	@cd android && ./gradlew --console=plain -q :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+	@echo "android: tests + lint pass, apk built"
 
 check-firmware:
 	@$(MAKE) -s -C firmware test

@@ -26,6 +26,10 @@ class TxScheduler(private val pacer: TxPacer = TxPacer()) {
         return null
     }
 
+    /** Consume a pacing slot directly, for a transmission the scheduler is not holding (chat). */
+    @Synchronized
+    fun tryPace(nowMs: Long): Boolean = pacer.allow(nowMs)
+
     /** Call periodically. Returns a held payload once the interval has passed. */
     @Synchronized
     fun poll(nowMs: Long): String? {

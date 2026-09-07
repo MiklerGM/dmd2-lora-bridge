@@ -147,6 +147,11 @@ void e220_write(const uint8_t *data, size_t len) {
     }
     uart_write_bytes(E220_UART, (const char *)data, len);
     uart_wait_tx_done(E220_UART, pdMS_TO_TICKS(1000));
+    /* Draining the ESP32 UART only means the bytes reached the module, not that the module
+     * has finished sending them over the air. At 2.4 kbps a full packet takes a few hundred
+     * ms. Hold the lock until AUX goes high, or a later config could flip M0/M1 mid-packet
+     * and truncate the transmission. */
+    wait_aux(2000);
     uart_unlock();
 }
 

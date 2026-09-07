@@ -138,21 +138,34 @@ static int on_gap(struct ble_gap_event *event, void *arg) {
 }
 
 static void advertise(void) {
-    struct ble_hs_adv_fields fields = {0};
-    fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
-    fields.name = (uint8_t *)s_name;
-    fields.name_len = strlen(s_name);
-    fields.name_is_complete = 1;
-    fields.uuids128 = (ble_uuid128_t *)&UUID_SVC;
-    fields.num_uuids128 = 1;
-    fields.uuids128_is_complete = 1;
-    ble_gap_adv_set_fields(&fields);
+    /* A 128-bit UUID is 18 bytes and flags are 3; together with a 15-char name that is 38,
+     * past the 31-byte legacy advertising limit. NimBLE then rejects the whole set and the
+     * device advertises nothing the phone can match, since the phone scans by UUID. So the
+     * UUID goes in the advertisement and the name in the scan response. */
+    struct ble_hs_adv_fields adv_fields = {0};
+    adv_fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
+    adv_fields.uuids128 = (ble_uuid128_t *)&UUID_SVC;
+    adv_fields.num_uuids128 = 1;
+    adv_fields.uuids128_is_complete = 1;
+    int rc = ble_gap_adv_set_fields(&adv_fields);
+    if (rc != 0) {
+        ESP_LOGE(TAG, "adv_set_fields failed: %d", rc);
+        return;
+    }
+
+    struct ble_hs_adv_fields rsp_fields = {0};
+    rsp_fields.name = (uint8_t *)s_name;
+    rsp_fields.name_len = strlen(s_name);
+    rsp_fields.name_is_complete = 1;
+    rc = ble_gap_adv_rsp_set_fields(&rsp_fields);
+    if (rc != 0) ESP_LOGW(TAG, "adv_rsp_set_fields failed: %d", rc);
 
     struct ble_gap_adv_params adv = {
         .conn_mode = BLE_GAP_CONN_MODE_UND,
         .disc_mode = BLE_GAP_DISC_MODE_GEN,
     };
-    ble_gap_adv_start(s_addr_type, NULL, BLE_HS_FOREVER, &adv, on_gap, NULL);
+    rc = ble_gap_adv_start(s_addr_type, NULL, BLE_HS_FOREVER, &adv, on_gap, NULL);
+    if (rc != 0) ESP_LOGE(TAG, "adv_start failed: %d", rc);
 }
 
 static void on_sync(void) {

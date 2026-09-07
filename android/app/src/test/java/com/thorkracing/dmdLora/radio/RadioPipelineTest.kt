@@ -165,3 +165,17 @@ class TxSchedulerTest {
         assertFalse("the held payload was superseded", s.hasPending())
     }
 }
+
+/** The pacing gate chat and position share. */
+class TxSchedulerPaceTest {
+
+    @Test fun tryPaceConsumesTheSameSlotAsPoll() {
+        val s = TxScheduler(TxPacer(1_500))
+        assertTrue(s.tryPace(10_000))
+        // position offered in the same window is now held, since the slot was just used
+        assertNull(s.offer("pos", 10_100))
+        assertTrue(s.hasPending())
+        assertNull("window still closed", s.poll(11_000))
+        assertEquals("pos", s.poll(11_500))
+    }
+}

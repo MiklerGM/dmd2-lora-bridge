@@ -61,8 +61,8 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
             groupId, Session.senderUserId.orEmpty(), "", text, Session.nextSeq()
         )
         val wire = Codec.toWire(packet)
-        Radio.transmit(wire)
-        EventLog.log("TX chat ${packet.size} B -> $wire")
+        val queued = Radio.transmitChat(wire)
+        EventLog.log("TX chat ${packet.size} B ${if (queued) "queued" else "(no radio)"}")
     }
 
     private fun onSetFrequency(context: Context, intent: Intent) {

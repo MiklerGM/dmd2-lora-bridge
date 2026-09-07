@@ -9,11 +9,14 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.bluetooth.BluetoothStatusCodes
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -50,14 +53,21 @@ class BleRadioLink(context: Context) : RadioLink {
         private set
 
     override var onWire: ((String) -> Unit)? = null
-
-    /** Reported whenever the bridge answers a STATUS request. */
-    var onStatus: ((String) -> Unit)? = null
+    override var onStatus: ((String) -> Unit)? = null
+    override var onConnected: (() -> Unit)? = null
 
     // ---- connection ----
 
     fun start() {
         if (closed || connected || scanning) return
+        if (!hasBlePermissions()) {
+            // DMD2 can start the service before the user has been through the permission
+            // dialog. Scanning without the grant throws SecurityException and kills the
+            // process, so wait and try again once the UI has asked.
+            EventLog.log("BLE waiting for Bluetooth permission")
+            retryLater()
+            return
+        }
         val manager = appContext.getSystemService(BluetoothManager::class.java)
         val adapter: BluetoothAdapter? = manager?.adapter
         if (adapter == null || !adapter.isEnabled) {
@@ -88,6 +98,10 @@ class BleRadioLink(context: Context) : RadioLink {
         }, SCAN_TIMEOUT_MS)
     }
 
+    private fun hasBlePermissions(): Boolean =
+        appContext.checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED &&
+            appContext.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+
     private fun stopScan() {
         if (!scanning) return
         scanning = false
@@ -109,7 +123,12 @@ class BleRadioLink(context: Context) : RadioLink {
             if (!scanning) return
             stopScan()
             EventLog.log("BLE found ${device.address}, connecting")
-            gatt = device.connectGatt(appContext, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+            try {
+                gatt = device.connectGatt(appContext, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+            } catch (e: SecurityException) {
+                EventLog.log("BLE connect denied: ${e.message}")
+                retryLater()
+            }
         }
 
         override fun onScanFailed(errorCode: Int) {
@@ -252,7 +271,7 @@ class BleRadioLink(context: Context) : RadioLink {
 
         val ok = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             g.writeCharacteristic(c, next, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) ==
-                BluetoothGatt.GATT_SUCCESS
+                BluetoothStatusCodes.SUCCESS
         } else {
             @Suppress("DEPRECATION")
             c.value = next
