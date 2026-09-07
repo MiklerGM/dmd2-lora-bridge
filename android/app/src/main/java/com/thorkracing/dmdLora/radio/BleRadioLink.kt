@@ -121,6 +121,15 @@ class BleRadioLink(context: Context) : RadioLink {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             val device: BluetoothDevice = result.device ?: return
             if (!scanning) return
+
+            // The Nordic UART UUID is used by any number of unrelated DIY devices, and on a
+            // real phone this filter alone kept connecting to strangers' radios. The name
+            // comes back in the scan response, so an active scan sees it.
+            val name = result.scanRecord?.deviceName ?: runCatching { device.name }.getOrNull()
+            if (name != BRIDGE_NAME) {
+                EventLog.log("BLE ignoring ${device.address} (name=${name ?: "unknown"})")
+                return
+            }
             stopScan()
             EventLog.log("BLE found ${device.address}, connecting")
             try {
@@ -317,6 +326,9 @@ class BleRadioLink(context: Context) : RadioLink {
         val RX_UUID: UUID = UUID.fromString("6e400002-b5a3-f393-e0a9-e50e24dcca9e")
         val TX_UUID: UUID = UUID.fromString("6e400003-b5a3-f393-e0a9-e50e24dcca9e")
         val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
+
+        /** Must match the name the firmware advertises. */
+        const val BRIDGE_NAME = "DMD-LoRa-Bridge"
 
         private const val DEFAULT_MTU = 23
         private const val PREFERRED_MTU = 247

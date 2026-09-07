@@ -16,24 +16,30 @@ import nothing from Android, so the whole protocol path runs on the desktop.
 
 ## ESP32 bridge
 
+Two board targets, one source — pick the environment for the board in front of you:
+
 ```sh
 cd firmware
-pio run                 # build
-pio run -t upload       # flash
-pio device monitor      # 115200
+pio run -e esp32dev                    # classic ESP32-WROOM
+pio run -e esp32c3                     # ESP32-C3 (RISC-V)
+pio run -e esp32dev -t upload          # flash
+pio device monitor                     # 115200
 ```
 
-Wiring to the E220 (see `src/e220.c` for the pin constants):
+On a C3 with two USB-C sockets, flash over the **UART** port; the other one is native USB.
 
-| ESP32 | E220 | Note |
-|---|---|---|
-| GPIO17 | RX | |
-| GPIO16 | TX | |
-| GPIO21 | M0 | mode select |
-| GPIO22 | M1 | mode select |
-| GPIO23 | AUX | module busy/ready |
-| 3V3 | VCC | use a supply that can source transmit bursts, not the USB-serial pin |
-| GND | GND | |
+Wiring to the E220 — the pin maps differ, the C3 has no GPIO 16/17/22/23 at all
+(set in `platformio.ini` as build flags):
+
+| E220 | ESP32-WROOM | ESP32-C3 | Note |
+|---|---|---|---|
+| RX | GPIO17 | GPIO5 | |
+| TX | GPIO16 | GPIO4 | |
+| M0 | GPIO21 | GPIO6 | mode select |
+| M1 | GPIO22 | GPIO7 | mode select |
+| AUX | GPIO23 | GPIO10 | module busy/ready |
+| VCC | 3V3 | 3V3 | a supply that can source transmit bursts, not the USB-serial pin |
+| GND | GND | GND | |
 
 **Never power the module without an antenna attached** — transmitting into an open port can
 destroy the output stage.
@@ -67,6 +73,34 @@ adb shell "am broadcast \
 
 Press **Inject rider**, then **Walk on/off**. A `Rider 1234` should appear on the DMD2 map and
 move every five seconds. Use a throwaway group; never inject into a live ride.
+
+## Milestone 4.5 — the whole chain with no radio at all
+
+The bridge simulates a radio when no module answers at boot: it loops a transmit straight back
+as a receive. That exercises everything except the RF itself, on a bare ESP32.
+
+1. Flash the firmware to any ESP32 (**no E220 needed**). The log should say
+   `no module acknowledged - echo (simulation) mode ON`.
+2. On the phone, start the service. It now scans for the advertised name **DMD-LoRa-Bridge**,
+   so it will not latch onto unrelated devices that share the Nordic UART UUID.
+   Expect `BLE bridge ready` and an `ST … echo=1` line.
+3. Have DMD2 in an active group with sharing on, so the app knows the group id.
+4. Press **Loopback**.
+
+**Pass:** a rider **`Rider 71E0`** appears in DMD2. That marker travelled
+phone → BLE → ESP32 → BLE → phone → codec → DMD2, so the transport, framing, codec and
+injection are all proven together; only the radio is left.
+
+Transport-only check, no DMD2 involved:
+
+```
+PING 200      ->  PONG AAAA…   (200 chars, forces fragmentation)
+ECHO 0 | 1    ->  turn simulation off/on by hand
+STATUS        ->  ST conn=1 ch=18 … echo=1 fw=…
+```
+
+A 200-character reply is far past the 23-byte default MTU, so if `PONG` comes back whole the
+fragmentation and reassembly are working.
 
 ## Milestone 5 — two bridges on the bench
 

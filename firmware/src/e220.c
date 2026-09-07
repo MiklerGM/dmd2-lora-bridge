@@ -11,12 +11,29 @@
 
 #define TAG "e220"
 
+/* Pins come from the build environment: the WROOM and the C3 have different GPIO maps,
+ * and the C3 has no GPIO 16/17/22/23 at all. See platformio.ini. */
 #define E220_UART UART_NUM_1
-#define PIN_TX GPIO_NUM_17
-#define PIN_RX GPIO_NUM_16
-#define PIN_M0 GPIO_NUM_21
-#define PIN_M1 GPIO_NUM_22
-#define PIN_AUX GPIO_NUM_23
+#ifndef PIN_E220_TX
+#define PIN_E220_TX 17
+#endif
+#ifndef PIN_E220_RX
+#define PIN_E220_RX 16
+#endif
+#ifndef PIN_E220_M0
+#define PIN_E220_M0 21
+#endif
+#ifndef PIN_E220_M1
+#define PIN_E220_M1 22
+#endif
+#ifndef PIN_E220_AUX
+#define PIN_E220_AUX 23
+#endif
+#define PIN_TX ((gpio_num_t)PIN_E220_TX)
+#define PIN_RX ((gpio_num_t)PIN_E220_RX)
+#define PIN_M0 ((gpio_num_t)PIN_E220_M0)
+#define PIN_M1 ((gpio_num_t)PIN_E220_M1)
+#define PIN_AUX ((gpio_num_t)PIN_E220_AUX)
 
 #define UART_BUF 1024
 #define UART_LOCK_WAIT_MS 2000
@@ -78,7 +95,8 @@ void e220_init(void) {
     ESP_ERROR_CHECK(uart_set_pin(E220_UART, PIN_TX, PIN_RX,
                                  UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
     e220_mode_normal();
-    ESP_LOGI(TAG, "uart up at 9600 8N1");
+    ESP_LOGI(TAG, "uart up at 9600 8N1 (tx=%d rx=%d m0=%d m1=%d aux=%d)",
+             PIN_E220_TX, PIN_E220_RX, PIN_E220_M0, PIN_E220_M1, PIN_E220_AUX);
 }
 
 /* Waits for AUX to go high, which the module uses to signal "idle, command accepted". */

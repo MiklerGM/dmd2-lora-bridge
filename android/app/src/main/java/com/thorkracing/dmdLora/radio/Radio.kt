@@ -4,6 +4,8 @@ import android.content.Context
 import com.thorkracing.dmdLora.Bridge
 import com.thorkracing.dmdLora.EventLog
 import com.thorkracing.dmdLora.Session
+import com.thorkracing.dmdLora.protocol.Codec
+import com.thorkracing.dmdLora.protocol.TxRider
 import java.util.concurrent.ConcurrentLinkedQueue
 
 /**
@@ -35,6 +37,9 @@ object Radio {
     @Volatile private var applied: RadioConfig? = null
     @Volatile private var lastConfigSentMs = 0L
     private const val CONFIG_RETRY_MS = 3_000L
+
+    /** Identity the loopback probe pretends to be. */
+    const val LOOPBACK_PEER = "sim-peer"
 
     val connected: Boolean get() = link?.connected == true
 
@@ -76,6 +81,36 @@ object Radio {
             return false
         }
         l.send(send)
+        return true
+    }
+
+    /**
+     * Bench probe: transmit a packet that claims to come from a peer, so a bridge running in
+     * echo mode loops it straight back and the entire chain - BLE framing, codec, dedup,
+     * injection into DMD2 - is exercised with no radio attached.
+     *
+     * It has to be a *peer* and not ourselves: our own sender hash is rejected as SELF before
+     * the packet is ever decoded.
+     */
+    fun sendLoopbackProbe(
+        lat: Double, lon: Double, speedKmh: Double, peerId: String = LOOPBACK_PEER,
+    ): Boolean {
+        val l = link
+        if (l == null || !l.connected) {
+            EventLog.log("loopback skipped — no bridge connected")
+            return false
+        }
+        val group = Session.groupId
+        if (group.isNullOrEmpty()) {
+            // Both the group hash and the XOR pad come from the group id, so without one the
+            // echoed packet could not be decoded on the way back.
+            EventLog.log("loopback skipped — no active group yet (open a group in DMD2)")
+            return false
+        }
+        val rider = TxRider(peerId, lat, lon, speedKmh, Codec.ST_SHARING or Codec.ST_HAS_LORA, 0)
+        val wire = Codec.toWire(Codec.encodeGroup(group, peerId, listOf(rider), Session.nextSeq()))
+        l.send(wire)
+        EventLog.log("loopback sent as ${"%04X".format(Codec.uidHash(peerId))} -> expect it back")
         return true
     }
 

@@ -122,6 +122,7 @@ class MainActivity : Activity() {
             setPadding(pad, 0, pad, dp(4))
             addView(button("Inject rider") { inject() }, weight(1f))
             addView(walkButton, weight(1f))
+            addView(button("Loopback") { loopback() }, weight(1f))
         }
 
         val serviceButtons = LinearLayout(this).apply {
@@ -200,6 +201,18 @@ class MainActivity : Activity() {
             Bridge.syntheticRider(hash, lat, lon, readDouble(speedField, 0.0)),
             groupId = null,
         )
+    }
+
+    /** Sends a peer-looking packet out over BLE; an echoing bridge returns it and it should
+     *  land in DMD2 as a rider that travelled the whole chain. */
+    private fun loopback() {
+        val lat = readDouble(latField, Double.NaN)
+        val lon = readDouble(lonField, Double.NaN)
+        if (!lat.isFinite() || !lon.isFinite()) {
+            EventLog.log("loopback skipped — check lat / lon")
+            return
+        }
+        Radio.sendLoopbackProbe(lat, lon, readDouble(speedField, 0.0))
     }
 
     private fun toggleWalk() {

@@ -11,7 +11,9 @@
  *   ------------------   -------------------------------------
  *   TX <base64>          RX <base64>        one packet off the air
  *   CFG k=v k=v ...      OK / ERR <reason>
- *   STATUS               ST conn=1 ch=18 rate=2 power=3 lbt=0 fw=...
+ *   STATUS               ST conn=1 ch=18 rate=2 power=3 lbt=0 echo=0 fw=...
+ *   ECHO 0|1             OK                 simulate a radio by looping TX back as RX
+ *   PING <n>             PONG <n chars>     transport test: forces a long, fragmented line
  *
  * The payload the module carries is already base64 ASCII, because that is what DMD writes to
  * its module's UART. So nothing here encodes or decodes anything.
@@ -38,15 +40,24 @@ static e220_config_t s_cfg;
 static char s_fw[48] = "";
 static QueueHandle_t s_tx_queue; /* char* owned by the queue */
 
+/*
+ * Echo (simulation) mode: a transmit is looped straight back as a receive instead of going
+ * to the radio. It lets the whole chain - phone, BLE, framing, codec, injection into DMD2 -
+ * be exercised on a bare ESP32 with no LoRa module attached. Enabled automatically when no
+ * module answers at boot, which is exactly the bench case.
+ */
+static bool s_echo = false;
+
 /* ---- command handling ---------------------------------------------------- */
 
 static void send_status(void) {
     char out[160];
     snprintf(out, sizeof(out),
-             "ST conn=1 ch=%u freq=%.3f rate=%u power=%u packet=%u trans=%u lbt=%u addr=%u fw=%s",
+             "ST conn=1 ch=%u freq=%.3f rate=%u power=%u packet=%u trans=%u lbt=%u addr=%u "
+             "echo=%u fw=%s",
              s_cfg.channel, 850.125 + (double)s_cfg.channel, s_cfg.air_rate, s_cfg.power,
              s_cfg.packet_size, (unsigned)s_cfg.transparent, (unsigned)s_cfg.lbt,
-             s_cfg.address, s_fw[0] ? s_fw : "?");
+             s_cfg.address, (unsigned)s_echo, s_fw[0] ? s_fw : "?");
     ble_nus_send_line(out);
 }
 
@@ -114,6 +125,15 @@ static void handle_tx(const char *b64) {
         ble_nus_send_line("ERR tx length");
         return;
     }
+    if (s_echo) {
+        /* Bounce it back verbatim. The phone is responsible for making a looped packet look
+         * like it came from a peer; the bridge stays a dumb pipe even when simulating. */
+        static char line[OUT_LINE_MAX];
+        snprintf(line, sizeof(line), "RX %s", b64);
+        ble_nus_send_line(line);
+        ESP_LOGI(TAG, "echo %u bytes", (unsigned)len);
+        return;
+    }
     char *copy = malloc(len + 1);
     if (!copy) return;
     memcpy(copy, b64, len + 1);
@@ -121,6 +141,19 @@ static void handle_tx(const char *b64) {
         free(copy);
         ble_nus_send_line("ERR tx queue full");
     }
+}
+
+/* Replies with a line of n filler characters. Lines here can reach ~250 bytes, well past a
+ * default 23-byte MTU, so this is the quickest way to prove fragmentation and reassembly. */
+static void handle_ping(const char *arg) {
+    long n = strtol(arg, NULL, 10);
+    if (n < 1) n = 1;
+    if (n > OUT_LINE_MAX - 16) n = OUT_LINE_MAX - 16;
+    static char line[OUT_LINE_MAX];
+    int at = snprintf(line, sizeof(line), "PONG ");
+    for (long i = 0; i < n && at < (int)sizeof(line) - 1; i++) line[at++] = 'A' + (char)(i % 26);
+    line[at] = '\0';
+    ble_nus_send_line(line);
 }
 
 static void on_ble_line(const char *line, size_t len) {
@@ -131,6 +164,13 @@ static void on_ble_line(const char *line, size_t len) {
         handle_cfg(line + 3);
     } else if (strcmp(line, "STATUS") == 0) {
         send_status();
+    } else if (strncmp(line, "ECHO ", 5) == 0) {
+        s_echo = (strtol(line + 5, NULL, 10) != 0);
+        ESP_LOGI(TAG, "echo mode %s", s_echo ? "on" : "off");
+        ble_nus_send_line("OK");
+        send_status();
+    } else if (strncmp(line, "PING ", 5) == 0) {
+        handle_ping(line + 5);
     } else {
         ble_nus_send_line("ERR unknown command");
     }
@@ -188,7 +228,10 @@ void app_main(void) {
     e220_init();
     e220_read_firmware(s_fw, sizeof(s_fw));
     if (!e220_apply(&s_cfg)) {
-        ESP_LOGW(TAG, "module did not acknowledge the initial config");
+        /* Almost certainly no module wired up. Simulate one so the rest of the chain can be
+         * tested on a bare board; a real module will answer and this stays off. */
+        s_echo = true;
+        ESP_LOGW(TAG, "no module acknowledged - echo (simulation) mode ON");
     }
 
     ble_nus_init("DMD-LoRa-Bridge", on_ble_line);
@@ -196,6 +239,6 @@ void app_main(void) {
     xTaskCreate(tx_task, "lora_tx", 4096, NULL, 6, NULL);
     xTaskCreate(rx_task, "lora_rx", 4096, NULL, 6, NULL);
 
-    ESP_LOGI(TAG, "bridge up: ch=%u %.3f MHz, power index %u",
-             s_cfg.channel, 850.125 + (double)s_cfg.channel, s_cfg.power);
+    ESP_LOGI(TAG, "bridge up: ch=%u %.3f MHz, power index %u, echo=%d",
+             s_cfg.channel, 850.125 + (double)s_cfg.channel, s_cfg.power, (int)s_echo);
 }
