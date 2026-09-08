@@ -9,3 +9,6 @@ typedef void (*ble_nus_line_cb)(const char *line, size_t len);
 void ble_nus_init(const char *device_name, ble_nus_line_cb on_line);
 bool ble_nus_connected(void);
 void ble_nus_send_line(const char *line);
+
+/** Drop every stored pairing and disconnect, so the next phone starts clean. */
+void ble_nus_forget_bonds(void);

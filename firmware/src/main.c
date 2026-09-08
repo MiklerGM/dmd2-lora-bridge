@@ -197,6 +197,12 @@ static void on_ble_line(const char *line, size_t len) {
         ESP_LOGI(TAG, "echo mode %s", s_echo ? "on" : "off");
         ble_nus_send_line("OK");
         send_status();
+    } else if (strcmp(line, "FORGET") == 0) {
+        /* Both sides have to forget together. If only the phone dropped its bond, this bridge
+         * would keep the old key, take the returning phone for a stranger and refuse it -
+         * leaving the pair unusable until someone held the boot pin down. */
+        ble_nus_send_line("OK");
+        ble_nus_forget_bonds();
     } else if (strncmp(line, "PING ", 5) == 0) {
         handle_ping(line + 5);
     } else {

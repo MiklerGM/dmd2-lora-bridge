@@ -285,6 +285,15 @@ void ble_nus_init(const char *device_name, ble_nus_line_cb on_line) {
 
 bool ble_nus_connected(void) { return s_conn != BLE_HS_CONN_HANDLE_NONE; }
 
+void ble_nus_forget_bonds(void) {
+    ble_store_clear();
+    ESP_LOGW(TAG, "pairings cleared on request");
+    if (ble_nus_connected()) {
+        /* Drop the link too: the peer we were just talking to is no longer trusted. */
+        ble_gap_terminate(s_conn, BLE_ERR_REM_USER_CONN_TERM);
+    }
+}
+
 void ble_nus_send_line(const char *line) {
     if (!ble_nus_connected()) return;
 

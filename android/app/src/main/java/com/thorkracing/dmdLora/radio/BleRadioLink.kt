@@ -120,8 +120,36 @@ class BleRadioLink(context: Context) : RadioLink {
 
     /** Forget the pinned bridge, so the next scan may adopt a different one. */
     fun forgetBridge() {
+        // Tell the bridge first, while the link is still up and encrypted: it has to drop its
+        // key too, or it would take this phone for a stranger when it comes back.
+        if (connected) sendLine("FORGET")
+
         prefs().edit().remove(KEY_PINNED).apply()
-        EventLog.log("bridge pairing cleared — next scan will adopt any bridge")
+        removeSystemBond()
+        foundName = null
+        EventLog.log("bridge forgotten — rescanning")
+
+        // Give the FORGET a moment to go out before the link is torn down under it.
+        handler.postDelayed({
+            teardown()
+            start()
+        }, 400)
+    }
+
+    /**
+     * With bonding in place the pairing also lives in the system Bluetooth database, and
+     * clearing only our own note would leave the phone cryptographically tied to the same
+     * bridge. removeBond is not public API, so failure is reported rather than assumed away.
+     */
+    private fun removeSystemBond() {
+        val device = gatt?.device ?: return
+        if (device.bondState != BluetoothDevice.BOND_BONDED) return
+        val removed = runCatching {
+            BluetoothDevice::class.java.getMethod("removeBond").invoke(device) as? Boolean
+        }.getOrNull() == true
+        if (!removed) {
+            EventLog.log("system pairing not removed — clear it in Bluetooth settings")
+        }
     }
 
     private fun hasBlePermissions(): Boolean =
