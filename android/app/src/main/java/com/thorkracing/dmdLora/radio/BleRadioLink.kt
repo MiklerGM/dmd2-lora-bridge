@@ -252,7 +252,7 @@ class BleRadioLink(context: Context) : RadioLink {
                 return
             }
             connected = true
-            state = "connected"
+            state = if (g.device?.bondState == BluetoothDevice.BOND_BONDED) "connected" else "pairing"
             foundName?.let { rememberBridge(it) }
             EventLog.log("BLE bridge ready${foundName?.let { " ($it)" } ?: ""}")
             // A fresh link means a module on unknown registers - a new bridge, or one that
@@ -284,12 +284,26 @@ class BleRadioLink(context: Context) : RadioLink {
                     // A dropped fragment leaves the peer with half a line, so retry the same
                     // chunk; if it keeps failing the link is no good and reconnecting is safer
                     // than emitting a torn command.
-                    writeFailures++
-                    EventLog.log("BLE write failed ($status), attempt $writeFailures")
+                    // 5 / 15 mean the bridge wants an encrypted link. Android reacts by
+                    // starting pairing and shows the system dialog; the write simply has to be
+                    // retried once bonding completes, so this is not a link fault.
+                    val pairing = status == GATT_INSUFFICIENT_AUTHENTICATION ||
+                        status == GATT_INSUFFICIENT_ENCRYPTION
+                    if (pairing) {
+                        writeFailures = 0
+                        EventLog.logThrottled(
+                            "ble-pairing",
+                            "BLE bridge wants pairing — accept the dialog to finish",
+                        )
+                    } else {
+                        writeFailures++
+                        EventLog.log("BLE write failed ($status), attempt $writeFailures")
+                    }
                 }
                 giveUp = writeFailures > MAX_WRITE_FAILURES
             }
-            if (giveUp) failLink("writes keep failing") else pump()
+            if (giveUp) failLink("writes keep failing")
+            else handler.postDelayed({ pump() }, if (writeFailures == 0) PAIRING_WAIT_MS else 0L)
         }
     }
 
@@ -427,6 +441,13 @@ class BleRadioLink(context: Context) : RadioLink {
         private const val SCAN_TIMEOUT_MS = 30_000L
         private const val RETRY_MS = 10_000L
         private const val WRITE_RETRY_MS = 50L
+
+        /** Long enough for the pairing dialog to be answered without hammering the stack. */
+        private const val PAIRING_WAIT_MS = 1_500L
         private const val MAX_WRITE_FAILURES = 3
+
+        /** GATT status codes the platform does not expose as constants. */
+        private const val GATT_INSUFFICIENT_AUTHENTICATION = 5
+        private const val GATT_INSUFFICIENT_ENCRYPTION = 15
     }
 }

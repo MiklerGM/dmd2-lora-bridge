@@ -10,6 +10,10 @@
 #include "nimble/nimble_port_freertos.h"
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
+#include "driver/gpio.h"
+
+/* Provided by the NimBLE port; the ESP-IDF examples forward-declare it the same way. */
+void ble_store_config_init(void);
 
 #define TAG "ble"
 
@@ -47,6 +51,29 @@ static size_t s_line_len;
 static bool s_discarding;
 
 static void advertise(void);
+
+/* Boot with this pin pulled low to forget the paired phone - the way back from a lost or
+ * replaced handset, which would otherwise leave the bridge permanently unusable. */
+#ifndef PIN_BOND_RESET
+#define PIN_BOND_RESET 0
+#endif
+
+/** True when a bond already exists and this is not it. */
+static bool is_stranger(uint16_t conn_handle) {
+    ble_addr_t bonded[MYNEWT_VAL(BLE_STORE_MAX_BONDS)];
+    int count = 0;
+    if (ble_store_util_bonded_peers(bonded, &count, sizeof(bonded) / sizeof(bonded[0])) != 0) {
+        return false;
+    }
+    if (count == 0) return false;   /* nobody has claimed this bridge yet */
+
+    struct ble_gap_conn_desc desc;
+    if (ble_gap_conn_find(conn_handle, &desc) != 0) return false;
+    for (int i = 0; i < count; i++) {
+        if (memcmp(&bonded[i], &desc.peer_id_addr, sizeof(ble_addr_t)) == 0) return false;
+    }
+    return true;
+}
 
 static void feed(const uint8_t *data, size_t len) {
     for (size_t i = 0; i < len; i++) {
@@ -92,7 +119,14 @@ static const struct ble_gatt_chr_def s_chrs[] = {
     {
         .uuid = &UUID_RX.u,
         .access_cb = on_rx,
-        .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
+        /*
+         * WRITE_ENC is the whole point: commands - CFG, TX, ECHO - are only accepted over an
+         * encrypted link, which means a peer that has bonded. Notifications are deliberately
+         * left open, because everything they carry also goes out over the air in clear, so
+         * locking them would cost compatibility for no privacy gained.
+         */
+        .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP |
+                 BLE_GATT_CHR_F_WRITE_ENC,
     },
     {
         .uuid = &UUID_TX.u,
@@ -117,6 +151,12 @@ static int on_gap(struct ble_gap_event *event, void *arg) {
     switch (event->type) {
         case BLE_GAP_EVENT_CONNECT:
             if (event->connect.status == 0) {
+                if (is_stranger(event->connect.conn_handle)) {
+                    ESP_LOGW(TAG, "rejecting unpaired peer; bridge is already claimed");
+                    ble_gap_terminate(event->connect.conn_handle,
+                                      BLE_ERR_REM_USER_CONN_TERM);
+                    break;
+                }
                 s_conn = event->connect.conn_handle;
                 s_line_len = 0;
                 s_discarding = false;
@@ -136,6 +176,18 @@ static int on_gap(struct ble_gap_event *event, void *arg) {
         case BLE_GAP_EVENT_ADV_COMPLETE:
             advertise();
             break;
+        case BLE_GAP_EVENT_ENC_CHANGE:
+            ESP_LOGI(TAG, "encryption %s", event->enc_change.status == 0 ? "on" : "FAILED");
+            break;
+        case BLE_GAP_EVENT_REPEAT_PAIRING: {
+            /* The phone forgot us but we still hold its key: drop the stale bond and let it
+             * pair again, rather than refusing forever. */
+            struct ble_gap_conn_desc desc;
+            if (ble_gap_conn_find(event->repeat_pairing.conn_handle, &desc) == 0) {
+                ble_store_util_delete_peer(&desc.peer_id_addr);
+            }
+            return BLE_GAP_REPEAT_PAIRING_RETRY;
+        }
         case BLE_GAP_EVENT_MTU:
             ESP_LOGI(TAG, "mtu now %d", event->mtu.value);
             break;
@@ -197,6 +249,29 @@ void ble_nus_init(const char *device_name, ble_nus_line_cb on_line) {
 
     ESP_ERROR_CHECK(nimble_port_init());
     ble_hs_cfg.sync_cb = on_sync;
+
+    /*
+     * Just Works pairing: the bridge has no display or keypad, so there is nothing to compare.
+     * That gives encryption without man-in-the-middle protection, and on its own would let
+     * anyone pair - so the first phone to bond claims the bridge and the rest are refused.
+     */
+    ble_hs_cfg.sm_bonding = 1;
+    ble_hs_cfg.sm_sc = 1;
+    ble_hs_cfg.sm_io_cap = BLE_HS_IO_NO_INPUT_OUTPUT;
+    ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+    ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+    ble_store_config_init();
+
+    gpio_config_t boot_pin = {
+        .pin_bit_mask = (1ULL << PIN_BOND_RESET),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+    };
+    gpio_config(&boot_pin);
+    if (gpio_get_level((gpio_num_t)PIN_BOND_RESET) == 0) {
+        ble_store_clear();
+        ESP_LOGW(TAG, "boot pin held low - paired phones forgotten");
+    }
 
     ble_svc_gap_init();
     ble_svc_gatt_init();
