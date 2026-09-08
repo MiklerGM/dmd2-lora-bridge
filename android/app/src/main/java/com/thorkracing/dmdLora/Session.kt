@@ -10,6 +10,9 @@ object Session {
     @Volatile var groupName: String? = null
     @Volatile var senderUserId: String? = null
 
+    /** Our own display name, learned from the roster DMD2 sends us. Chat is attributed to it. */
+    @Volatile var myDisplayName: String? = null
+
     // Radio config as last requested by DMD2. We report it back in STATUS_UPDATE.
     @Volatile var channel: Int = 18
     @Volatile var power: Int = 0

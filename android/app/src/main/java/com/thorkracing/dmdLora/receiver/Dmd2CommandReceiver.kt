@@ -45,6 +45,7 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
         // Knowing the group is enough to know the channel, so do not wait to be told one.
         Radio.deriveConfigIfUnset(groupId)
 
+        learnOwnName(json, sender)
         val riders = parseRiders(json)
         if (riders.isEmpty()) {
             EventLog.log("TX skipped — no usable riders in riders_json")
@@ -69,7 +70,11 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
         val groupId = Session.groupId ?: return
         val text = intent.getStringExtra(DmdLora.EX_MESSAGE) ?: return
         val packet = Codec.encodeChat(
-            groupId, Session.senderUserId.orEmpty(), "", text, Session.nextSeq()
+            groupId,
+            Session.senderUserId.orEmpty(),
+            Session.myDisplayName.orEmpty(),
+            text,
+            Session.nextSeq(),
         )
         val wire = Codec.toWire(packet)
         val queued = Radio.transmitChat(wire)
@@ -88,6 +93,25 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
         // Records the request; the service applies it once a radio is actually attached.
         Radio.requestConfig()
         LoraService.start(context)
+    }
+
+    /**
+     * The roster carries display names, including ours. Chat needs one - the wire has a field
+     * for it and a message from a blank sender is not much use to the person reading it.
+     */
+    private fun learnOwnName(json: String, senderUserId: String) {
+        if (!Session.myDisplayName.isNullOrEmpty() || senderUserId.isEmpty()) return
+        val arr = runCatching { JSONArray(json) }.getOrNull() ?: return
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            if (o.optString("user_id") != senderUserId) continue
+            val name = o.optString("display_name")
+            if (name.isNotEmpty()) {
+                Session.myDisplayName = name
+                EventLog.log("own display name: $name")
+            }
+            return
+        }
     }
 
     /** DMD2 sends full user ids outbound; the wire carries only their 16-bit hashes. */

@@ -123,6 +123,9 @@ class MainActivity : Activity() {
             addView(button("Inject rider") { inject() }, weight(1f))
             addView(walkButton, weight(1f))
             addView(button("Loopback") { loopback() }, weight(1f))
+            addView(button("Chat probe") {
+                Radio.sendLoopbackChat("loopback ${System.currentTimeMillis() % 100000}")
+            }, weight(1f))
         }
 
         val serviceButtons = LinearLayout(this).apply {

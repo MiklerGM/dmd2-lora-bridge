@@ -131,6 +131,30 @@ object Radio {
         return true
     }
 
+    /**
+     * Bench probe for the chat path: a message that claims to come from a peer, so an echoing
+     * bridge returns it and DMD2 should show it in the group chat.
+     */
+    fun sendLoopbackChat(text: String, peerId: String = LOOPBACK_PEER): Boolean {
+        val l = link
+        if (l == null || !l.connected) {
+            EventLog.log("chat probe skipped — no bridge connected")
+            return false
+        }
+        if (!configReady()) {
+            EventLog.log("chat probe skipped — radio has not confirmed its configuration")
+            return false
+        }
+        val group = Session.groupId
+        if (group.isNullOrEmpty()) {
+            EventLog.log("chat probe skipped — no active group yet")
+            return false
+        }
+        l.send(Codec.toWire(Codec.encodeChat(group, peerId, "Sim Peer", text, Session.nextSeq())))
+        EventLog.log("chat probe sent as ${"%04X".format(Codec.uidHash(peerId))}")
+        return true
+    }
+
     /** Queue a chat line. Unlike position, chat is never coalesced away. */
     fun transmitChat(wire: String): Boolean {
         val l = link
@@ -271,6 +295,7 @@ object Radio {
             }
             is RxAction.InjectChat -> {
                 val c = action.chat
+                EventLog.log("RX chat from ${c.senderName.ifEmpty { "%04X".format(c.senderHash) }}: ${c.text}")
                 Bridge.sendChatReceived(context, c.senderName, c.senderHash, c.text)
             }
             // Duplicates are the normal case, not a fault: every rider rebroadcasts its roster.
