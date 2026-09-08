@@ -56,6 +56,7 @@ class LoraService : Service() {
         // uncaught throw here takes the whole app down at exactly the wrong moment.
         try {
             startForeground(NOTIFICATION_ID, notification())
+            Session.serviceRunning = true
             EventLog.log("service created")
         } catch (e: Exception) {
             EventLog.log("cannot start in foreground (${e.javaClass.simpleName}); " +
@@ -83,6 +84,7 @@ class LoraService : Service() {
     }
 
     override fun onDestroy() {
+        Session.serviceRunning = false
         handler.removeCallbacks(heartbeat)
         handler.removeCallbacks(flusher)
         Radio.detach()

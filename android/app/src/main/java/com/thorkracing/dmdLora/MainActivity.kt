@@ -47,6 +47,8 @@ class MainActivity : Activity() {
     private lateinit var testPanel: LinearLayout
     private lateinit var rideTab: Button
     private lateinit var testTab: Button
+    private lateinit var startButton: Button
+    private lateinit var stopButton: Button
 
     private var walking = false
 
@@ -157,8 +159,10 @@ class MainActivity : Activity() {
         ridePanel = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(pad, 0, pad, dp(4))
-            addView(styled("Start", C.GO) { LoraService.start(this@MainActivity) }, weight(1f))
-            addView(styled("Stop", C.DANGER) { LoraService.stop(this@MainActivity) }, weight(0.8f))
+            startButton = styled("Start", C.GO) { LoraService.start(this@MainActivity) }
+            stopButton = styled("Stop", C.DANGER) { LoraService.stop(this@MainActivity) }
+            addView(startButton, weight(1f))
+            addView(stopButton, weight(0.8f))
             addView(button("Unpair") { Radio.forgetBridge() }, weight(0.8f))
             addView(button("Clear log") { EventLog.clear() }, weight(1f))
         }
@@ -290,10 +294,11 @@ class MainActivity : Activity() {
     // ---- rendering ----
 
     private fun renderStatus() {
+        updateButtons()
         val g = Session.groupId
         val radio = if (Session.radioAttached) Radio.linkState else "none"
         statusView.text = buildString {
-            append("service: "); append(if (isServiceLikelyUp()) "running" else "stopped")
+            append("service: "); append(if (Session.serviceRunning) "running" else "stopped")
             append("   radio: "); append(radio)
             append('\n')
             append("group: "); append(g ?: "—")
@@ -303,8 +308,18 @@ class MainActivity : Activity() {
         }
     }
 
-    /** No binder, so infer liveness from whether a heartbeat has run recently. Good enough here. */
-    private fun isServiceLikelyUp(): Boolean = Session.radioAttached || Session.packetsEncoded.get() > 0
+    /** Only the action that can do something is offered, so the buttons say the state too. */
+    private fun updateButtons() {
+        val running = Session.serviceRunning
+        setActionEnabled(startButton, !running)
+        setActionEnabled(stopButton, running)
+    }
+
+    private fun setActionEnabled(b: Button, enabled: Boolean) {
+        b.isEnabled = enabled
+        // The custom background does not dim itself the way the platform one would.
+        b.alpha = if (enabled) 1f else 0.35f
+    }
 
     private fun bridgeFreq(): String = "%.3f MHz".format(850.125 + Session.channel)
 

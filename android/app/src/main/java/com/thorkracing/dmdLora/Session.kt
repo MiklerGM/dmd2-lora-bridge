@@ -23,6 +23,10 @@ object Session {
      *  milestone 1, because DMD2 sends us nothing at all unless it believes a radio is up. */
     @Volatile var radioAttached: Boolean = false
 
+    /** Set by the service itself. The UI used to infer this from counters, which stayed true
+     *  forever once a single packet had been encoded. */
+    @Volatile var serviceRunning: Boolean = false
+
     // Incremented from the receiver and the BLE callback thread; volatile would not make
     // ++ atomic, and these are reported to DMD2 as counters.
     val packetsEncoded = AtomicLong(0)
