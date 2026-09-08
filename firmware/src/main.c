@@ -23,6 +23,7 @@
 #include <string.h>
 
 #include "ble_nus.h"
+#include "driver/gpio.h"
 #include "e220.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -43,6 +44,17 @@
  * what is licensed where the bridge is used.
  */
 #define MIN_POWER_INDEX 3
+
+/*
+ * Hold this pin (the BOOT button on most boards) for a few seconds to hand the bridge to a
+ * different phone. It is deliberately a button and not a timeout: the bike spends much of its
+ * life parked and unattended, so "open up when the trusted phone is not around" would mean
+ * "open up to whoever waits for the owner to leave". A button needs someone standing there.
+ */
+#ifndef PIN_PAIR_BUTTON
+#define PIN_PAIR_BUTTON 0
+#endif
+#define PAIR_HOLD_MS 3000
 
 static e220_config_t s_cfg;
 static char s_fw[48] = "";
@@ -234,6 +246,27 @@ static void tx_task(void *arg) {
     }
 }
 
+static void pair_button_task(void *arg) {
+    (void)arg;
+    const TickType_t poll = pdMS_TO_TICKS(100);
+    int held_ms = 0;
+    bool fired = false;
+    for (;;) {
+        if (gpio_get_level((gpio_num_t)PIN_PAIR_BUTTON) == 0) {
+            held_ms += 100;
+            if (held_ms >= PAIR_HOLD_MS && !fired) {
+                fired = true;   /* once per press, not once per poll */
+                ESP_LOGW(TAG, "pair button held - forgetting the paired phone");
+                ble_nus_forget_bonds();
+            }
+        } else {
+            held_ms = 0;
+            fired = false;
+        }
+        vTaskDelay(poll);
+    }
+}
+
 static void rx_task(void *arg) {
     (void)arg;
     static uint8_t buf[PACKET_MAX + 1];
@@ -272,6 +305,14 @@ void app_main(void) {
     }
 
     ble_nus_init("DMD-LoRa-Bridge", on_ble_line);
+
+    gpio_config_t pair_pin = {
+        .pin_bit_mask = (1ULL << PIN_PAIR_BUTTON),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+    };
+    gpio_config(&pair_pin);
+    xTaskCreate(pair_button_task, "pair_btn", 2560, NULL, 3, NULL);
 
     xTaskCreate(tx_task, "lora_tx", 4096, NULL, 6, NULL);
     xTaskCreate(rx_task, "lora_rx", 4096, NULL, 6, NULL);
