@@ -3,6 +3,15 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
+// Stamp the build with its commit. The firmware prints its version at boot, which is the only
+// reason a firmware/APK mismatch was ever noticed; the APK had no such thing.
+def gitSha = "nogit"
+try {
+    gitSha = providers.exec { commandLine 'git', 'rev-parse', '--short', 'HEAD' }
+            .standardOutput.asText.get().trim()
+} catch (ignored) {
+}
+
 android {
     namespace 'com.thorkracing.dmdLora'
     compileSdk 35
@@ -17,7 +26,7 @@ android {
         minSdk 31
         targetSdk 35
         versionCode 1
-        versionName '0.1'
+        versionName "0.1+$gitSha"
     }
 
     buildTypes {

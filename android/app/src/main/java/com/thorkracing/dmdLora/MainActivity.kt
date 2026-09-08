@@ -139,7 +139,7 @@ class MainActivity : Activity() {
             fitsSystemWindows = true
             setPadding(0, dp(24), 0, 0)
             addView(TextView(this@MainActivity).apply {
-                text = "DMD LoRa Bridge"
+                text = "DMD LoRa Bridge  ${appVersion()}"
                 textSize = 18f
                 gravity = Gravity.CENTER
                 setPadding(0, 0, 0, dp(6))
@@ -287,6 +287,11 @@ class MainActivity : Activity() {
     // Always a dot, whatever the phone locale: these strings are read back by readDouble,
     // and a German-locale comma would fail to parse and collapse the field to zero.
     private fun fmt(v: Double): String = String.format(Locale.US, "%.6f", v)
+
+    /** Shown in the header so a phone/firmware mismatch is visible, not guessed at. */
+    private fun appVersion(): String =
+        runCatching { packageManager.getPackageInfo(packageName, 0).versionName }
+            .getOrNull().orEmpty()
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 }
