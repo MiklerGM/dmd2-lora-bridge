@@ -122,7 +122,19 @@ Only once M6 passes:
 - Dedup ring, sequence handling, stale-position expiry.
 - BLE reconnect, backgrounding, Android battery-optimisation exemptions, boot restart.
 - Power budget and an enclosure for the bridge; antenna mounting on the bike.
-- Chat (`SEND_CHAT_MESSAGE` / `CHAT_MESSAGE_RECEIVED`) — the protocol supports it; low priority.
+- ~~Chat~~ — **done and proven on hardware, 2026-09-08.** The full path runs: a probe claiming
+  to come from a peer went out over BLE, returned through the bridge, was decoded and injected,
+  and DMD2 logged receiving it:
+
+  ```
+  19:19:17.486  chat probe sent as 71E0
+  19:19:17.538  RX chat from Sim Peer: loopback 57484      (52 ms)
+  19:19:17.551  DMD2: CHAT RX from DMDLora: sender=Sim Peer hash=29152 msg=14B
+  ```
+
+  Outgoing messages are signed with the rider's own display name, learned from the roster DMD2
+  already sends, falling back to the `Rider XXXX` shape DMD2 itself uses when the roster has
+  no name for us.
 - **Match the bridge by device name, not the service UUID alone.** Observed on a real phone:
   the scan filters only on the Nordic UART Service UUID, which many unrelated DIY/IoT devices
   also advertise, so the app repeatedly connected to strangers' devices (GATT status 133/147)
