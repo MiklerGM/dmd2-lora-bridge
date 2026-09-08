@@ -46,6 +46,11 @@ object Radio {
 
     val connected: Boolean get() = link?.connected == true
 
+    /** Forget the paired bridge so another can be adopted. */
+    fun forgetBridge() {
+        (link as? BleRadioLink)?.forgetBridge()
+    }
+
     /** What the transport is doing, for the status line. */
     val linkState: String get() = link?.state ?: "no link"
 

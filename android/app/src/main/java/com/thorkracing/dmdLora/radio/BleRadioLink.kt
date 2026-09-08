@@ -43,6 +43,7 @@ class BleRadioLink(context: Context) : RadioLink {
     @Volatile private var txChar: BluetoothGattCharacteristic? = null  // we get notified here
     @Volatile private var mtu = DEFAULT_MTU
     @Volatile private var scanning = false
+    @Volatile private var foundName: String? = null
     @Volatile private var closed = false
 
     private val inbound = StringBuilder()
@@ -106,6 +107,23 @@ class BleRadioLink(context: Context) : RadioLink {
         }, SCAN_TIMEOUT_MS)
     }
 
+    private fun prefs() = appContext.getSharedPreferences("bridge", Context.MODE_PRIVATE)
+
+    /** The bridge this phone has settled on, if any. */
+    fun pinnedBridge(): String? = prefs().getString(KEY_PINNED, null)
+
+    private fun rememberBridge(name: String) {
+        if (pinnedBridge() == name) return
+        prefs().edit().putString(KEY_PINNED, name).apply()
+        EventLog.log("paired with $name — will ignore other bridges")
+    }
+
+    /** Forget the pinned bridge, so the next scan may adopt a different one. */
+    fun forgetBridge() {
+        prefs().edit().remove(KEY_PINNED).apply()
+        EventLog.log("bridge pairing cleared — next scan will adopt any bridge")
+    }
+
     private fun hasBlePermissions(): Boolean =
         appContext.checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED &&
             appContext.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
@@ -134,10 +152,19 @@ class BleRadioLink(context: Context) : RadioLink {
             // real phone this filter alone kept connecting to strangers' radios. The name
             // comes back in the scan response, so an active scan sees it.
             val name = result.scanRecord?.deviceName ?: runCatching { device.name }.getOrNull()
-            if (name != BRIDGE_NAME) {
+            if (name == null || !name.startsWith(BRIDGE_NAME_PREFIX)) {
                 EventLog.log("BLE ignoring ${device.address} (name=${name ?: "unknown"})")
                 return
             }
+            // On a group ride several bridges are in range and they all answer to the prefix.
+            // Once we have used one, stay with it, or two riders end up fighting over one
+            // radio while the other has none.
+            val pinned = pinnedBridge()
+            if (pinned != null && pinned != name) {
+                EventLog.log("BLE ignoring $name (paired with $pinned)")
+                return
+            }
+            foundName = name
             stopScan()
             state = "connecting"
             EventLog.log("BLE found ${device.address}, connecting")
@@ -226,7 +253,8 @@ class BleRadioLink(context: Context) : RadioLink {
             }
             connected = true
             state = "connected"
-            EventLog.log("BLE bridge ready")
+            foundName?.let { rememberBridge(it) }
+            EventLog.log("BLE bridge ready${foundName?.let { " ($it)" } ?: ""}")
             // A fresh link means a module on unknown registers - a new bridge, or one that
             // rebooted - so the session state has to be invalidated before anything is sent.
             onConnected?.invoke()
@@ -388,7 +416,9 @@ class BleRadioLink(context: Context) : RadioLink {
         val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
         /** Must match the name the firmware advertises. */
-        const val BRIDGE_NAME = "DMD-LoRa-Bridge"
+        /** Firmware advertises this plus a per-board suffix, e.g. DMD-LoRa-Bridge-3F42. */
+        const val BRIDGE_NAME_PREFIX = "DMD-LoRa-Bridge"
+        private const val KEY_PINNED = "pinned_bridge"
 
         private const val DEFAULT_MTU = 23
         private const val PREFERRED_MTU = 247

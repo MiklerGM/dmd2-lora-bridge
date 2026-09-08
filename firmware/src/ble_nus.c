@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "esp_log.h"
+#include "esp_mac.h"
 #include "host/ble_hs.h"
 #include "host/util/util.h"
 #include "nimble/nimble_port.h"
@@ -27,6 +28,13 @@ static const ble_uuid128_t UUID_TX = BLE_UUID128_INIT(
 
 static ble_nus_line_cb s_on_line;
 static const char *s_name;
+/*
+ * Every bridge advertised the same name, so on a group ride one rider's phone could grab
+ * another rider's bridge - and since only one central may connect, the other rider would be
+ * left with no radio at all. The name now carries the last two bytes of this board's MAC so
+ * each bridge is individually addressable, while the shared prefix keeps them all discoverable.
+ */
+static char s_name_buf[32];
 static uint16_t s_conn = BLE_HS_CONN_HANDLE_NONE;
 static uint16_t s_tx_handle;
 static uint8_t s_addr_type;
@@ -181,7 +189,10 @@ static void host_task(void *param) {
 }
 
 void ble_nus_init(const char *device_name, ble_nus_line_cb on_line) {
-    s_name = device_name;
+    uint8_t mac[6] = {0};
+    esp_read_mac(mac, ESP_MAC_BT);
+    snprintf(s_name_buf, sizeof(s_name_buf), "%s-%02X%02X", device_name, mac[4], mac[5]);
+    s_name = s_name_buf;
     s_on_line = on_line;
 
     ESP_ERROR_CHECK(nimble_port_init());
@@ -191,7 +202,8 @@ void ble_nus_init(const char *device_name, ble_nus_line_cb on_line) {
     ble_svc_gatt_init();
     ESP_ERROR_CHECK(ble_gatts_count_cfg(s_svcs));
     ESP_ERROR_CHECK(ble_gatts_add_svcs(s_svcs));
-    ESP_ERROR_CHECK(ble_svc_gap_device_name_set(device_name));
+    ESP_ERROR_CHECK(ble_svc_gap_device_name_set(s_name));
+    ESP_LOGI(TAG, "advertising as %s", s_name);
 
     nimble_port_freertos_init(host_task);
 }

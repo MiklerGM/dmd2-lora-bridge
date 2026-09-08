@@ -130,6 +130,7 @@ class MainActivity : Activity() {
             setPadding(pad, 0, pad, dp(4))
             addView(button("Start service") { LoraService.start(this@MainActivity) }, weight(1f))
             addView(button("Stop") { LoraService.stop(this@MainActivity) }, weight(0.7f))
+            addView(button("Unpair") { Radio.forgetBridge() }, weight(0.8f))
             addView(button("Clear log") { EventLog.clear() }, weight(1f))
         }
 
