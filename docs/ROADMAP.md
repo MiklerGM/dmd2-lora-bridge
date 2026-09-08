@@ -70,13 +70,24 @@ repack, renders a third-party data source as a native group member.
 
 ---
 
-## M4 — ESP32 bridge  *(hardware arrives)* — **built and compiling, awaiting hardware**
+## M4 — ESP32 bridge — **PROVEN on hardware**
 
 BLE (Nordic UART Service) ↔ UART to the E220, plus module configuration commands.
 Start from the `remote-serial` skeleton; WiFi/TCP is an acceptable stand-in for BLE at this stage.
 
-**Result:** firmware builds (RAM 9.4%, flash 30.6%) and the phone-side BLE client is written.
-Neither has met real hardware.
+**Result [TEST], 2026-09-08:** flashed to an ESP32-WROOM with no LoRa module attached. The
+phone found it by name, negotiated MTU 247, and the full chain ran end to end — DMD2 handing
+over a position, the codec, BLE framing, the bridge, and back:
+
+```
+19:12:06.218  loopback sent as 71E0 -> expect it back
+19:12:06.281  RX 1 rider(s) from 71E0                    (63 ms round trip)
+19:12:06.284  inject -> DMD2: 1 rider(s)
+19:12:06.290  DMD2: [Merger] received=1 created=1 memberCount=4
+```
+
+DMD2's own merger confirms it created the rider — its member count went from 3 to 4. Everything
+but the RF itself is now proven on hardware; the bridge's echo mode stood in for the radio.
 
 **Accept:** phone sends an arbitrary line, it appears on the module UART, and bytes from the
 module arrive back at the phone. Module reports its firmware code and the applied config.

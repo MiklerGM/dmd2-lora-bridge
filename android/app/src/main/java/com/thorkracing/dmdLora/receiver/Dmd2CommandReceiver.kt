@@ -57,8 +57,10 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
         val outcome = Radio.transmit(wire)
         // Compact and truthful: the old line claimed "no radio" for a packet merely held by
         // pacing, while the radio was connected.
+        // Key on the kind of outcome, not the text: "held 918ms" differs every time, so
+        // including the number made every line unique and the throttle a no-op.
         EventLog.logThrottled(
-            "tx-$outcome",
+            "tx-" + outcome.substringBefore(' '),
             "TX ${riders.size} rider(s) ${packet.size}B · $outcome · ${wire.take(10)}…",
         )
     }
