@@ -19,4 +19,14 @@ apk:
 	@ls -l dmd-lora-bridge-$$(git rev-parse --short HEAD).apk
 	@sha256sum dmd-lora-bridge-$$(git rev-parse --short HEAD).apk
 
-.PHONY: check check-android check-firmware apk
+# Signed build for handing to other riders. Needs android/keystore.properties.
+release:
+	@test -f android/keystore.properties || \
+	    { echo "android/keystore.properties missing - cannot sign"; exit 1; }
+	@cd android && ./gradlew --console=plain -q :app:assembleRelease
+	@cp android/app/build/outputs/apk/release/app-release.apk \
+	    dmd-lora-bridge-$$(git rev-parse --short HEAD)-release.apk
+	@ls -l dmd-lora-bridge-$$(git rev-parse --short HEAD)-release.apk
+	@sha256sum dmd-lora-bridge-$$(git rev-parse --short HEAD)-release.apk
+
+.PHONY: check check-android check-firmware apk release

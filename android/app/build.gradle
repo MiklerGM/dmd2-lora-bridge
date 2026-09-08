@@ -12,6 +12,14 @@ try {
 } catch (ignored) {
 }
 
+// Signing identity lives outside the repository; without it a release build is simply
+// unsigned, so the project still builds for anyone who does not have the key.
+def keystorePropsFile = rootProject.file("keystore.properties")
+def keystoreProps = new Properties()
+if (keystorePropsFile.exists()) {
+    keystorePropsFile.withInputStream { keystoreProps.load(it) }
+}
+
 android {
     namespace 'com.thorkracing.dmdLora'
     compileSdk 35
@@ -29,8 +37,25 @@ android {
         versionName "0.1+$gitSha"
     }
 
+    signingConfigs {
+        release {
+            if (keystorePropsFile.exists()) {
+                storeFile file(keystoreProps['storeFile'])
+                storePassword keystoreProps['storePassword']
+                keyAlias keystoreProps['keyAlias']
+                keyPassword keystoreProps['keyPassword']
+            }
+        }
+    }
+
     buildTypes {
-        release { minifyEnabled false }
+        release {
+            // Left off deliberately. R8 buys a smaller download and nothing else here, while
+            // this app depends on names staying put: DMD2 addresses the receiver and service
+            // by exact ComponentName, and the unpair path reaches removeBond by reflection.
+            minifyEnabled false
+            signingConfig keystorePropsFile.exists() ? signingConfigs.release : null
+        }
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
