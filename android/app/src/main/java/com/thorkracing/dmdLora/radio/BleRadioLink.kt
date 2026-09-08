@@ -48,6 +48,7 @@ class BleRadioLink(context: Context) : RadioLink {
     private val inbound = StringBuilder()
     private val outbound = ConcurrentLinkedQueue<ByteArray>()
     private var writeInFlight = false
+    private var writeFailures = 0
 
     @Volatile override var connected: Boolean = false
         private set
@@ -161,7 +162,11 @@ class BleRadioLink(context: Context) : RadioLink {
                 EventLog.log("BLE connected, discovering services")
                 // A full packet is ~270 base64 characters; the 23-byte default would fragment
                 // every single one. The central has to ask for this.
-                g.requestMtu(PREFERRED_MTU)
+                if (!g.requestMtu(PREFERRED_MTU)) {
+                    // Not fatal, but onMtuChanged will never arrive, so go on without it.
+                    EventLog.log("BLE mtu request refused; continuing at $mtu")
+                    if (!g.discoverServices()) failLink("service discovery refused")
+                }
             } else {
                 EventLog.log("BLE disconnected (status $status)")
                 teardown()
@@ -170,38 +175,61 @@ class BleRadioLink(context: Context) : RadioLink {
         }
 
         override fun onMtuChanged(g: BluetoothGatt, newMtu: Int, status: Int) {
-            mtu = newMtu
-            EventLog.log("BLE mtu = $newMtu")
-            g.discoverServices()
+            // A refused negotiation is survivable — we just stay on the default and fragment
+            // more — but a failed discovery is not.
+            if (status == BluetoothGatt.GATT_SUCCESS) mtu = newMtu
+            EventLog.log("BLE mtu = $mtu")
+            if (!g.discoverServices()) failLink("service discovery refused")
         }
 
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                failLink("service discovery failed ($status)")
+                return
+            }
             val service = g.getService(SERVICE_UUID)
             if (service == null) {
-                EventLog.log("BLE bridge service not found")
+                // Do not sit here connected-but-useless: drop it and look for a real bridge.
+                failLink("bridge service not found")
                 return
             }
             rxChar = service.getCharacteristic(RX_UUID)
             txChar = service.getCharacteristic(TX_UUID)
             val tx = txChar
             if (rxChar == null || tx == null) {
-                EventLog.log("BLE bridge characteristics missing")
+                failLink("bridge characteristics missing")
                 return
             }
-            g.setCharacteristicNotification(tx, true)
-            tx.getDescriptor(CCCD_UUID)?.let { cccd ->
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    g.writeDescriptor(cccd, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
-                } else {
-                    @Suppress("DEPRECATION")
-                    cccd.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                    @Suppress("DEPRECATION")
-                    g.writeDescriptor(cccd)
-                }
+            if (!g.setCharacteristicNotification(tx, true)) {
+                failLink("could not enable notifications")
+                return
+            }
+            val cccd = tx.getDescriptor(CCCD_UUID)
+            if (cccd == null) {
+                failLink("notification descriptor missing")
+                return
+            }
+            val subscribed = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                g.writeDescriptor(cccd, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) ==
+                    BluetoothStatusCodes.SUCCESS
+            } else {
+                @Suppress("DEPRECATION")
+                cccd.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                @Suppress("DEPRECATION")
+                g.writeDescriptor(cccd)
+            }
+            if (!subscribed) {
+                // Without the subscription nothing would ever arrive from the bridge, and the
+                // link would look healthy while being deaf.
+                failLink("could not subscribe to notifications")
+                return
             }
             connected = true
             state = "connected"
             EventLog.log("BLE bridge ready")
+            // A fresh link means a module on unknown registers - a new bridge, or one that
+            // rebooted - so the session state has to be invalidated before anything is sent.
+            onConnected?.invoke()
             sendLine("STATUS")
         }
 
@@ -218,8 +246,22 @@ class BleRadioLink(context: Context) : RadioLink {
         override fun onCharacteristicWrite(
             g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int,
         ) {
-            synchronized(this@BleRadioLink) { writeInFlight = false }
-            pump()
+            val giveUp: Boolean
+            synchronized(this@BleRadioLink) {
+                writeInFlight = false
+                if (status == BluetoothGatt.GATT_SUCCESS) {
+                    outbound.poll()          // confirmed: it can go now
+                    writeFailures = 0
+                } else {
+                    // A dropped fragment leaves the peer with half a line, so retry the same
+                    // chunk; if it keeps failing the link is no good and reconnecting is safer
+                    // than emitting a torn command.
+                    writeFailures++
+                    EventLog.log("BLE write failed ($status), attempt $writeFailures")
+                }
+                giveUp = writeFailures > MAX_WRITE_FAILURES
+            }
+            if (giveUp) failLink("writes keep failing") else pump()
         }
     }
 
@@ -300,12 +342,19 @@ class BleRadioLink(context: Context) : RadioLink {
         }
 
         if (ok) {
-            outbound.poll()
+            // Left in the queue until onCharacteristicWrite confirms it actually went out.
             writeInFlight = true
         } else {
             // Busy or not ready. Leave it queued and come back to it.
             handler.postDelayed({ pump() }, WRITE_RETRY_MS)
         }
+    }
+
+    /** Abandon a link that cannot be used and go back to scanning. */
+    private fun failLink(reason: String) {
+        EventLog.log("BLE $reason — reconnecting")
+        teardown()
+        retryLater()
     }
 
     private fun teardown() {
@@ -316,6 +365,7 @@ class BleRadioLink(context: Context) : RadioLink {
         mtu = DEFAULT_MTU
         synchronized(this) {
             writeInFlight = false
+            writeFailures = 0
             outbound.clear()
             inbound.setLength(0)
         }
@@ -347,5 +397,6 @@ class BleRadioLink(context: Context) : RadioLink {
         private const val SCAN_TIMEOUT_MS = 30_000L
         private const val RETRY_MS = 10_000L
         private const val WRITE_RETRY_MS = 50L
+        private const val MAX_WRITE_FAILURES = 3
     }
 }

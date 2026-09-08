@@ -36,6 +36,14 @@
 #define IDLE_GAP_MS 50
 #define RX_POLL_MS 100
 
+/*
+ * Weakest power index the firmware will accept (0=30, 1=27, 2=24, 3=21 dBm). The BLE command
+ * surface is unauthenticated - anything in range can talk to it - so the regulatory limit is
+ * enforced on the device, not left to a well-behaved client. Raise deliberately, and only to
+ * what is licensed where the bridge is used.
+ */
+#define MIN_POWER_INDEX 3
+
 static e220_config_t s_cfg;
 static char s_fw[48] = "";
 static QueueHandle_t s_tx_queue; /* char* owned by the queue */
@@ -93,6 +101,12 @@ static void handle_cfg(const char *args) {
     }
     if (kv_int(args, "power", &v)) {
         if (!in_range(v, 0, 3)) goto bad_range;
+        /* Index 0 is 30 dBm. Anyone in Bluetooth range can send CFG, so the limit has to live
+         * here as well as on the phone - a clamp only one side enforces is not a clamp. */
+        if (v < MIN_POWER_INDEX) {
+            ESP_LOGW(TAG, "power index %ld requested, clamped to %d", v, MIN_POWER_INDEX);
+            v = MIN_POWER_INDEX;
+        }
         next.power = (uint8_t)v;
     }
     if (kv_int(args, "packet", &v)) {
@@ -106,8 +120,22 @@ static void handle_cfg(const char *args) {
     if (kv_int(args, "trans", &v)) next.transparent = (v != 0);
     if (kv_int(args, "lbt", &v)) next.lbt = (v != 0);
 
+    if (s_echo) {
+        // Nothing to configure; a simulated radio accepts the settings so the phone can
+        // confirm them and the rest of the chain behaves exactly as it will with hardware.
+        s_cfg = next;
+        ble_nus_send_line("OK");
+        send_status();
+        return;
+    }
     if (e220_apply(&next)) {
         s_cfg = next;
+        if (s_echo) {
+            // A real module answered, so stop pretending to be one - otherwise every
+            // transmission keeps looping back to the phone and never reaches the air.
+            s_echo = false;
+            ESP_LOGI(TAG, "module answered - echo (simulation) mode OFF");
+        }
         ble_nus_send_line("OK");
         send_status();
     } else {
@@ -223,6 +251,7 @@ void app_main(void) {
     ESP_ERROR_CHECK(err);
 
     s_cfg = E220_GROUP_CONFIG;
+    if (s_cfg.power < MIN_POWER_INDEX) s_cfg.power = MIN_POWER_INDEX;
     s_tx_queue = xQueueCreate(8, sizeof(char *));
 
     e220_init();

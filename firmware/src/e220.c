@@ -122,13 +122,24 @@ bool e220_apply(const e220_config_t *cfg) {
     uart_write_bytes(E220_UART, (const char *)frame, sizeof(frame));
     wait_aux(500);
 
-    uint8_t resp[16] = {0};
+    uint8_t resp[3 + E220_REG_COUNT] = {0};
     int n = uart_read_bytes(E220_UART, resp, sizeof(resp), pdMS_TO_TICKS(500));
     e220_mode_normal();
     uart_unlock();
 
-    /* The module answers a write with the same block, headed C1. */
-    bool ok = (n >= 3) && (resp[0] == CMD_HEAD_READ || resp[0] == CMD_HEAD_WRITE);
+    /*
+     * The module answers a write with the full block it now holds: C1, start address, length,
+     * then the parameters. Accepting "three bytes starting with C0/C1" would call a rejected
+     * or truncated write a success and leave the radio on the old channel, so compare the
+     * registers that came back against the ones we asked for.
+     */
+    bool ok = (n == (int)sizeof(resp)) &&
+              (resp[0] == CMD_HEAD_READ || resp[0] == CMD_HEAD_WRITE) &&
+              (resp[2] == E220_REG_COUNT) &&
+              (memcmp(&resp[3], &frame[3], E220_REG_COUNT) == 0);
+    if (!ok && n > 0) {
+        ESP_LOGW(TAG, "apply: unexpected reply (%d bytes, head 0x%02X)", n, resp[0]);
+    }
     ESP_LOGI(TAG, "apply ch=%u rate=%u power=%u lbt=%d -> %s (%d bytes back)",
              cfg->channel, cfg->air_rate, cfg->power, (int)cfg->lbt, ok ? "ok" : "FAILED", n);
     return ok;

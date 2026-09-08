@@ -39,9 +39,9 @@ class LoraService : Service() {
 
     private val heartbeat = object : Runnable {
         override fun run() {
-            // Claim connected even with no radio attached: DMD2 sends us nothing at all until
-            // it believes a radio is up, and milestone 1 is precisely about getting it to talk.
-            Bridge.sendStatusUpdate(this@LoraService, connected = true)
+            // Report the truth. Claiming a working radio while the bridge is unreachable makes
+            // DMD2 hand us positions we can only drop, and hides the fault from the rider.
+            Bridge.sendStatusUpdate(this@LoraService, connected = Radio.connected)
             handler.postDelayed(this, HEARTBEAT_MS)
         }
     }

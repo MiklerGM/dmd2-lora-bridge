@@ -1,6 +1,7 @@
 package com.thorkracing.dmdLora.radio
 
 import android.content.Context
+import android.os.SystemClock
 import com.thorkracing.dmdLora.Bridge
 import com.thorkracing.dmdLora.EventLog
 import com.thorkracing.dmdLora.Session
@@ -36,7 +37,9 @@ object Radio {
     @Volatile private var desired: RadioConfig? = null
     @Volatile private var applied: RadioConfig? = null
     @Volatile private var lastConfigSentMs = 0L
+    @Volatile private var lastGateLogMs = 0L
     private const val CONFIG_RETRY_MS = 3_000L
+    private const val GATE_LOG_INTERVAL_MS = 10_000L
 
     /** Identity the loopback probe pretends to be. */
     const val LOOPBACK_PEER = "sim-peer"
@@ -77,7 +80,8 @@ object Radio {
     fun transmit(wire: String): Boolean {
         val l = link
         if (l == null || !l.connected) return false
-        val now = System.currentTimeMillis()
+        if (!configReady()) { noteGated("position"); return false }
+        val now = nowMs()
         val send = scheduler.offer(wire, now)
         if (send == null) {
             EventLog.log("TX held ${scheduler.waitMs(now)} ms, newest position kept")
@@ -103,6 +107,10 @@ object Radio {
             EventLog.log("loopback skipped — no bridge connected")
             return false
         }
+        if (!configReady()) {
+            EventLog.log("loopback skipped — radio has not confirmed its configuration")
+            return false
+        }
         val group = Session.groupId
         if (group.isNullOrEmpty()) {
             // Both the group hash and the XOR pad come from the group id, so without one the
@@ -121,6 +129,7 @@ object Radio {
     fun transmitChat(wire: String): Boolean {
         val l = link
         if (l == null || !l.connected) return false
+        if (!configReady()) { noteGated("chat"); return false }
         chatQueue.add(wire)
         return true
     }
@@ -140,13 +149,37 @@ object Radio {
     /** The bridge reports its live registers here; a match confirms our configuration landed. */
     private fun onBridgeStatus(status: String) {
         val want = desired ?: return
-        val ch = parseField(status, "ch=") ?: return
+        // Every field we asked for has to come back, not just the two that are easy to read:
+        // a matching channel and power says nothing about whether LBT took effect.
+        val ch = parseField(status, "ch=")
         val power = parseField(status, "power=")
-        if (ch == want.channel && (power == null || power == want.powerIndex)) {
-            if (applied != want) EventLog.log("radio config confirmed: ch=$ch")
+        val lbt = parseField(status, "lbt=")
+        if (ch == null || power == null || lbt == null) return
+        if (ch == want.channel && power == want.powerIndex && (lbt != 0) == want.lbt) {
+            if (applied != want) EventLog.log("radio config confirmed: ch=$ch power=$power lbt=$lbt")
             applied = want
+        } else if (applied != null) {
+            EventLog.log("radio config drifted (bridge reports ch=$ch power=$power lbt=$lbt)")
+            applied = null
         }
     }
+
+    /** True once the bridge has confirmed it is running the settings DMD2 asked for. */
+    private fun configReady(): Boolean {
+        val want = desired ?: return false
+        return applied == want
+    }
+
+    /** The gate is normal while a group starts up, so say so occasionally rather than at 1 Hz. */
+    private fun noteGated(what: String) {
+        val now = nowMs()
+        if (now - lastGateLogMs < GATE_LOG_INTERVAL_MS) return
+        lastGateLogMs = now
+        EventLog.log("$what held — waiting for the radio to confirm its configuration")
+    }
+
+    /** Monotonic: pacing must not stall if the wall clock is moved backwards. */
+    private fun nowMs(): Long = SystemClock.elapsedRealtime()
 
     private fun parseField(s: String, key: String): Int? {
         val i = s.indexOf(key)
@@ -165,7 +198,7 @@ object Radio {
     fun tick() {
         val l = link ?: return
         if (!l.connected) return
-        val now = System.currentTimeMillis()
+        val now = nowMs()
 
         // Push configuration until the bridge confirms it via ST; do not assume it landed.
         val want = desired
@@ -174,6 +207,10 @@ object Radio {
             l.configure(want)
             lastConfigSentMs = now
         }
+
+        // Nothing goes out until the bridge has confirmed the requested settings: a packet
+        // sent on the previous channel or PHY is not merely lost, it is transmitted wrongly.
+        if (!configReady()) { noteGated("traffic"); return }
 
         // One transmission per pacing window: chat first (rare, must not drop), else position.
         if (chatQueue.peek() != null) {
