@@ -20,7 +20,11 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent?) {
         val action = intent?.action ?: return
-        EventLog.log("RX intent $action  ${describeExtras(intent)}")
+        // SEND_GROUP_DATA arrives about once a second and its extras carry the whole roster;
+        // dumping it every time buries everything else. The rare commands stay verbose.
+        if (action != DmdLora.ACTION_SEND_GROUP_DATA) {
+            EventLog.log("RX intent $action  ${describeExtras(intent)}")
+        }
 
         when (action) {
             DmdLora.ACTION_SEND_GROUP_DATA -> onSendGroupData(intent)
@@ -48,9 +52,12 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
         val packet = Codec.encodeGroup(groupId, sender, riders, Session.nextSeq())
         Session.packetsEncoded.incrementAndGet()
         val wire = Codec.toWire(packet)
-        val sent = Radio.transmit(wire)
-        EventLog.log(
-            "TX ${riders.size} rider(s), ${packet.size} B ${if (sent) "->" else "(no radio)"} $wire"
+        val outcome = Radio.transmit(wire)
+        // Compact and truthful: the old line claimed "no radio" for a packet merely held by
+        // pacing, while the radio was connected.
+        EventLog.logThrottled(
+            "tx-$outcome",
+            "TX ${riders.size} rider(s) ${packet.size}B · $outcome · ${wire.take(10)}…",
         )
     }
 
@@ -62,7 +69,7 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
         )
         val wire = Codec.toWire(packet)
         val queued = Radio.transmitChat(wire)
-        EventLog.log("TX chat ${packet.size} B ${if (queued) "queued" else "(no radio)"}")
+        EventLog.log("TX chat ${packet.size} B ${if (queued) "queued" else "not queued"}")
     }
 
     private fun onSetFrequency(context: Context, intent: Intent) {

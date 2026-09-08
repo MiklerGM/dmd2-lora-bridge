@@ -21,9 +21,24 @@ object EventLog {
         onChange?.invoke()
     }
 
+    private val lastLogged = HashMap<String, Long>()
+
+    /**
+     * For events that repeat every cycle. They matter the first time and then only as a
+     * heartbeat, so at 1 Hz they drown out the one line you are waiting for.
+     */
+    @Synchronized
+    fun logThrottled(key: String, msg: String, intervalMs: Long = 15_000L) {
+        val now = System.currentTimeMillis()
+        val last = lastLogged[key]
+        if (last != null && now - last < intervalMs) return
+        lastLogged[key] = now
+        log(msg)
+    }
+
     @Synchronized
     fun snapshot(): List<String> = lines.toList().asReversed()
 
     @Synchronized
-    fun clear() { lines.clear(); onChange?.invoke() }
+    fun clear() { lines.clear(); lastLogged.clear(); onChange?.invoke() }
 }

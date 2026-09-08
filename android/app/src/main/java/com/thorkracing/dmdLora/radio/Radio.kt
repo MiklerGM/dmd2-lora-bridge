@@ -82,18 +82,15 @@ object Radio {
      * and supersedes anything already waiting, so [flush] always sends the freshest position
      * rather than a queued stale one.
      */
-    fun transmit(wire: String): Boolean {
+    fun transmit(wire: String): String {
         val l = link
-        if (l == null || !l.connected) return false
-        if (!configReady()) { noteGated("position"); return false }
+        if (l == null || !l.connected) return "no radio"
+        if (!configReady()) { noteGated("position"); return "waiting for config" }
         val now = nowMs()
         val send = scheduler.offer(wire, now)
-        if (send == null) {
-            EventLog.log("TX held ${scheduler.waitMs(now)} ms, newest position kept")
-            return false
-        }
+        if (send == null) return "held ${scheduler.waitMs(now)}ms"
         l.send(send)
-        return true
+        return "sent"
     }
 
     /**
@@ -226,7 +223,7 @@ object Radio {
             return
         }
         val wire = scheduler.poll(now) ?: return
-        EventLog.log("TX released held position")
+        EventLog.logThrottled("tx-release", "TX releasing held positions on schedule")
         l.send(wire)
     }
 
@@ -257,8 +254,13 @@ object Radio {
                 Bridge.sendChatReceived(context, c.senderName, c.senderHash, c.text)
             }
             // Duplicates are the normal case, not a fault: every rider rebroadcasts its roster.
-            is RxAction.Drop ->
-                if (action.reason != "DUPLICATE") EventLog.log("RX dropped — ${action.reason}")
+            is RxAction.Drop -> when (action.reason) {
+                // Both are the normal case, not faults: peers rebroadcast their whole roster,
+                // and an echoing bridge hands our own packets straight back.
+                "DUPLICATE" -> {}
+                "SELF" -> EventLog.logThrottled("rx-self", "RX dropped — SELF (our own packet)")
+                else -> EventLog.log("RX dropped — ${action.reason}")
+            }
         }
     }
 }
