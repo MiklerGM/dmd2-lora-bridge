@@ -2,7 +2,11 @@ package com.thorkracing.dmdLora
 
 import android.Manifest
 import android.app.Activity
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.PowerManager
+import android.provider.Settings
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -44,11 +48,14 @@ class MainActivity : Activity() {
     private lateinit var speedField: EditText
     private lateinit var walkButton: Button
     private lateinit var ridePanel: LinearLayout
+    private lateinit var powerPanel: LinearLayout
     private lateinit var testPanel: LinearLayout
     private lateinit var rideTab: Button
     private lateinit var testTab: Button
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
+    private lateinit var autostartButton: Button
+    private lateinit var batteryButton: Button
 
     private var walking = false
 
@@ -153,6 +160,15 @@ class MainActivity : Activity() {
             addView(injectButtons)
         }
 
+        autostartButton = styled("", C.CONTROL) { toggleAutostart() }
+        batteryButton = styled("", C.CONTROL) { requestBatteryExemption() }
+        powerPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(pad, 0, pad, dp(4))
+            addView(autostartButton, weight(1f))
+            addView(batteryButton, weight(1f))
+        }
+
         rideTab = tabButton("Ride") { selectTab(test = false) }
         testTab = tabButton("Test tools") { selectTab(test = true) }
 
@@ -189,6 +205,7 @@ class MainActivity : Activity() {
                 addView(testTab, weight(1f))
             })
             addView(ridePanel)
+            addView(powerPanel)
             addView(testPanel)
             addView(sectionLabel("Log"))
             addView(logScroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
@@ -263,6 +280,7 @@ class MainActivity : Activity() {
     private fun selectTab(test: Boolean) {
         testPanel.visibility = if (test) View.VISIBLE else View.GONE
         ridePanel.visibility = if (test) View.GONE else View.VISIBLE
+        powerPanel.visibility = if (test) View.GONE else View.VISIBLE
         // Alpha alone was too subtle to read as "this one is selected": fill the active tab.
         styleTab(rideTab, selected = !test)
         styleTab(testTab, selected = test)
@@ -308,11 +326,49 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun toggleAutostart() {
+        Prefs.setAutostart(this, !Prefs.autostart(this))
+        updateButtons()
+    }
+
+    /**
+     * Battery optimisation kills long-running background work after a few hours - about the
+     * length of a ride. Ask directly rather than sending the rider hunting through settings,
+     * and fall back to the settings list if the direct request is refused.
+     */
+    private fun requestBatteryExemption() {
+        if (isBatteryUnrestricted()) {
+            EventLog.log("battery: already unrestricted")
+            return
+        }
+        val direct = Intent(
+            Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+            Uri.parse("package:$packageName"),
+        )
+        val opened = runCatching { startActivity(direct) }.isSuccess
+        if (!opened) {
+            runCatching { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+        }
+    }
+
+    private fun isBatteryUnrestricted(): Boolean =
+        runCatching {
+            getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
+        }.getOrDefault(false)
+
     /** Only the action that can do something is offered, so the buttons say the state too. */
     private fun updateButtons() {
         val running = Session.serviceRunning
         setActionEnabled(startButton, !running)
         setActionEnabled(stopButton, running)
+
+        val auto = Prefs.autostart(this)
+        autostartButton.text = if (auto) "Autostart: on" else "Autostart: off"
+        autostartButton.background = rounded(if (auto) C.GO else C.CONTROL)
+
+        val free = isBatteryUnrestricted()
+        batteryButton.text = if (free) "Battery: free" else "Battery: limited"
+        batteryButton.background = rounded(if (free) C.GO else C.DANGER)
     }
 
     private fun setActionEnabled(b: Button, enabled: Boolean) {
