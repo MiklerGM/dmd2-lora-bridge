@@ -72,7 +72,9 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
         val packet = Codec.encodeChat(
             groupId,
             Session.senderUserId.orEmpty(),
-            Session.myDisplayName.orEmpty(),
+            // Fall back to the same shape DMD2 uses for unknown riders, so a message is never
+            // signed by nobody.
+            Session.myDisplayName ?: "Rider %04X".format(Codec.uidHash(Session.senderUserId.orEmpty())),
             text,
             Session.nextSeq(),
         )
@@ -102,16 +104,26 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
     private fun learnOwnName(json: String, senderUserId: String) {
         if (!Session.myDisplayName.isNullOrEmpty() || senderUserId.isEmpty()) return
         val arr = runCatching { JSONArray(json) }.getOrNull() ?: return
+        val seen = ArrayList<String>(arr.length())
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
-            if (o.optString("user_id") != senderUserId) continue
+            val id = o.optString("user_id")
+            seen += id
+            if (id != senderUserId) continue
             val name = o.optString("display_name")
             if (name.isNotEmpty()) {
                 Session.myDisplayName = name
                 EventLog.log("own display name: $name")
+                return
             }
-            return
         }
+        // Say so once rather than silently sending unsigned chat. DMD2 does not always put a
+        // display name on our own roster entry, and an unattributed message is no use to read.
+        EventLog.logThrottled(
+            "own-name",
+            "own display name not in roster (me=${senderUserId.take(8)}, ids=${seen.map { it.take(8) }})",
+            60_000L,
+        )
     }
 
     /** DMD2 sends full user ids outbound; the wire carries only their 16-bit hashes. */
