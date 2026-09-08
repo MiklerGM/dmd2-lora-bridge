@@ -4,20 +4,18 @@ import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
-import android.os.PowerManager
-import android.provider.Settings
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.os.Build
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
+import android.provider.Settings
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
-import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
@@ -26,38 +24,44 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import java.util.Locale
 import com.thorkracing.dmdLora.radio.Radio
 import com.thorkracing.dmdLora.service.LoraService
+import java.util.Locale
 
 /**
- * A small console for the bridge: live status, a synthetic-rider injector for milestone 3,
- * and a colour-coded log. Built programmatically to keep the app free of resource and
- * AppCompat dependencies.
+ * A console for the bridge: what it is doing, the controls that matter while riding, and the
+ * test tools tucked out of the way behind their own panel.
  */
 class MainActivity : Activity() {
 
     private val ui = Handler(Looper.getMainLooper())
 
-    private lateinit var statusView: TextView
+    private lateinit var serviceValue: TextView
+    private lateinit var radioValue: TextView
+    private lateinit var groupValue: TextView
+    private lateinit var trafficValue: TextView
+    private lateinit var serviceAction: Button
+    private lateinit var unpairAction: Button
+
     private lateinit var logView: TextView
     private lateinit var logScroll: ScrollView
+    private lateinit var toolsTab: Button
+    private lateinit var settingsTab: Button
+    private lateinit var toolsPanel: LinearLayout
+    private lateinit var settingsPanel: LinearLayout
+    private lateinit var autostartButton: Button
+    private lateinit var batteryButton: Button
+
     private lateinit var hashField: EditText
     private lateinit var latField: EditText
     private lateinit var lonField: EditText
     private lateinit var speedField: EditText
     private lateinit var walkButton: Button
-    private lateinit var ridePanel: LinearLayout
-    private lateinit var powerPanel: LinearLayout
-    private lateinit var testPanel: LinearLayout
-    private lateinit var rideTab: Button
-    private lateinit var testTab: Button
-    private lateinit var startButton: Button
-    private lateinit var stopButton: Button
-    private lateinit var autostartButton: Button
-    private lateinit var batteryButton: Button
 
     private var walking = false
+    private var openPanel = Panel.NONE
+
+    private enum class Panel { NONE, TOOLS, SETTINGS }
 
     private val walk = object : Runnable {
         override fun run() {
@@ -77,9 +81,11 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // The activity title bar already says the name; repeating it wasted a line.
+        actionBar?.subtitle = appVersion()
         requestBlePermissions()
         setContentView(buildUi())
-        selectTab(test = false)
+        showPanel(Panel.NONE)
 
         EventLog.onChange = { ui.post { renderLog() } }
         EventLog.log("UI started; waiting for DMD2 to talk to us")
@@ -98,153 +104,217 @@ class MainActivity : Activity() {
     // ---- layout ----
 
     private fun buildUi(): View {
-        val pad = dp(12)
+        serviceValue = valueText()
+        radioValue = valueText()
+        groupValue = valueText()
+        trafficValue = valueText()
 
-        statusView = TextView(this).apply {
-            textSize = 11f
-            setPadding(pad, pad, pad, pad)
-            setTextColor(C.TEXT)
-            background = rounded(C.SURFACE, 8)
-        }
+        // One control per row, next to the thing it acts on: the service action sits with the
+        // service state, unpairing sits with the radio it would disconnect.
+        serviceAction = styled("", C.CONTROL) { toggleService() }
+        unpairAction = styled("Unpair", C.CONTROL) { Radio.forgetBridge() }
 
-        logView = TextView(this).apply {
-            textSize = 10f
-            setTextColor(C.TEXT)
-            typeface = Typeface.MONOSPACE
-            setPadding(pad, pad, pad, pad)
-            setTextIsSelectable(true)
+        val statusCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = rounded(C.SURFACE, 10)
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            addView(statusRow("Service", serviceValue, serviceAction))
+            addView(statusRow("Radio", radioValue, unpairAction))
+            addView(statusRow("Group", groupValue, null))
+            addView(statusRow("Traffic", trafficValue, null))
         }
-        logScroll = ScrollView(this).apply { addView(logView) }
 
         hashField = field("1234", "hash")
         latField = field("52.520008", "lat")
         lonField = field("13.404954", "lon")
         speedField = field("42", "km/h")
+        walkButton = styled("Walk", C.CONTROL) { toggleWalk() }
 
-        val injectRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            addView(labeled("Rider #", hashField), weight(1f))
-            addView(labeled("Lat", latField), weight(1.3f))
-            addView(labeled("Lon", lonField), weight(1.3f))
-            addView(labeled("Speed", speedField), weight(0.9f))
-        }
-
-        walkButton = Button(this).apply {
-            text = "Walk"
-            setOnClickListener { toggleWalk() }
-        }
-        val injectButtons = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            addView(button("Inject rider") { inject() }, weight(1f))
-            addView(walkButton, weight(1f))
-            addView(button("Loopback") { loopback() }, weight(1f))
-            addView(button("Chat probe") {
-                Radio.sendLoopbackChat("loopback ${System.currentTimeMillis() % 100000}")
-            }, weight(1f))
-        }
-
-        // These fabricate riders and messages. In a live group that means other people see
-        // things that are not there, so they live on their own tab rather than sitting under a
-        // thumb on the handlebars.
-        testPanel = LinearLayout(this).apply {
+        toolsPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(pad, 0, pad, dp(4))
             visibility = View.GONE
+            setPadding(0, dp(6), 0, 0)
             addView(TextView(this@MainActivity).apply {
                 text = "Fabricates riders and messages — use a test group"
                 textSize = 10f
                 setTextColor(C.WARN)
-                setPadding(0, 0, 0, dp(4))
+                setPadding(dp(2), 0, 0, dp(4))
             })
-            addView(injectRow)
-            addView(injectButtons)
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                addView(labeled("Rider #", hashField), cell(1f))
+                addView(labeled("Lat", latField), cell(1.3f))
+                addView(labeled("Lon", lonField), cell(1.3f))
+                addView(labeled("Speed", speedField), cell(0.9f))
+            })
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, dp(4), 0, 0)
+                addView(styled("Inject", C.CONTROL) { inject() }, cell(1f))
+                addView(walkButton, cell(1f))
+                addView(styled("Loopback", C.CONTROL) { loopback() }, cell(1f))
+                addView(styled("Chat", C.CONTROL) {
+                    Radio.sendLoopbackChat("loopback ${System.currentTimeMillis() % 100000}")
+                }, cell(1f))
+            })
         }
 
         autostartButton = styled("", C.CONTROL) { toggleAutostart() }
         batteryButton = styled("", C.CONTROL) { requestBatteryExemption() }
-        powerPanel = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(pad, 0, pad, dp(4))
-            addView(autostartButton, weight(1f))
-            addView(batteryButton, weight(1f))
+        settingsPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            setPadding(0, dp(6), 0, 0)
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                addView(autostartButton, cell(1f))
+                addView(batteryButton, cell(1f))
+            })
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, dp(4), 0, 0)
+                addView(styled("Clear log", C.CONTROL) { EventLog.clear() }, cell(1f))
+            })
         }
 
-        rideTab = tabButton("Ride") { selectTab(test = false) }
-        testTab = tabButton("Test tools") { selectTab(test = true) }
+        toolsTab = styled("Tools", C.CONTROL) { showPanel(Panel.TOOLS) }
+        settingsTab = styled("Settings", C.CONTROL) { showPanel(Panel.SETTINGS) }
 
-        ridePanel = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(pad, 0, pad, dp(4))
-            startButton = styled("Start", C.GO) { LoraService.start(this@MainActivity) }
-            stopButton = styled("Stop", C.DANGER) { LoraService.stop(this@MainActivity) }
-            addView(startButton, weight(1f))
-            addView(stopButton, weight(0.8f))
-            addView(button("Unpair") { Radio.forgetBridge() }, weight(0.8f))
-            addView(button("Clear log") { EventLog.clear() }, weight(1f))
+        logView = TextView(this).apply {
+            textSize = 10f
+            setTextColor(C.TEXT)
+            typeface = Typeface.MONOSPACE
+            setPadding(dp(8), dp(6), dp(8), dp(6))
+            setTextIsSelectable(true)
+        }
+        logScroll = ScrollView(this).apply {
+            background = rounded(C.SURFACE, 10)
+            addView(logView)
         }
 
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             fitsSystemWindows = true
             setBackgroundColor(C.BG)
-            setPadding(dp(4), dp(12), dp(4), 0)
-            addView(TextView(this@MainActivity).apply {
-                text = "DMD LoRa Bridge  ${appVersion()}"
-                textSize = 14f
-                gravity = Gravity.CENTER
-                setTextColor(C.MUTED)
-                setPadding(0, 0, 0, dp(6))
-            })
-            addView(statusView, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-            // Tabs swap only the controls: status and log stay put, because the log is exactly
-            // what you are reading while using the test tools.
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+            addView(statusCard, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
             addView(LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
-                setPadding(pad, dp(6), pad, 0)
-                addView(rideTab, weight(1f))
-                addView(testTab, weight(1f))
+                setPadding(0, dp(8), 0, 0)
+                addView(toolsTab, cell(1f))
+                addView(settingsTab, cell(1f))
             })
-            addView(ridePanel)
-            addView(powerPanel)
-            addView(testPanel)
+            addView(toolsPanel)
+            addView(settingsPanel)
             addView(sectionLabel("Log"))
             addView(logScroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
         }
     }
 
-    private fun field(default: String, hint: String) = EditText(this).apply {
-        setText(default)
-        this.hint = hint
-        textSize = 12f
-        setSingleLine()
+    private fun statusRow(label: String, value: TextView, action: View?) =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(3), 0, dp(3))
+            addView(TextView(this@MainActivity).apply {
+                text = label
+                textSize = 11f
+                setTextColor(C.MUTED)
+                width = dp(58)
+            })
+            addView(value, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+            if (action != null) {
+                addView(action, LinearLayout.LayoutParams(dp(78), WRAP_CONTENT))
+            }
+        }
+
+    private fun valueText() = TextView(this).apply {
+        textSize = 11f
         setTextColor(C.TEXT)
-        setHintTextColor(C.MUTED)
-        background = rounded(C.CONTROL, 4)
-        setPadding(dp(6), dp(5), dp(6), dp(5))
     }
 
-    private fun labeled(label: String, input: EditText) = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(dp(2), 0, dp(2), 0)
-        addView(TextView(this@MainActivity).apply {
-            text = label; textSize = 9f; setTextColor(C.MUTED)
-        })
-        addView(input)
+    // ---- state rendering ----
+
+    private fun renderStatus() {
+        val running = Session.serviceRunning
+        serviceValue.text = if (running) "running" else "stopped"
+        serviceValue.setTextColor(if (running) C.OK else C.MUTED)
+        serviceAction.text = if (running) "Stop" else "Start"
+        serviceAction.background = rounded(if (running) C.DANGER else C.GO)
+
+        val radio = if (Session.radioAttached) Radio.linkState else "off"
+        radioValue.text = radio
+        radioValue.setTextColor(stateColor(radio))
+        // Unpairing only means something once a bridge has actually been adopted.
+        unpairAction.visibility = if (radio == "connected") View.VISIBLE else View.INVISIBLE
+
+        groupValue.text = (Session.groupName ?: Session.groupId?.take(8) ?: "—") +
+            "   ch ${Session.channel} · ${"%.3f".format(Locale.US, 850.125 + Session.channel)} MHz"
+        trafficValue.text = "TX ${Session.packetsEncoded.get()}   RX→DMD2 ${Session.groupDataReceived.get()}"
+
+        val auto = Prefs.autostart(this)
+        autostartButton.text = if (auto) "Autostart: on" else "Autostart: off"
+        autostartButton.background = rounded(if (auto) C.GO else C.CONTROL)
+
+        val free = isBatteryUnrestricted()
+        batteryButton.text = if (free) "Battery: free" else "Battery: limited"
+        batteryButton.background = rounded(if (free) C.GO else C.DANGER)
     }
 
-    private fun button(label: String, action: () -> Unit) = styled(label, C.CONTROL, action = action)
-
-    private fun sectionLabel(text: String) = TextView(this).apply {
-        this.text = text
-        textSize = 10f
-        setPadding(dp(12), dp(8), dp(12), dp(2))
-        setTextColor(C.MUTED)
+    /** Green when working, amber while it is getting there, red when it needs a human. */
+    private fun stateColor(state: String): Int = when (state) {
+        "connected" -> C.OK
+        "scanning", "connecting", "pairing" -> C.WARN
+        "bluetooth off", "no permission", "not found" -> C.DANGER
+        else -> C.MUTED
     }
 
-    private fun weight(w: Float) =
-        LinearLayout.LayoutParams(0, WRAP_CONTENT, w)
+    private fun renderLog() {
+        val lines = EventLog.snapshot().asReversed()
+        val sb = SpannableStringBuilder()
+        for (line in lines) {
+            val start = sb.length
+            sb.append(line).append('\n')
+            colorFor(line)?.let {
+                sb.setSpan(ForegroundColorSpan(it), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+        }
+        logView.text = sb
+        logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
+    }
+
+    private fun colorFor(line: String): Int? = when {
+        line.contains("dropped") || line.contains("ERR") || line.contains("error", true) ||
+            line.contains("denied") || line.contains("failed") || line.contains("cannot") ||
+            line.contains("skipped") -> C.DANGER_TEXT
+        line.contains("RX ") || line.contains("inject") -> C.OK
+        line.contains("TX ") -> C.ACCENT
+        line.contains("config") || line.contains("connected") || line.contains("ready") ||
+            line.contains("pairing") -> C.WARN
+        else -> null
+    }
 
     // ---- actions ----
+
+    private fun toggleService() {
+        if (Session.serviceRunning) LoraService.stop(this) else LoraService.start(this)
+        ui.postDelayed({ renderStatus() }, 300)
+    }
+
+    private fun showPanel(panel: Panel) {
+        // Tapping the open one closes it, so the ride view can be nothing but status and log.
+        openPanel = if (openPanel == panel) Panel.NONE else panel
+        toolsPanel.visibility = if (openPanel == Panel.TOOLS) View.VISIBLE else View.GONE
+        settingsPanel.visibility = if (openPanel == Panel.SETTINGS) View.VISIBLE else View.GONE
+        styleTab(toolsTab, openPanel == Panel.TOOLS)
+        styleTab(settingsTab, openPanel == Panel.SETTINGS)
+        if (openPanel != Panel.TOOLS && walking) toggleWalk()
+    }
+
+    private fun styleTab(b: Button, selected: Boolean) {
+        b.background = rounded(if (selected) C.ACCENT else C.CONTROL)
+        b.setTextColor(if (selected) C.ON_ACCENT else C.MUTED)
+        b.typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+    }
 
     private fun inject() {
         val hash = readHex(hashField)
@@ -265,8 +335,6 @@ class MainActivity : Activity() {
         )
     }
 
-    /** Sends a peer-looking packet out over BLE; an echoing bridge returns it and it should
-     *  land in DMD2 as a rider that travelled the whole chain. */
     private fun loopback() {
         val lat = readDouble(latField, Double.NaN)
         val lon = readDouble(lonField, Double.NaN)
@@ -277,64 +345,22 @@ class MainActivity : Activity() {
         Radio.sendLoopbackProbe(lat, lon, readDouble(speedField, 0.0))
     }
 
-    private fun selectTab(test: Boolean) {
-        testPanel.visibility = if (test) View.VISIBLE else View.GONE
-        ridePanel.visibility = if (test) View.GONE else View.VISIBLE
-        powerPanel.visibility = if (test) View.GONE else View.VISIBLE
-        // Alpha alone was too subtle to read as "this one is selected": fill the active tab.
-        styleTab(rideTab, selected = !test)
-        styleTab(testTab, selected = test)
-        // Leaving a walk running on a hidden tab would keep injecting unseen.
-        if (!test && walking) toggleWalk()
-    }
-
-    private fun tabButton(label: String, action: () -> Unit) = styled(label, C.CONTROL, action = action)
-
-    private fun styleTab(b: Button, selected: Boolean) {
-        b.background = rounded(if (selected) C.ACCENT else C.CONTROL)
-        b.setTextColor(if (selected) 0xFF0E1116.toInt() else C.MUTED)
-        b.typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-    }
-
     private fun toggleWalk() {
         walking = !walking
         walkButton.text = if (walking) "Stop walk" else "Walk"
+        walkButton.background = rounded(if (walking) C.DANGER else C.CONTROL)
         if (walking) ui.post(walk) else ui.removeCallbacks(walk)
         EventLog.log(if (walking) "walking test rider" else "test rider stopped")
     }
 
-    private fun requestBlePermissions() {
-        val needed = listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
-            .filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
-        if (needed.isNotEmpty()) requestPermissions(needed.toTypedArray(), 1)
-    }
-
-    // ---- rendering ----
-
-    private fun renderStatus() {
-        updateButtons()
-        val g = Session.groupId
-        val radio = if (Session.radioAttached) Radio.linkState else "none"
-        statusView.text = buildString {
-            append("service: "); append(if (Session.serviceRunning) "running" else "stopped")
-            append("   radio: "); append(radio)
-            append('\n')
-            append("group: "); append(g ?: "—")
-            append("   ch ${Session.channel} (${bridgeFreq()})")
-            append('\n')
-            append("TX ${Session.packetsEncoded.get()}   RX→DMD2 ${Session.groupDataReceived.get()}")
-        }
-    }
-
     private fun toggleAutostart() {
         Prefs.setAutostart(this, !Prefs.autostart(this))
-        updateButtons()
+        renderStatus()
     }
 
     /**
      * Battery optimisation kills long-running background work after a few hours - about the
-     * length of a ride. Ask directly rather than sending the rider hunting through settings,
-     * and fall back to the settings list if the direct request is refused.
+     * length of a ride. Ask directly rather than sending the rider hunting through settings.
      */
     private fun requestBatteryExemption() {
         if (isBatteryUnrestricted()) {
@@ -345,8 +371,7 @@ class MainActivity : Activity() {
             Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
             Uri.parse("package:$packageName"),
         )
-        val opened = runCatching { startActivity(direct) }.isSuccess
-        if (!opened) {
+        if (runCatching { startActivity(direct) }.isFailure) {
             runCatching { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
         }
     }
@@ -356,88 +381,29 @@ class MainActivity : Activity() {
             getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
         }.getOrDefault(false)
 
-    /** Only the action that can do something is offered, so the buttons say the state too. */
-    private fun updateButtons() {
-        val running = Session.serviceRunning
-        setActionEnabled(startButton, !running)
-        setActionEnabled(stopButton, running)
-
-        val auto = Prefs.autostart(this)
-        autostartButton.text = if (auto) "Autostart: on" else "Autostart: off"
-        autostartButton.background = rounded(if (auto) C.GO else C.CONTROL)
-
-        val free = isBatteryUnrestricted()
-        batteryButton.text = if (free) "Battery: free" else "Battery: limited"
-        batteryButton.background = rounded(if (free) C.GO else C.DANGER)
+    private fun requestBlePermissions() {
+        val needed = listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
+            .filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+        if (needed.isNotEmpty()) requestPermissions(needed.toTypedArray(), 1)
     }
 
-    private fun setActionEnabled(b: Button, enabled: Boolean) {
-        b.isEnabled = enabled
-        // The custom background does not dim itself the way the platform one would.
-        b.alpha = if (enabled) 1f else 0.35f
-    }
+    // ---- widgets ----
 
-    private fun bridgeFreq(): String = "%.3f MHz".format(850.125 + Session.channel)
-
-    private fun renderLog() {
-        val lines = EventLog.snapshot().asReversed() // chronological, oldest first
-        val sb = SpannableStringBuilder()
-        for (line in lines) {
-            val start = sb.length
-            sb.append(line).append('\n')
-            val color = colorFor(line)
-            if (color != null) {
-                sb.setSpan(ForegroundColorSpan(color), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            }
-        }
-        logView.text = sb
-        logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
-    }
-
-    private fun colorFor(line: String): Int? = when {
-        line.contains("dropped") || line.contains("ERR") || line.contains("error", true) ||
-            line.contains("denied") || line.contains("failed") || line.contains("cannot") ||
-            line.contains("skipped") -> Color.parseColor("#E06C75")
-        line.contains("RX ") || line.contains("inject") -> Color.parseColor("#98C379")
-        line.contains("TX ") -> Color.parseColor("#61AFEF")
-        line.contains("config") || line.contains("connected") || line.contains("ready") ->
-            Color.parseColor("#E5C07B")
-        else -> null
-    }
-
-    // ---- parsing helpers ----
-
-    private fun readHex(f: EditText): Int? =
-        f.text.toString().trim().removePrefix("0x").toIntOrNull(16)?.and(0xFFFF)
-
-    private fun readDouble(f: EditText, fallback: Double): Double =
-        f.text.toString().trim().replace(',', '.').toDoubleOrNull() ?: fallback
-
-    // Always a dot, whatever the phone locale: these strings are read back by readDouble,
-    // and a German-locale comma would fail to parse and collapse the field to zero.
-    private fun fmt(v: Double): String = String.format(Locale.US, "%.6f", v)
-
-    /** Shown in the header so a phone/firmware mismatch is visible, not guessed at. */
-    private fun appVersion(): String =
-        runCatching { packageManager.getPackageInfo(packageName, 0).versionName }
-            .getOrNull().orEmpty()
-
-
-    // A small dark palette: the log already uses One Dark accents, which only read properly on
-    // a dark ground - on white they looked washed out.
     private object C {
         const val BG = 0xFF121417.toInt()
         const val SURFACE = 0xFF1B1F24.toInt()
-        const val CONTROL = 0xFF262B32.toInt()
+        const val CONTROL = 0xFF2A3038.toInt()
         const val TEXT = 0xFFE6E8EA.toInt()
         const val MUTED = 0xFF8B939C.toInt()
         const val ACCENT = 0xFF4FA3FF.toInt()
+        const val ON_ACCENT = 0xFF0E1116.toInt()
+        const val OK = 0xFF5FD08A.toInt()
         const val GO = 0xFF2E7D46.toInt()
         const val DANGER = 0xFFC0474F.toInt()
+        const val DANGER_TEXT = 0xFFE06C75.toInt()
         const val WARN = 0xFFE5C07B.toInt()
     }
 
-    /** Buttons with a modest corner, not the pill the platform default gives us. */
     private fun rounded(fill: Int, radiusDp: Int = 6) = GradientDrawable().apply {
         cornerRadius = dp(radiusDp).toFloat()
         setColor(fill)
@@ -447,17 +413,66 @@ class MainActivity : Activity() {
         Button(this).apply {
             text = label
             textSize = 11f
-            isAllCaps = false          // ALL CAPS is what pushed the labels out of their buttons
+            isAllCaps = false
             setTextColor(textColor)
             background = rounded(fill)
-            stateListAnimator = null   // kills the platform elevation/pill treatment
-            setPadding(dp(6), dp(6), dp(6), dp(6))
+            stateListAnimator = null
+            setPadding(dp(4), dp(6), dp(4), dp(6))
             minWidth = 0
             minimumWidth = 0
+            minHeight = 0
+            minimumHeight = 0
             setOnClickListener { action() }
         }
 
+    /** Weighted cell with a gap, so neighbouring controls do not read as one slab. */
+    private fun cell(w: Float) =
+        LinearLayout.LayoutParams(0, WRAP_CONTENT, w).apply {
+            val g = dp(3)
+            setMargins(g, 0, g, 0)
+        }
+
+    private fun field(default: String, hint: String) = EditText(this).apply {
+        setText(default)
+        this.hint = hint
+        textSize = 12f
+        setSingleLine()
+        setTextColor(C.TEXT)
+        setHintTextColor(C.MUTED)
+        background = rounded(C.CONTROL, 4)
+        setPadding(dp(6), dp(5), dp(6), dp(5))
+    }
+
+    private fun labeled(label: String, input: EditText) = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        addView(TextView(this@MainActivity).apply {
+            text = label
+            textSize = 9f
+            setTextColor(C.MUTED)
+        })
+        addView(input)
+    }
+
+    private fun sectionLabel(text: String) = TextView(this).apply {
+        this.text = text
+        textSize = 10f
+        setPadding(dp(4), dp(8), dp(4), dp(3))
+        setTextColor(C.MUTED)
+    }
+
+    // ---- parsing ----
+
+    private fun readHex(f: EditText): Int? =
+        f.text.toString().trim().removePrefix("0x").toIntOrNull(16)?.and(0xFFFF)
+
+    private fun readDouble(f: EditText, fallback: Double): Double =
+        f.text.toString().trim().replace(',', '.').toDoubleOrNull() ?: fallback
+
+    private fun fmt(v: Double): String = String.format(Locale.US, "%.6f", v)
+
+    private fun appVersion(): String =
+        runCatching { packageManager.getPackageInfo(packageName, 0).versionName }
+            .getOrNull().orEmpty()
+
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
-
-
 }
