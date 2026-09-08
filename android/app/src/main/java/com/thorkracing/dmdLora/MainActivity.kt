@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -91,13 +92,15 @@ class MainActivity : Activity() {
         val pad = dp(12)
 
         statusView = TextView(this).apply {
-            textSize = 12f
+            textSize = 11f
             setPadding(pad, pad, pad, pad)
-            setBackgroundColor(Color.parseColor("#11000000"))
+            setTextColor(C.TEXT)
+            background = rounded(C.SURFACE, 8)
         }
 
         logView = TextView(this).apply {
-            textSize = 11f
+            textSize = 10f
+            setTextColor(C.TEXT)
             typeface = Typeface.MONOSPACE
             setPadding(pad, pad, pad, pad)
             setTextIsSelectable(true)
@@ -141,7 +144,8 @@ class MainActivity : Activity() {
             addView(TextView(this@MainActivity).apply {
                 text = "Fabricates riders and messages — use a test group"
                 textSize = 10f
-                setTextColor(Color.parseColor("#B08000"))
+                setTextColor(C.WARN)
+                setPadding(0, 0, 0, dp(4))
             })
             addView(injectRow)
             addView(injectButtons)
@@ -153,8 +157,8 @@ class MainActivity : Activity() {
         ridePanel = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(pad, 0, pad, dp(4))
-            addView(button("Start service") { LoraService.start(this@MainActivity) }, weight(1f))
-            addView(button("Stop") { LoraService.stop(this@MainActivity) }, weight(0.7f))
+            addView(styled("Start", C.GO) { LoraService.start(this@MainActivity) }, weight(1f))
+            addView(styled("Stop", C.DANGER) { LoraService.stop(this@MainActivity) }, weight(0.8f))
             addView(button("Unpair") { Radio.forgetBridge() }, weight(0.8f))
             addView(button("Clear log") { EventLog.clear() }, weight(1f))
         }
@@ -162,11 +166,13 @@ class MainActivity : Activity() {
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             fitsSystemWindows = true
-            setPadding(0, dp(24), 0, 0)
+            setBackgroundColor(C.BG)
+            setPadding(dp(4), dp(12), dp(4), 0)
             addView(TextView(this@MainActivity).apply {
                 text = "DMD LoRa Bridge  ${appVersion()}"
-                textSize = 18f
+                textSize = 14f
                 gravity = Gravity.CENTER
+                setTextColor(C.MUTED)
                 setPadding(0, 0, 0, dp(6))
             })
             addView(statusView, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
@@ -188,27 +194,30 @@ class MainActivity : Activity() {
     private fun field(default: String, hint: String) = EditText(this).apply {
         setText(default)
         this.hint = hint
-        textSize = 13f
+        textSize = 12f
         setSingleLine()
+        setTextColor(C.TEXT)
+        setHintTextColor(C.MUTED)
+        background = rounded(C.CONTROL, 4)
+        setPadding(dp(6), dp(5), dp(6), dp(5))
     }
 
     private fun labeled(label: String, input: EditText) = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(dp(2), 0, dp(2), 0)
-        addView(TextView(this@MainActivity).apply { text = label; textSize = 10f })
+        addView(TextView(this@MainActivity).apply {
+            text = label; textSize = 9f; setTextColor(C.MUTED)
+        })
         addView(input)
     }
 
-    private fun button(label: String, action: () -> Unit) = Button(this).apply {
-        text = label
-        setOnClickListener { action() }
-    }
+    private fun button(label: String, action: () -> Unit) = styled(label, C.CONTROL, action = action)
 
     private fun sectionLabel(text: String) = TextView(this).apply {
         this.text = text
-        textSize = 11f
+        textSize = 10f
         setPadding(dp(12), dp(8), dp(12), dp(2))
-        setTextColor(Color.parseColor("#888888"))
+        setTextColor(C.MUTED)
     }
 
     private fun weight(w: Float) =
@@ -250,16 +259,19 @@ class MainActivity : Activity() {
     private fun selectTab(test: Boolean) {
         testPanel.visibility = if (test) View.VISIBLE else View.GONE
         ridePanel.visibility = if (test) View.GONE else View.VISIBLE
-        rideTab.alpha = if (test) 0.5f else 1f
-        testTab.alpha = if (test) 1f else 0.5f
+        // Alpha alone was too subtle to read as "this one is selected": fill the active tab.
+        styleTab(rideTab, selected = !test)
+        styleTab(testTab, selected = test)
         // Leaving a walk running on a hidden tab would keep injecting unseen.
         if (!test && walking) toggleWalk()
     }
 
-    private fun tabButton(label: String, action: () -> Unit) = Button(this).apply {
-        text = label
-        textSize = 12f
-        setOnClickListener { action() }
+    private fun tabButton(label: String, action: () -> Unit) = styled(label, C.CONTROL, action = action)
+
+    private fun styleTab(b: Button, selected: Boolean) {
+        b.background = rounded(if (selected) C.ACCENT else C.CONTROL)
+        b.setTextColor(if (selected) 0xFF0E1116.toInt() else C.MUTED)
+        b.typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
     }
 
     private fun toggleWalk() {
@@ -338,6 +350,41 @@ class MainActivity : Activity() {
     private fun appVersion(): String =
         runCatching { packageManager.getPackageInfo(packageName, 0).versionName }
             .getOrNull().orEmpty()
+
+
+    // A small dark palette: the log already uses One Dark accents, which only read properly on
+    // a dark ground - on white they looked washed out.
+    private object C {
+        const val BG = 0xFF121417.toInt()
+        const val SURFACE = 0xFF1B1F24.toInt()
+        const val CONTROL = 0xFF262B32.toInt()
+        const val TEXT = 0xFFE6E8EA.toInt()
+        const val MUTED = 0xFF8B939C.toInt()
+        const val ACCENT = 0xFF4FA3FF.toInt()
+        const val GO = 0xFF2E7D46.toInt()
+        const val DANGER = 0xFFC0474F.toInt()
+        const val WARN = 0xFFE5C07B.toInt()
+    }
+
+    /** Buttons with a modest corner, not the pill the platform default gives us. */
+    private fun rounded(fill: Int, radiusDp: Int = 6) = GradientDrawable().apply {
+        cornerRadius = dp(radiusDp).toFloat()
+        setColor(fill)
+    }
+
+    private fun styled(label: String, fill: Int, textColor: Int = C.TEXT, action: () -> Unit) =
+        Button(this).apply {
+            text = label
+            textSize = 11f
+            isAllCaps = false          // ALL CAPS is what pushed the labels out of their buttons
+            setTextColor(textColor)
+            background = rounded(fill)
+            stateListAnimator = null   // kills the platform elevation/pill treatment
+            setPadding(dp(6), dp(6), dp(6), dp(6))
+            minWidth = 0
+            minimumWidth = 0
+            setOnClickListener { action() }
+        }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
