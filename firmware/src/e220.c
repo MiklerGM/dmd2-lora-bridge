@@ -137,8 +137,18 @@ bool e220_apply(const e220_config_t *cfg) {
               (resp[0] == CMD_HEAD_READ || resp[0] == CMD_HEAD_WRITE) &&
               (resp[2] == E220_REG_COUNT) &&
               (memcmp(&resp[3], &frame[3], E220_REG_COUNT) == 0);
-    if (!ok && n > 0) {
-        ESP_LOGW(TAG, "apply: unexpected reply (%d bytes, head 0x%02X)", n, resp[0]);
+    if (!ok) {
+        /* First contact with a real module fails for dull reasons - swapped TX/RX, wrong
+         * M0/M1, a module that is not an E220 - and every one of them looks identical unless
+         * the raw reply is visible. Print what actually came back, and what was expected. */
+        char got[3 * sizeof(resp) + 1] = {0};
+        char want[3 * E220_REG_COUNT + 1] = {0};
+        for (int i = 0; i < n && i < (int)sizeof(resp); i++) sprintf(got + 3 * i, "%02X ", resp[i]);
+        for (int i = 0; i < E220_REG_COUNT; i++) sprintf(want + 3 * i, "%02X ", frame[3 + i]);
+        ESP_LOGW(TAG, "apply: reply %d bytes [%s] - expected C1 00 08 [%s]", n, got, want);
+        if (n == 0) {
+            ESP_LOGW(TAG, "apply: nothing at all - check TX/RX not swapped, M0/M1 wiring, 3V3");
+        }
     }
     ESP_LOGI(TAG, "apply ch=%u rate=%u power=%u lbt=%d -> %s (%d bytes back)",
              cfg->channel, cfg->air_rate, cfg->power, (int)cfg->lbt, ok ? "ok" : "FAILED", n);

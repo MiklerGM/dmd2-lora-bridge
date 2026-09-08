@@ -159,7 +159,7 @@ static void handle_tx(const char *b64) {
         static char line[OUT_LINE_MAX];
         snprintf(line, sizeof(line), "RX %s", b64);
         ble_nus_send_line(line);
-        ESP_LOGI(TAG, "echo %u bytes", (unsigned)len);
+        ESP_LOGI(TAG, "echo %u bytes: %.12s...", (unsigned)len, b64);
         return;
     }
     char *copy = malloc(len + 1);
@@ -217,7 +217,9 @@ static void tx_task(void *arg) {
             /* No terminator: the module closes the packet on the UART idle gap, so a stray
              * newline here would travel as part of the payload and corrupt it for everyone. */
             e220_write((const uint8_t *)payload, len);
-            ESP_LOGI(TAG, "tx %u bytes", (unsigned)len);
+            /* A DMD packet starts 0xD2 0x03, which is "0g" in base64 - a wrong or foreign
+             * payload is obvious at a glance. */
+            ESP_LOGI(TAG, "tx %u bytes: %.12s...", (unsigned)len, payload);
             free(payload);
             /* e220_write already blocked until the module returned to idle (AUX high), so no
              * fixed settling delay is needed here; pacing is the phone's job. */
@@ -235,7 +237,7 @@ static void rx_task(void *arg) {
         size_t n = e220_read_packet(buf, PACKET_MAX, IDLE_GAP_MS, RX_POLL_MS);
         if (n == 0) continue;
         buf[n] = '\0';
-        ESP_LOGI(TAG, "rx %u bytes", (unsigned)n);
+        ESP_LOGI(TAG, "rx %u bytes: %.12s...", (unsigned)n, (const char *)buf);
         if (!ble_nus_connected()) continue;
         snprintf(line, sizeof(line), "RX %s", (const char *)buf);
         ble_nus_send_line(line);
