@@ -80,6 +80,35 @@ adb shell "am broadcast \
 Press **Inject rider**, then **Walk on/off**. A `Rider 1234` should appear on the DMD2 map and
 move every five seconds. Use a throwaway group; never inject into a live ride.
 
+## Pairing, and how to undo it
+
+The bridge only accepts commands over an encrypted link, so the phone has to bond with it
+once. Nothing needs to be done to start that: the first time the phone tries to send a
+command the bridge refuses it for want of authentication, Android answers by starting
+pairing, and the system dialog appears. Accept it once and the pair is remembered on both
+sides — the bridge in NVS, the phone in its Bluetooth database.
+
+The first phone to bond claims that bridge; others are dropped on connect. That is what keeps
+one rider's phone from taking over another rider's bridge on a group ride.
+
+Three ways to undo it, for three different situations:
+
+| | When | What happens |
+|---|---|---|
+| **Unpair** in the app | phone in hand, link up | sends `FORGET`; both sides clear together |
+| **Hold BOOT for 3 s** | phone lost or replaced, bridge in hand | bridge clears its keys and drops the link |
+| **Hold BOOT while powering on** | firmware not responding | keys cleared during startup |
+
+After any of them the bridge accepts the next phone that comes along, because there is no bond
+left for anyone to be a stranger to.
+
+Deliberately a button and not a timeout: a bike spends much of its life parked and unattended,
+so "open up when the trusted phone is out of range" would mean "open up to whoever waits for
+the owner to walk away".
+
+> If the app logs `system pairing not removed`, clear it by hand in Android's Bluetooth
+> settings — `removeBond()` is not public API and can be refused.
+
 ## Milestone 4.5 — the whole chain with no radio at all
 
 The bridge simulates a radio when no module answers at boot: it loops a transmit straight back
