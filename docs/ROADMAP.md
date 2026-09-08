@@ -120,7 +120,12 @@ Only once M6 passes:
 
 - TX pacing that respects the slot/interval model; never transmit faster than the stock app.
 - Dedup ring, sequence handling, stale-position expiry.
-- BLE reconnect, backgrounding, Android battery-optimisation exemptions, boot restart.
+- ~~BLE reconnect, backgrounding, Android battery-optimisation exemptions, boot restart.~~
+  **Done and proven on hardware, 2026-09-08.** Autostart is opt-in and survived a real reboot:
+  `boot: service started` to `BLE bridge ready` in 1.1 s, straight to the pinned bridge. The
+  battery-optimisation exemption is requested from the app itself.
+  Still manual on Samsung: One UI's own "sleeping apps" list ignores that exemption and has no
+  API — it has to be set in Settings > Battery > Background usage limits.
 - Power budget and an enclosure for the bridge; antenna mounting on the bike.
 - ~~Chat~~ — **done and proven on hardware, 2026-09-08.** The full path runs: a probe claiming
   to come from a peer went out over BLE, returned through the bridge, was decoded and injected,

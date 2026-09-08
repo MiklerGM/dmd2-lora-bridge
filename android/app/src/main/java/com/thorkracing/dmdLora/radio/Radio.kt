@@ -240,7 +240,12 @@ object Radio {
 
         // Nothing goes out until the bridge has confirmed the requested settings: a packet
         // sent on the previous channel or PHY is not merely lost, it is transmitted wrongly.
-        if (!configReady()) { noteGated("traffic"); return }
+        if (!configReady()) {
+            // Only say it is held when something actually is. Before DMD2 names a group there
+            // is nothing to send, and claiming otherwise was just noise after every reboot.
+            if (scheduler.hasPending() || chatQueue.isNotEmpty()) noteGated("traffic")
+            return
+        }
 
         // One transmission per pacing window: chat first (rare, must not drop), else position.
         if (chatQueue.peek() != null) {
