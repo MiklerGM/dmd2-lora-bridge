@@ -43,6 +43,9 @@ object Radio {
 
     val connected: Boolean get() = link?.connected == true
 
+    /** What the transport is doing, for the status line. */
+    val linkState: String get() = link?.state ?: "no link"
+
     fun attach(context: Context, newLink: RadioLink) {
         val app = context.applicationContext
         link?.close()

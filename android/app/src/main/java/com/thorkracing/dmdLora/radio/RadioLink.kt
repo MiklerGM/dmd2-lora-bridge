@@ -7,6 +7,9 @@ package com.thorkracing.dmdLora.radio
 interface RadioLink {
     val connected: Boolean
 
+    /** Short, human-readable link state for the UI: what is happening, or what is blocking. */
+    val state: String
+
     /** Queue one base64 wire string for transmission. */
     fun send(wire: String)
 
@@ -49,6 +52,7 @@ data class RadioConfig(
 /** A link that hands everything sent straight back. Lets the pipeline be tested without radios. */
 class LoopbackLink : RadioLink {
     override val connected = true
+    override val state = "loopback"
     override var onWire: ((String) -> Unit)? = null
     override var onStatus: ((String) -> Unit)? = null
     override var onConnected: (() -> Unit)? = null

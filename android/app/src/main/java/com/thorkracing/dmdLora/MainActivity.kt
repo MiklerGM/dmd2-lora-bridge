@@ -232,9 +232,7 @@ class MainActivity : Activity() {
 
     private fun renderStatus() {
         val g = Session.groupId
-        val radio = if (Session.radioAttached) {
-            if (Radio.connected) "connected" else "attached, no bridge"
-        } else "none"
+        val radio = if (Session.radioAttached) Radio.linkState else "none"
         statusView.text = buildString {
             append("service: "); append(if (isServiceLikelyUp()) "running" else "stopped")
             append("   radio: "); append(radio)

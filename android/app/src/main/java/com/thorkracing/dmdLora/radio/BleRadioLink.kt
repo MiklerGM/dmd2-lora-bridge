@@ -52,6 +52,9 @@ class BleRadioLink(context: Context) : RadioLink {
     @Volatile override var connected: Boolean = false
         private set
 
+    @Volatile override var state: String = "idle"
+        private set
+
     override var onWire: ((String) -> Unit)? = null
     override var onStatus: ((String) -> Unit)? = null
     override var onConnected: (() -> Unit)? = null
@@ -61,6 +64,7 @@ class BleRadioLink(context: Context) : RadioLink {
     fun start() {
         if (closed || connected || scanning) return
         if (!hasBlePermissions()) {
+            state = "no permission"
             // DMD2 can start the service before the user has been through the permission
             // dialog. Scanning without the grant throws SecurityException and kills the
             // process, so wait and try again once the UI has asked.
@@ -71,6 +75,7 @@ class BleRadioLink(context: Context) : RadioLink {
         val manager = appContext.getSystemService(BluetoothManager::class.java)
         val adapter: BluetoothAdapter? = manager?.adapter
         if (adapter == null || !adapter.isEnabled) {
+            state = "bluetooth off"
             EventLog.log("BLE unavailable or disabled")
             retryLater()
             return
@@ -85,6 +90,7 @@ class BleRadioLink(context: Context) : RadioLink {
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
         scanning = true
+        state = "scanning"
         EventLog.log("BLE scanning for the bridge")
         scanner.startScan(listOf(filter), settings, scanCallback)
 
@@ -92,6 +98,7 @@ class BleRadioLink(context: Context) : RadioLink {
         handler.postDelayed({
             if (scanning && !connected) {
                 stopScan()
+                state = "not found"
                 EventLog.log("BLE scan timed out")
                 retryLater()
             }
@@ -131,6 +138,7 @@ class BleRadioLink(context: Context) : RadioLink {
                 return
             }
             stopScan()
+            state = "connecting"
             EventLog.log("BLE found ${device.address}, connecting")
             try {
                 gatt = device.connectGatt(appContext, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
@@ -192,6 +200,7 @@ class BleRadioLink(context: Context) : RadioLink {
                 }
             }
             connected = true
+            state = "connected"
             EventLog.log("BLE bridge ready")
             sendLine("STATUS")
         }
@@ -301,6 +310,7 @@ class BleRadioLink(context: Context) : RadioLink {
 
     private fun teardown() {
         connected = false
+        if (state != "bluetooth off" && state != "no permission") state = "disconnected"
         rxChar = null
         txChar = null
         mtu = DEFAULT_MTU
