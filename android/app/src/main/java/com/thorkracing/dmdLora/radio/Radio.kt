@@ -6,6 +6,7 @@ import com.thorkracing.dmdLora.Bridge
 import com.thorkracing.dmdLora.EventLog
 import com.thorkracing.dmdLora.Session
 import com.thorkracing.dmdLora.protocol.Codec
+import com.thorkracing.dmdLora.protocol.Regions
 import com.thorkracing.dmdLora.protocol.TxRider
 import java.util.concurrent.ConcurrentLinkedQueue
 
@@ -21,6 +22,9 @@ object Radio {
      * means weaker, so clamping upward is clamping down in power.
      */
     private const val WEAKEST_POWER_INDEX = 3
+
+    /** Only used to derive a channel before DMD2 states a region; it corrects us if wrong. */
+    private const val DEFAULT_REGION = "EU868"
 
     @Volatile
     var link: RadioLink? = null
@@ -234,6 +238,22 @@ object Radio {
      * and a link can drop and come back on a module that booted with different registers, so
      * the request is stored and [tick] pushes it whenever the two disagree.
      */
+    /**
+     * DMD2 only announces a frequency when it notices a mismatch, so after an app restart it
+     * may never send one - and gating all traffic on "we were told a channel" then blocks
+     * transmission for good. We can derive the group's channel ourselves: it is the same
+     * algorithm DMD2 uses, ported and unit-tested against its values.
+     *
+     * If the guess is wrong, DMD2 sees the channel we report and corrects us with a real
+     * SET_FREQUENCY, so this is self-correcting rather than a second source of truth.
+     */
+    fun deriveConfigIfUnset(groupId: String?) {
+        if (desired != null || groupId.isNullOrEmpty()) return
+        val channel = Regions.channelForGroup(DEFAULT_REGION, groupId)
+        desired = RadioConfig(channel = channel, powerIndex = WEAKEST_POWER_INDEX, lbt = false)
+        EventLog.log("channel $channel derived from group (DMD2 has not sent SET_FREQUENCY)")
+    }
+
     fun requestConfig() {
         val power = maxOf(Session.power, WEAKEST_POWER_INDEX)
         if (power != Session.power) {

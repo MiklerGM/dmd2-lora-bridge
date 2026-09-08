@@ -42,6 +42,8 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
         Session.groupId = groupId
         Session.groupName = intent.getStringExtra(DmdLora.EX_GROUP_NAME)
         Session.senderUserId = sender
+        // Knowing the group is enough to know the channel, so do not wait to be told one.
+        Radio.deriveConfigIfUnset(groupId)
 
         val riders = parseRiders(json)
         if (riders.isEmpty()) {
