@@ -42,6 +42,10 @@ class MainActivity : Activity() {
     private lateinit var lonField: EditText
     private lateinit var speedField: EditText
     private lateinit var walkButton: Button
+    private lateinit var ridePanel: LinearLayout
+    private lateinit var testPanel: LinearLayout
+    private lateinit var rideTab: Button
+    private lateinit var testTab: Button
 
     private var walking = false
 
@@ -65,6 +69,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         requestBlePermissions()
         setContentView(buildUi())
+        selectTab(test = false)
 
         EventLog.onChange = { ui.post { renderLog() } }
         EventLog.log("UI started; waiting for DMD2 to talk to us")
@@ -106,7 +111,6 @@ class MainActivity : Activity() {
 
         val injectRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(pad, dp(4), pad, dp(4))
             addView(labeled("Rider #", hashField), weight(1f))
             addView(labeled("Lat", latField), weight(1.3f))
             addView(labeled("Lon", lonField), weight(1.3f))
@@ -119,7 +123,6 @@ class MainActivity : Activity() {
         }
         val injectButtons = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(pad, 0, pad, dp(4))
             addView(button("Inject rider") { inject() }, weight(1f))
             addView(walkButton, weight(1f))
             addView(button("Loopback") { loopback() }, weight(1f))
@@ -128,7 +131,26 @@ class MainActivity : Activity() {
             }, weight(1f))
         }
 
-        val serviceButtons = LinearLayout(this).apply {
+        // These fabricate riders and messages. In a live group that means other people see
+        // things that are not there, so they live on their own tab rather than sitting under a
+        // thumb on the handlebars.
+        testPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(pad, 0, pad, dp(4))
+            visibility = View.GONE
+            addView(TextView(this@MainActivity).apply {
+                text = "Fabricates riders and messages — use a test group"
+                textSize = 10f
+                setTextColor(Color.parseColor("#B08000"))
+            })
+            addView(injectRow)
+            addView(injectButtons)
+        }
+
+        rideTab = tabButton("Ride") { selectTab(test = false) }
+        testTab = tabButton("Test tools") { selectTab(test = true) }
+
+        ridePanel = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(pad, 0, pad, dp(4))
             addView(button("Start service") { LoraService.start(this@MainActivity) }, weight(1f))
@@ -148,10 +170,16 @@ class MainActivity : Activity() {
                 setPadding(0, 0, 0, dp(6))
             })
             addView(statusView, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-            addView(sectionLabel("Synthetic rider  ·  test group only"))
-            addView(injectRow)
-            addView(injectButtons)
-            addView(serviceButtons)
+            // Tabs swap only the controls: status and log stay put, because the log is exactly
+            // what you are reading while using the test tools.
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(pad, dp(6), pad, 0)
+                addView(rideTab, weight(1f))
+                addView(testTab, weight(1f))
+            })
+            addView(ridePanel)
+            addView(testPanel)
             addView(sectionLabel("Log"))
             addView(logScroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
         }
@@ -217,6 +245,21 @@ class MainActivity : Activity() {
             return
         }
         Radio.sendLoopbackProbe(lat, lon, readDouble(speedField, 0.0))
+    }
+
+    private fun selectTab(test: Boolean) {
+        testPanel.visibility = if (test) View.VISIBLE else View.GONE
+        ridePanel.visibility = if (test) View.GONE else View.VISIBLE
+        rideTab.alpha = if (test) 0.5f else 1f
+        testTab.alpha = if (test) 1f else 0.5f
+        // Leaving a walk running on a hidden tab would keep injecting unseen.
+        if (!test && walking) toggleWalk()
+    }
+
+    private fun tabButton(label: String, action: () -> Unit) = Button(this).apply {
+        text = label
+        textSize = 12f
+        setOnClickListener { action() }
     }
 
     private fun toggleWalk() {
@@ -297,4 +340,6 @@ class MainActivity : Activity() {
             .getOrNull().orEmpty()
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+
 }
