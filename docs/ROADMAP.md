@@ -288,6 +288,25 @@ introduced:
   tail in front of its first line; and the connected branch adopted whatever GATT object
   arrived. Both directions of `onConnectionStateChange` are now checked.
 
+A fourth read, of `ef20149`, found two — both of them regressions from the round before:
+
+- **The configuration was never re-sent after a mismatch.** Clearing the confirmation when
+  `conn=0` was undone three lines later by the same status: the bridge reports the registers it
+  was *given*, so a dead module answers with a perfect match and the confirmation came straight
+  back. Nothing then looked out of date, so nothing was ever pushed. Confirmation now includes
+  whether there is a module to run the registers on, as a pure function with the conn=0 case
+  under test.
+
+- **After three mismatches the firmware called a wrong configuration good.** That traded flash
+  wear for a green status on a radio that might be transmitting on somebody else's channel —
+  exactly the failure the whole `conn=` mechanism exists to catch, and the wrong side of the
+  trade. The fail-open is gone: a mismatch stays down. The flash-wear worry it was covering for
+  is dealt with properly instead, by comparing only the bits the driver actually chooses —
+  address, air rate, sub-packet size, power, channel, transparent, LBT and the RSSI-append bit
+  — and ignoring the reserved bits that were copied from the stock template and never decided
+  by anyone. `e220_verify` names the register that disagrees, so a genuine mismatch is
+  fixable rather than merely visible.
+
 ---
 
 ## Explicitly out of scope

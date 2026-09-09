@@ -179,10 +179,19 @@ e220_state_t e220_verify(const e220_config_t *cfg) {
         resp[2] != E220_REG_COUNT) {
         return E220_NO_ANSWER;
     }
-    /* Only the registers that read back: the key is write-only on this family and answers
-     * zero, so including it would call every healthy module a mismatch. */
-    if (memcmp(&resp[3], &want[3], E220_REG_READBACK) != 0) {
-        ESP_LOGW(TAG, "verify: registers drifted");
+    /*
+     * Only the registers that read back, and within those only the bits this driver chose.
+     * The key is write-only on this family and answers zero; the reserved bits came from the
+     * stock template rather than from a decision. Comparing either would call a healthy module
+     * a mismatch, and a mismatch costs a re-configuration - which is a flash write.
+     */
+    for (int i = 0; i < E220_REG_READBACK; i++) {
+        uint8_t mask = E220_READBACK_MASK[i];
+        if ((resp[3 + i] & mask) == (want[3 + i] & mask)) continue;
+        /* Say which register and what came back: a persistent mismatch keeps the radio down,
+         * and this line is what makes it fixable rather than merely visible. */
+        ESP_LOGW(TAG, "verify: register %d is %02X, expected %02X (mask %02X)",
+                 i, resp[3 + i], want[3 + i], mask);
         return E220_MISMATCH;
     }
     return E220_OK;

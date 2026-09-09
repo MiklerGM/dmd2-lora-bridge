@@ -90,6 +90,20 @@ int main(void) {
     assert(E220_REG_READBACK < E220_REG_COUNT);   /* the key never reads back */
     printf("%-28s ok\n", "read request is C1");
 
+    /* 8. The readback mask must cover everything that changes on-air behaviour, or a wrong
+     *    channel could pass a verify. It must not cover bits the driver only copied from the
+     *    stock template, or a healthy module would be reported as broken for ever. */
+    assert(E220_READBACK_MASK[4] == 0xFF);              /* channel, all of it */
+    assert((E220_READBACK_MASK[2] & 0x07) == 0x07);     /* air rate */
+    assert((E220_READBACK_MASK[3] & 0x03) == 0x03);     /* power */
+    assert((E220_READBACK_MASK[3] & 0xC0) == 0xC0);     /* sub-packet size */
+    assert((E220_READBACK_MASK[5] & 0x10) == 0x10);     /* LBT */
+    assert((E220_READBACK_MASK[5] & 0x40) == 0x40);     /* fixed / transparent */
+    assert((E220_READBACK_MASK[5] & 0x80) == 0x80);     /* RSSI append */
+    assert((E220_READBACK_MASK[2] & 0xE0) == 0x00);     /* UART bits are not ours to judge */
+    assert((E220_READBACK_MASK[3] & 0x3C) == 0x00);     /* reserved bits from the template */
+    printf("%-28s ok\n", "readback mask");
+
     printf("\nall register checks passed\n");
     return 0;
 }

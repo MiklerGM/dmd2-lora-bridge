@@ -71,6 +71,26 @@ object TxPower {
 fun radioUsable(linkConnected: Boolean, moduleOk: Boolean?, echoing: Boolean): Boolean =
     linkConnected && (moduleOk == true || echoing)
 
+/**
+ * Whether a status line from the bridge confirms the configuration we asked for.
+ *
+ * [usable] is part of the question, not a separate check made beforehand. The bridge reports
+ * the registers it *would* run, which are the ones we sent it, so a bridge whose module is
+ * dead reports a perfect match — and treating that as confirmation both hides the fault and
+ * stops the configuration ever being sent again, because nothing looks out of date.
+ *
+ * A weaker transmitter than we asked for is still a confirmation: a bridge is entitled to
+ * refuse to go as loud as requested, and insisting on an exact match there would leave the
+ * two sides retrying each other for ever with nothing on the air.
+ */
+fun configConfirmed(
+    want: RadioConfig,
+    channel: Int,
+    powerIndex: Int,
+    lbt: Boolean,
+    usable: Boolean,
+): Boolean = usable && channel == want.channel && powerIndex >= want.powerIndex && lbt == want.lbt
+
 /** What to do about the radio configuration when DMD2 names a group. */
 sealed interface ConfigPlan {
     /** The settings already belong to this group. */

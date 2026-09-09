@@ -70,6 +70,25 @@ class ConfigPlanTest {
     }
 
     @Test
+    fun `a status with matching fields confirms nothing while the module is dead`() {
+        val want = RadioConfig(channel = 18, powerIndex = 3, lbt = false)
+        // The bridge reports the registers it was given, so a dead module answers with a
+        // perfect match. Believing it would both hide the fault and stop the configuration
+        // ever being sent again, since nothing would look out of date.
+        assertEquals(false, configConfirmed(want, 18, 3, lbt = false, usable = false))
+        assertEquals(true, configConfirmed(want, 18, 3, lbt = false, usable = true))
+    }
+
+    @Test
+    fun `a bridge may hold power weaker than asked, but not another channel or LBT`() {
+        val want = RadioConfig(channel = 18, powerIndex = 1, lbt = false)
+        assertEquals(true, configConfirmed(want, 18, 3, lbt = false, usable = true))
+        assertEquals(false, configConfirmed(want, 18, 0, lbt = false, usable = true))
+        assertEquals(false, configConfirmed(want, 17, 1, lbt = false, usable = true))
+        assertEquals(false, configConfirmed(want, 18, 1, lbt = true, usable = true))
+    }
+
+    @Test
     fun `power is clamped into the module's range`() {
         assertEquals(TxPower.STRONGEST, TxPower.clamp(-1))
         assertEquals(TxPower.WEAKEST, TxPower.clamp(9))

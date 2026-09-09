@@ -63,6 +63,16 @@ void e220_build_frame(const e220_config_t *cfg, uint8_t *out) {
     for (int i = 0; i < E220_REG_COUNT; i++) out[3 + i] = reg[i];
 }
 
+const uint8_t E220_READBACK_MASK[E220_REG_READBACK] = {
+    0xFF,   /* ADDH */
+    0xFF,   /* ADDL */
+    0x07,   /* REG0: air rate. The UART bits above it are not worth checking - if they were
+             * wrong we could not be talking to the module at all. */
+    0xC3,   /* REG1: sub-packet size (7-6) and power (1-0) */
+    0xFF,   /* REG2: channel */
+    0xD0,   /* REG3: RSSI append (7), fixed/transparent (6), LBT (4) */
+};
+
 void e220_build_read_frame(uint8_t *out) {
     out[0] = 0xC1;              /* read registers - writes nothing, wears nothing */
     out[1] = 0x00;

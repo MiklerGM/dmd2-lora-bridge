@@ -281,11 +281,6 @@ object Radio {
                 )
             }
             moduleOk = ok
-            // Registers we cannot rely on any more: the module went away, came back on its
-            // own defaults, or drifted. Forget the confirmation so tick() sends the
-            // configuration again - the phone is the only thing that writes it, and this is
-            // how it finds out that it has to.
-            if (!ok) applied = null
         }
         parseField(status, "echo=")?.let { echo ->
             val on = echo != 0
@@ -305,10 +300,10 @@ object Radio {
         val power = parseField(status, "power=")
         val lbt = parseField(status, "lbt=")
         if (ch == null || power == null || lbt == null) return
-        // A higher index is a weaker transmitter, so a bridge that refuses to go as strong as
-        // asked has done something safe, not something wrong. Insisting on an exact match
-        // there would leave the two sides retrying each other for ever and nothing on the air.
-        if (ch == want.channel && power >= want.powerIndex && (lbt != 0) == want.lbt) {
+        // The bridge echoes back the registers we sent it, so a dead module reports a perfect
+        // match. Confirmation therefore has to include whether there is anything to run them
+        // on - otherwise the configuration is never re-sent, because nothing looks out of date.
+        if (configConfirmed(want, ch, power, lbt != 0, usable)) {
             if (applied != want) {
                 EventLog.log("radio config confirmed: ch=$ch power=$power lbt=$lbt")
                 if (power != want.powerIndex) {
@@ -317,7 +312,7 @@ object Radio {
             }
             applied = want
         } else if (applied != null) {
-            EventLog.log("radio config drifted (bridge reports ch=$ch power=$power lbt=$lbt)")
+            EventLog.log("radio config no longer confirmed (bridge reports ch=$ch power=$power lbt=$lbt)")
             applied = null
         }
     }

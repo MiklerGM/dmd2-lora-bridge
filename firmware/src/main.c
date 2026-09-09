@@ -87,16 +87,6 @@ static bool s_echo = false;
 /* Whether the module acknowledged the last configuration. Reported as conn=. */
 static bool s_module_ok = false;
 
-/*
- * A module that consistently reads its registers back as something other than what it accepted
- * would otherwise sit in a loop: verify says drifted, conn goes to 0, the phone re-sends its
- * configuration, the module writes its flash, and thirty seconds later the same thing again -
- * which is the flash wear the read-only probe exists to avoid, only slower. After a few of
- * those, believe the module rather than the comparison and go on using presence alone.
- */
-#define MISMATCH_TOLERANCE 3
-static int s_mismatch_streak = 0;
-static bool s_trust_readback = true;
 
 /* ---- command handling ---------------------------------------------------- */
 
@@ -329,16 +319,12 @@ static void rx_task(void *arg) {
             e220_state_t st = e220_verify(&s_cfg);
             /* Busy means the port was in use, which says nothing about the module. */
             if (st != E220_BUSY) {
-                if (st == E220_MISMATCH) {
-                    if (++s_mismatch_streak >= MISMATCH_TOLERANCE && s_trust_readback) {
-                        s_trust_readback = false;
-                        ESP_LOGW(TAG, "module keeps reading back registers it accepted; "
-                                      "checking presence only from now on");
-                    }
-                } else {
-                    s_mismatch_streak = 0;
-                }
-                bool ok = (st == E220_OK) || (st == E220_MISMATCH && !s_trust_readback);
+                /* A mismatch stays down. Calling the wrong channel good enough because it has
+                 * been wrong for a while would put a green status on a radio transmitting
+                 * somewhere else - which is the whole failure this reporting exists to catch.
+                 * e220_verify names the register that disagrees, so it can be fixed rather
+                 * than tolerated, and it compares only the bits this driver actually chose. */
+                bool ok = (st == E220_OK);
                 if (ok != s_module_ok) {
                     s_module_ok = ok;
                     ESP_LOGW(TAG, "module %s", ok ? "answered - RF is up"

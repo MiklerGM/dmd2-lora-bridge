@@ -40,3 +40,13 @@ void e220_build_read_frame(uint8_t *out);
  * comparing them would report a mismatch on every read of a module that is perfectly fine.
  */
 #define E220_REG_READBACK 6
+
+/*
+ * Which bits of those registers this driver actually decides, and which therefore mean
+ * something when read back. The rest were copied from the stock template because they are
+ * reserved or undocumented for this family, and comparing bits nobody chose would report a
+ * mismatch on a module that is behaving perfectly. Everything that changes on-air behaviour
+ * is here: address, air rate, sub-packet size, power, channel, fixed/transparent, LBT, and
+ * the RSSI-append bit that would corrupt the payload for every receiver.
+ */
+extern const uint8_t E220_READBACK_MASK[E220_REG_READBACK];
