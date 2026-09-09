@@ -44,7 +44,10 @@ class BleRadioLink(context: Context) : RadioLink {
     @Volatile private var mtu = DEFAULT_MTU
     @Volatile private var scanning = false
     @Volatile private var foundName: String? = null
+    @Volatile private var lastDevice: BluetoothDevice? = null
     private var scanTimeout: Runnable? = null
+    private var handshakeDone = false
+    private var failedHandshakes = 0
     private var retry: Runnable? = null
     @Volatile private var closed = false
 
@@ -147,7 +150,8 @@ class BleRadioLink(context: Context) : RadioLink {
      * bridge. removeBond is not public API, so failure is reported rather than assumed away.
      */
     private fun removeSystemBond() {
-        val device = gatt?.device ?: return
+        // Also reachable after the link is gone, which is exactly when a stale bond shows up.
+        val device = gatt?.device ?: lastDevice ?: return
         if (device.bondState != BluetoothDevice.BOND_BONDED) return
         val removed = runCatching {
             BluetoothDevice::class.java.getMethod("removeBond").invoke(device) as? Boolean
@@ -209,6 +213,7 @@ class BleRadioLink(context: Context) : RadioLink {
             state = "connecting"
             EventLog.log("BLE found ${device.address}, connecting")
             try {
+                    lastDevice = device
                 gatt = device.connectGatt(appContext, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
             } catch (e: SecurityException) {
                 EventLog.log("BLE connect denied: ${e.message}")
@@ -226,6 +231,7 @@ class BleRadioLink(context: Context) : RadioLink {
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
+                handshakeDone = false
                 EventLog.log("BLE connected, discovering services")
                 // A full packet is ~270 base64 characters; the 23-byte default would fragment
                 // every single one. The central has to ask for this.
@@ -236,6 +242,19 @@ class BleRadioLink(context: Context) : RadioLink {
                 }
             } else {
                 EventLog.log("BLE disconnected (status $status)")
+                // A link that never gets as far as being usable, twice running, while we hold a
+                // bond, means the bridge has forgotten us - unplugged and reset, or unpaired
+                // with nobody connected to be told. Android will not drop a stale key by
+                // itself, so it has to be done here or the pair never recovers.
+                if (!handshakeDone) {
+                    failedHandshakes++
+                    if (failedHandshakes >= STALE_BOND_ATTEMPTS) {
+                        failedHandshakes = 0
+                        EventLog.log("pairing looks stale — clearing it and starting over")
+                        prefs().edit().remove(KEY_PINNED).apply()
+                        removeSystemBond()
+                    }
+                }
                 teardown()
                 retryLater()
             }
@@ -292,6 +311,8 @@ class BleRadioLink(context: Context) : RadioLink {
                 return
             }
             connected = true
+            handshakeDone = true
+            failedHandshakes = 0
             state = if (g.device?.bondState == BluetoothDevice.BOND_BONDED) "connected" else "pairing"
             foundName?.let { rememberBridge(it) }
             EventLog.log("BLE bridge ready${foundName?.let { " ($it)" } ?: ""}")
@@ -369,6 +390,12 @@ class BleRadioLink(context: Context) : RadioLink {
     private fun dispatch(line: String) {
         when {
             line.startsWith("RX ") -> onWire?.invoke(line.substring(3))
+            // The bridge was unpaired at its own end - drop our key too, or we would keep
+            // offering one it no longer has and never manage to encrypt again.
+            line == "FORGET" -> {
+                EventLog.log("bridge asked to be forgotten")
+                forgetBridge()
+            }
             line.startsWith("ST ") -> {
                 EventLog.log("bridge: $line")
                 onStatus?.invoke(line.substring(3))
@@ -487,6 +514,9 @@ class BleRadioLink(context: Context) : RadioLink {
         /** Long enough for the pairing dialog to be answered without hammering the stack. */
         private const val PAIRING_WAIT_MS = 1_500L
         private const val MAX_WRITE_FAILURES = 3
+
+        /** Two failed handshakes in a row is enough; one can just be a flaky connection. */
+        private const val STALE_BOND_ATTEMPTS = 2
 
         /** GATT status codes the platform does not expose as constants. */
         private const val GATT_INSUFFICIENT_AUTHENTICATION = 5

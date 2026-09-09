@@ -257,6 +257,15 @@ static void pair_button_task(void *arg) {
             if (held_ms >= PAIR_HOLD_MS && !fired) {
                 fired = true;   /* once per press, not once per poll */
                 ESP_LOGW(TAG, "pair button held - forgetting the paired phone");
+                /*
+                 * Warn the phone first. If only this side forgets, the phone keeps offering a
+                 * key we no longer hold, encryption fails and the pair drops into a loop that
+                 * accepting the pairing dialog cannot break.
+                 */
+                if (ble_nus_connected()) {
+                    ble_nus_send_line("FORGET");
+                    vTaskDelay(pdMS_TO_TICKS(300));
+                }
                 ble_nus_forget_bonds();
             }
         } else {
