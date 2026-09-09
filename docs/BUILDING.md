@@ -109,6 +109,22 @@ the owner to walk away".
 > If the app logs `system pairing not removed`, clear it by hand in Android's Bluetooth
 > settings — `removeBond()` is not public API and can be refused.
 
+**Verified on hardware, 2026-09-09.** Holding the button recovers in about twenty seconds
+without anyone touching the phone:
+
+```
+phone:  bridge forgotten — rescanning        (obeyed FORGET from the bridge)
+phone:  BLE bridge ready                     attempt 1
+bridge: encryption FAILED - stale key dropped
+phone:  BLE bridge ready                     attempt 2
+bridge: encryption on
+phone:  bridge: ST conn=1 ...                traffic flowing again
+```
+
+The one failed attempt in the middle is by design: a key can only be known to be stale by
+trying it once. Both sides now discard a key that fails, which is what turns what used to be an
+endless reconnect loop into a self-healing pause.
+
 ## Milestone 4.5 — the whole chain with no radio at all
 
 The bridge simulates a radio when no module answers at boot: it loops a transmit straight back
