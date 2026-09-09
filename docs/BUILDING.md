@@ -136,6 +136,17 @@ The one failed attempt in the middle is by design: a key can only be known to be
 trying it once. Both sides now discard a key that fails, which is what turns what used to be an
 endless reconnect loop into a self-healing pause.
 
+Pairing also survives a reset, verified by pulling the bridge's reset line:
+
+```
+bridge up
+connected
+encryption on        270 ms later, before MTU negotiation - no pairing, no dialog
+```
+
+Compare with a real pairing, which takes upwards of thirteen seconds and a prompt on the
+phone. Anything slower than a fraction of a second means the stored key was not used.
+
 ## Milestone 4.5 — the whole chain with no radio at all
 
 The bridge simulates a radio when no module answers at boot: it loops a transmit straight back
