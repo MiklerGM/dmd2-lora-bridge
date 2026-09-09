@@ -120,6 +120,11 @@ Only once M6 passes:
 
 - TX pacing that respects the slot/interval model; never transmit faster than the stock app.
 - Dedup ring, sequence handling, stale-position expiry.
+- ~~Works without a network.~~ **Verified 2026-09-09**, which is the premise the whole project
+  rests on. With airplane mode on, no connected networks and `ping: Network is unreachable`,
+  DMD2 still handed the bridge 50 position packets in 45 seconds — about one a second, exactly
+  as it does online. The group session is cached, so losing the network does not end it.
+
 - ~~Link recovery.~~ **Verified 2026-09-09** against a bridge reset, a USB power cycle and
   Bluetooth turned off and on again. Each recovers the same way — disconnect, rescan, ready,
   and `ST` about 200 ms later, which is the stored key being used rather than a fresh pairing.
