@@ -25,6 +25,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.thorkracing.dmdLora.radio.Radio
+import com.thorkracing.dmdLora.radio.TxPower
 import com.thorkracing.dmdLora.service.LoraService
 import java.util.Locale
 
@@ -51,6 +52,8 @@ class MainActivity : Activity() {
     private lateinit var settingsPanel: LinearLayout
     private lateinit var autostartButton: Button
     private lateinit var batteryButton: Button
+    private lateinit var powerButton: Button
+    private lateinit var simButton: Button
 
     private lateinit var hashField: EditText
     private lateinit var latField: EditText
@@ -124,6 +127,8 @@ class MainActivity : Activity() {
             addView(statusRow("Traffic", trafficValue, null))
         }
 
+        simButton = styled("", C.CONTROL) { Radio.setEcho(!Radio.simulating) }
+
         hashField = field("1234", "hash")
         latField = field("52.520008", "lat")
         lonField = field("13.404954", "lon")
@@ -157,10 +162,19 @@ class MainActivity : Activity() {
                     Radio.sendLoopbackChat("loopback ${System.currentTimeMillis() % 100000}")
                 }, cell(1f))
             })
+            // Loopback needs a bridge that echoes, and the firmware no longer switches itself
+            // into that mode - a bridge that quietly stands in for a broken radio looks exactly
+            // like a working one. So it is turned on here, on purpose, and shown while it is on.
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, dp(4), 0, 0)
+                addView(simButton, cell(1f))
+            })
         }
 
         autostartButton = styled("", C.CONTROL) { toggleAutostart() }
         batteryButton = styled("", C.CONTROL) { requestBatteryExemption() }
+        powerButton = styled("", C.CONTROL) { cyclePower() }
         settingsPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
@@ -169,6 +183,20 @@ class MainActivity : Activity() {
                 orientation = LinearLayout.HORIZONTAL
                 addView(autostartButton, cell(1f))
                 addView(batteryButton, cell(1f))
+            })
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, dp(4), 0, 0)
+                addView(powerButton, cell(1f))
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = "Steps are the module's own: 30/27/24/21 dBm on an E220-T30, " +
+                    "22/17/13/10 on a T22. What you may transmit depends on your band and " +
+                    "country, not on the module — on 868.0–868.6 MHz Germany allows 25 mW " +
+                    "ERP, about 14 dBm, which no T30 step reaches without attenuation."
+                textSize = 10f
+                setTextColor(C.MUTED)
+                setPadding(dp(5), dp(2), dp(5), dp(4))
             })
             addView(LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -242,8 +270,17 @@ class MainActivity : Activity() {
         serviceAction.background = rounded(if (running) C.DANGER else C.GO)
 
         val radio = if (Session.radioAttached) Radio.linkState else "off"
-        radioValue.text = radio
-        radioValue.setTextColor(stateColor(radio))
+        // The link and the air are two different things: a bridge whose module is dead is a
+        // perfectly healthy Bluetooth device, and saying only "connected" hid exactly that.
+        val air = Radio.airState
+        radioValue.text = if (air == null) radio else "$radio · $air"
+        radioValue.setTextColor(
+            when (air) {
+                null -> stateColor(radio)
+                "no module" -> C.DANGER_TEXT
+                else -> C.WARN
+            }
+        )
         // Unpairing only means something once a bridge has actually been adopted.
         unpairAction.visibility = if (radio == "connected") View.VISIBLE else View.INVISIBLE
 
@@ -258,6 +295,35 @@ class MainActivity : Activity() {
         val free = isBatteryUnrestricted()
         batteryButton.text = if (free) "Battery: free" else "Battery: limited"
         batteryButton.background = rounded(if (free) C.GO else C.DANGER)
+
+        val power = Prefs.powerIndex(this)
+        powerButton.text = "TX power $power · ${TxPower.label(power)}"
+        // Neutral at the weakest step, warmer as it climbs: the colour is the only thing
+        // between a curious tap and a transmitter that is louder than the licence allows.
+        powerButton.background = rounded(
+            when (power) {
+                TxPower.WEAKEST -> C.CONTROL
+                TxPower.STRONGEST -> C.DANGER
+                else -> C.WARN
+            }
+        )
+        powerButton.setTextColor(if (power < TxPower.WEAKEST) C.ON_ACCENT else C.TEXT)
+
+        val sim = Radio.simulating
+        simButton.text = if (sim) "Simulating — nothing on the air" else "Simulate radio"
+        simButton.background = rounded(if (sim) C.WARN else C.CONTROL)
+        simButton.setTextColor(if (sim) C.ON_ACCENT else C.TEXT)
+    }
+
+    /**
+     * Weakest first, then upwards, then back round. Starting at the strongest and asking the
+     * rider to dial it down would put the loudest setting one tap from the default.
+     */
+    private fun cyclePower() {
+        val next = Prefs.powerIndex(this) - 1
+        Prefs.setPowerIndex(this, if (next < TxPower.STRONGEST) TxPower.WEAKEST else next)
+        Radio.onPowerLimitChanged(this)
+        renderStatus()
     }
 
     /** Green when working, amber while it is getting there, red when it needs a human. */

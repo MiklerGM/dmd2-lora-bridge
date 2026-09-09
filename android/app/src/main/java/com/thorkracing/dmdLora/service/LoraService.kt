@@ -40,8 +40,10 @@ class LoraService : Service() {
     private val heartbeat = object : Runnable {
         override fun run() {
             // Report the truth. Claiming a working radio while the bridge is unreachable makes
-            // DMD2 hand us positions we can only drop, and hides the fault from the rider.
-            Bridge.sendStatusUpdate(this@LoraService, connected = Radio.connected)
+            // DMD2 hand us positions we can only drop, and hides the fault from the rider - and
+            // a bridge whose LoRa module is dead is exactly as useless as one that is missing,
+            // however healthy the Bluetooth link to it looks.
+            Bridge.sendStatusUpdate(this@LoraService, connected = Radio.usable)
             handler.postDelayed(this, HEARTBEAT_MS)
         }
     }

@@ -15,6 +15,9 @@
  *   ECHO 0|1             OK                 simulate a radio by looping TX back as RX
  *   PING <n>             PONG <n chars>     transport test: forces a long, fragmented line
  *
+ * conn= is the module, not the Bluetooth link: 0 means the E220 is not answering and nothing
+ * this bridge is handed will reach the air.
+ *
  * The payload the module carries is already base64 ASCII, because that is what DMD writes to
  * its module's UART. So nothing here encodes or decodes anything.
  */
@@ -36,14 +39,22 @@
 #define OUT_LINE_MAX 512
 #define IDLE_GAP_MS 50
 #define RX_POLL_MS 100
+#define MODULE_RETRY_MS 5000
 
 /*
- * Weakest power index the firmware will accept (0=30, 1=27, 2=24, 3=21 dBm). The BLE command
- * surface is unauthenticated - anything in range can talk to it - so the regulatory limit is
- * enforced on the device, not left to a well-behaved client. Raise deliberately, and only to
- * what is licensed where the bridge is used.
+ * Weakest power index this firmware will accept (0 is the strongest step, 3 the weakest; what
+ * each means in dBm depends on the module variant). The phone owns the setting the rider
+ * actually turns - see Prefs.powerIndex - and this is the floor underneath it, because the BLE
+ * command surface is unauthenticated and anything in range can send a CFG.
+ *
+ * It is a build flag rather than a constant so a bridge can be built for a licence that allows
+ * more: -DMIN_POWER_INDEX=0. Whatever it is set to, the bridge reports the power it actually
+ * runs and the phone accepts a weaker one than it asked for, so lowering this ceiling never
+ * deadlocks the two sides against each other.
  */
+#ifndef MIN_POWER_INDEX
 #define MIN_POWER_INDEX 3
+#endif
 
 /*
  * Hold this pin (the BOOT button on most boards) for a few seconds to hand the bridge to a
@@ -63,18 +74,26 @@ static QueueHandle_t s_tx_queue; /* char* owned by the queue */
 /*
  * Echo (simulation) mode: a transmit is looped straight back as a receive instead of going
  * to the radio. It lets the whole chain - phone, BLE, framing, codec, injection into DMD2 -
- * be exercised on a bare ESP32 with no LoRa module attached. Enabled automatically when no
- * module answers at boot, which is exactly the bench case.
+ * be exercised on a bare ESP32 with no LoRa module attached.
+ *
+ * It is only ever switched on by an explicit ECHO 1. It used to turn itself on whenever the
+ * module failed to answer, which meant a broken radio and a bench board were indistinguishable:
+ * the bridge went on replying OK to every command and the phone showed a healthy green link
+ * while not one packet reached the air. A simulator that starts itself is a liar.
  */
 static bool s_echo = false;
+
+/* Whether the module acknowledged the last configuration. Reported as conn=. */
+static bool s_module_ok = false;
 
 /* ---- command handling ---------------------------------------------------- */
 
 static void send_status(void) {
     char out[160];
     snprintf(out, sizeof(out),
-             "ST conn=1 ch=%u freq=%.3f rate=%u power=%u packet=%u trans=%u lbt=%u addr=%u "
+             "ST conn=%u ch=%u freq=%.3f rate=%u power=%u packet=%u trans=%u lbt=%u addr=%u "
              "echo=%u fw=%s",
+             (unsigned)s_module_ok,
              s_cfg.channel, 850.125 + (double)s_cfg.channel, s_cfg.air_rate, s_cfg.power,
              s_cfg.packet_size, (unsigned)s_cfg.transparent, (unsigned)s_cfg.lbt,
              s_cfg.address, (unsigned)s_echo, s_fw[0] ? s_fw : "?");
@@ -132,27 +151,20 @@ static void handle_cfg(const char *args) {
     if (kv_int(args, "trans", &v)) next.transparent = (v != 0);
     if (kv_int(args, "lbt", &v)) next.lbt = (v != 0);
 
-    if (s_echo) {
-        // Nothing to configure; a simulated radio accepts the settings so the phone can
-        // confirm them and the rest of the chain behaves exactly as it will with hardware.
+    /* Always ask the module, even while simulating: it is the only way conn= can ever go
+     * back to 1 once a module is plugged in, and the old early return made that unreachable. */
+    s_module_ok = e220_apply(&next);
+    if (s_module_ok || s_echo) {
+        /* A simulated radio accepts the settings so the phone can confirm them and the rest
+         * of the chain behaves exactly as it will with hardware. */
         s_cfg = next;
-        ble_nus_send_line("OK");
-        send_status();
-        return;
-    }
-    if (e220_apply(&next)) {
-        s_cfg = next;
-        if (s_echo) {
-            // A real module answered, so stop pretending to be one - otherwise every
-            // transmission keeps looping back to the phone and never reaches the air.
-            s_echo = false;
-            ESP_LOGI(TAG, "module answered - echo (simulation) mode OFF");
-        }
-        ble_nus_send_line("OK");
-        send_status();
+        ble_nus_send_line(s_module_ok ? "OK" : "OK simulated");
     } else {
         ble_nus_send_line("ERR module did not acknowledge");
     }
+    /* Either way: the status carries conn=, so a refusal is visible rather than just a line
+     * the phone logs and forgets. */
+    send_status();
     return;
 
 bad_range:
@@ -280,7 +292,24 @@ static void rx_task(void *arg) {
     (void)arg;
     static uint8_t buf[PACKET_MAX + 1];
     static char line[OUT_LINE_MAX];
+    int since_retry_ms = 0;
     for (;;) {
+        if (!s_module_ok && !s_echo) {
+            /* No module answering: nothing to read, and a wire that was loose or a module
+             * still powering up is worth another go. Say so when it comes back, so the phone
+             * lifts its own gate without waiting for the next configuration round.  */
+            since_retry_ms += RX_POLL_MS;
+            if (since_retry_ms >= MODULE_RETRY_MS) {
+                since_retry_ms = 0;
+                if (e220_apply(&s_cfg)) {
+                    s_module_ok = true;
+                    ESP_LOGI(TAG, "module answered - RF is up");
+                    send_status();
+                }
+            }
+            vTaskDelay(pdMS_TO_TICKS(RX_POLL_MS));
+            continue;
+        }
         /* A bounded wait, so configuration can take the port between packets. */
         size_t n = e220_read_packet(buf, PACKET_MAX, IDLE_GAP_MS, RX_POLL_MS);
         if (n == 0) continue;
@@ -306,11 +335,11 @@ void app_main(void) {
 
     e220_init();
     e220_read_firmware(s_fw, sizeof(s_fw));
-    if (!e220_apply(&s_cfg)) {
-        /* Almost certainly no module wired up. Simulate one so the rest of the chain can be
-         * tested on a bare board; a real module will answer and this stays off. */
-        s_echo = true;
-        ESP_LOGW(TAG, "no module acknowledged - echo (simulation) mode ON");
+    s_module_ok = e220_apply(&s_cfg);
+    if (!s_module_ok) {
+        /* Almost certainly no module wired up. Report it as conn=0 and keep trying - do not
+         * quietly stand in for the radio, or a bench board and a broken one look the same. */
+        ESP_LOGW(TAG, "no module acknowledged - conn=0, retrying; send ECHO 1 to simulate one");
     }
 
     ble_nus_init("DMD-LoRa-Bridge", on_ble_line);
@@ -326,6 +355,6 @@ void app_main(void) {
     xTaskCreate(tx_task, "lora_tx", 4096, NULL, 6, NULL);
     xTaskCreate(rx_task, "lora_rx", 4096, NULL, 6, NULL);
 
-    ESP_LOGI(TAG, "bridge up: ch=%u %.3f MHz, power index %u, echo=%d",
-             s_cfg.channel, 850.125 + (double)s_cfg.channel, s_cfg.power, (int)s_echo);
+    ESP_LOGI(TAG, "bridge up: ch=%u %.3f MHz, power index %u, module=%d",
+             s_cfg.channel, 850.125 + (double)s_cfg.channel, s_cfg.power, (int)s_module_ok);
 }

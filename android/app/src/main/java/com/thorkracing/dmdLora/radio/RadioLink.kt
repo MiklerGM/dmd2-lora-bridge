@@ -16,6 +16,13 @@ interface RadioLink {
     /** Apply the module's radio configuration. */
     fun configure(config: RadioConfig)
 
+    /**
+     * Turn the bridge's simulation mode on or off. A simulating bridge loops transmissions
+     * straight back instead of putting them on the air; it is a bench tool and nothing else,
+     * which is why it is switched on deliberately and never by the firmware itself.
+     */
+    fun echo(on: Boolean)
+
     /** Called for every complete wire string received from the air. */
     var onWire: ((String) -> Unit)?
 
@@ -29,12 +36,70 @@ interface RadioLink {
 }
 
 /**
+ * The module's transmit power, as an index: 0 is the strongest step and 3 the weakest.
+ *
+ * The index is all the module understands. What it means in dBm depends on the variant - an
+ * E220-900T30S runs 30/27/24/21, a T22 runs 22/17/13/10 - so the app never pretends to know
+ * the output, it only carries the number and shows both tables next to it.
+ */
+object TxPower {
+    const val STRONGEST = 0
+    const val WEAKEST = 3
+
+    private val T30 = intArrayOf(30, 27, 24, 21)
+    private val T22 = intArrayOf(22, 17, 13, 10)
+
+    fun clamp(index: Int): Int = index.coerceIn(STRONGEST, WEAKEST)
+
+    /** For the settings button. Both tables, because the index alone says nothing. */
+    fun label(index: Int): String {
+        val i = clamp(index)
+        return "${T30[i]}/${T22[i]} dBm"
+    }
+}
+
+/** What to do about the radio configuration when DMD2 names a group. */
+sealed interface ConfigPlan {
+    /** The settings already belong to this group. */
+    object Keep : ConfigPlan
+
+    /** Settings DMD2 gave us before it named a group; they belong to this one. */
+    object Adopt : ConfigPlan
+
+    /** A different group, so a different channel. */
+    data class Switch(val config: RadioConfig) : ConfigPlan
+}
+
+/**
+ * A group's channel is derived from its id, so a new group means a new channel - and until the
+ * module confirms it, anything transmitted goes out on the previous group's frequency. Deciding
+ * that here rather than inside Radio keeps it testable, which is where two bugs have lived.
+ *
+ * [fromDmd2] marks settings that came from a SET_FREQUENCY rather than being derived. Those are
+ * authoritative, but DMD2 sends them before it has named a group, so the first group to come
+ * along adopts them instead of overriding them.
+ */
+fun planForGroup(
+    group: String,
+    stampedGroup: String?,
+    fromDmd2: Boolean,
+    channel: Int,
+    powerIndex: Int,
+): ConfigPlan = when {
+    group == stampedGroup -> ConfigPlan.Keep
+    fromDmd2 && stampedGroup == null -> ConfigPlan.Adopt
+    else -> ConfigPlan.Switch(
+        RadioConfig(channel = channel, powerIndex = TxPower.clamp(powerIndex), lbt = false)
+    )
+}
+
+/**
  * The register profile the stock app applies for group mode. Only channel and power vary at
  * runtime; the rest are fixed by the protocol and must match the rest of the group.
  */
 data class RadioConfig(
     val channel: Int,
-    /** Module power index, 0..3 = 30/27/24/21 dBm. Clamp for local regulations. */
+    /** Module power index; see [TxPower]. Higher index means weaker. */
     val powerIndex: Int,
     val lbt: Boolean,
     val address: Int = 0,
@@ -60,5 +125,6 @@ class LoopbackLink : RadioLink {
 
     override fun send(wire: String) { onWire?.invoke(wire) }
     override fun configure(config: RadioConfig) { configured += config }
+    override fun echo(on: Boolean) = Unit
     override fun close() { onWire = null }
 }

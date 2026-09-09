@@ -173,6 +173,54 @@ Only once M6 passes:
 
 ---
 
+## M7.5 — What the third review found
+
+An outside read of `1491311` turned up six things, all of which came down to the same habit:
+a status that is *computed* somewhere else being *believed* here without being checked.
+
+- **A dead radio looked exactly like a working one.** The firmware switched itself into
+  simulation whenever the module failed to answer at boot, then answered `OK` to every command
+  and reported `conn=1` regardless. The phone showed a green link with nothing on the air. The
+  branch meant to switch simulation back off when a module did appear was unreachable, because
+  the simulation check returned before the module was ever asked. Simulation is now only ever
+  switched on by hand, from **Tools → Simulate radio**; `conn=` reports the module rather than
+  a constant, a failed configuration is retried every five seconds, and the phone refuses to
+  transmit until the bridge says a module answered. The status line distinguishes
+  `connected · no module` from `connected · simulating`, and the heartbeat reports the radio to
+  DMD2 as down as well, so the fault shows up on the map screen the rider is actually looking at
+  rather than only in our log.
+
+- **Transmit power was hardcoded at the weakest step and called a regulatory clamp.** It was
+  neither: the weakest step of an E220-900T30 is 21 dBm, and 868.0–868.6 MHz in Germany allows
+  about 14 dBm ERP, so no step of that module is legal there without attenuation. Power is now
+  the rider's setting (**Settings → TX power**), defaulting to the weakest step, with the
+  module's real tables and the ERP limit stated next to it. The firmware keeps a build-time
+  floor under it, and the phone accepts a *weaker* setting than it asked for rather than
+  retrying for ever against a bridge that refuses.
+
+- **Chat was dropped whenever the radio was not ready.** Positions repeat a second later, so
+  gating them is free; a chat message is typed once. It is now queued whatever the radio is
+  doing — pairing, reconnecting, re-applying registers — capped at sixteen messages, and
+  expired after ten minutes, because a message delivered half an hour late reads as a fresh one.
+
+- **A new group transmitted on the previous group's channel.** The channel is derived from the
+  group id, but it was derived only once and never revisited, so the first packets of a new
+  ride went out on the old frequency — transmitted wrongly, not merely lost. Settings are now
+  stamped with the group they were worked out for; the decision is a pure function with its own
+  tests (`ConfigPlanTest`), including the case where DMD2 dictates a channel before it has
+  named a group.
+
+- **Notification subscription was assumed rather than confirmed.** `writeDescriptor` only
+  *starts* the write; the result arrives in `onDescriptorWrite`. A link is now ready only in
+  that callback, and one that never arrives times out instead of sitting connected and deaf.
+
+- **Outbound bridge lines were not atomic.** `ble_nus_send_line` runs from three tasks and a
+  line goes out as several notifications, so two could interleave into one unparseable line.
+  A mutex serialises them, and a line cut short by a failed notification still gets its
+  newline so the next one is not glued onto its tail.
+
+---
+
 ## Explicitly out of scope
 
 - Relaying / mesh. Broken upstream; we send TTL=2 and never relay.

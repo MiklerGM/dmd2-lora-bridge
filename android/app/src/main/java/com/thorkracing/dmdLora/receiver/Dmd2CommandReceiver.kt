@@ -27,14 +27,14 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
         }
 
         when (action) {
-            DmdLora.ACTION_SEND_GROUP_DATA -> onSendGroupData(intent)
+            DmdLora.ACTION_SEND_GROUP_DATA -> onSendGroupData(context, intent)
             DmdLora.ACTION_SEND_CHAT_MESSAGE -> onSendChat(intent)
             DmdLora.ACTION_SET_FREQUENCY -> onSetFrequency(context, intent)
             DmdLora.ACTION_STOP -> LoraService.stop(context)
         }
     }
 
-    private fun onSendGroupData(intent: Intent) {
+    private fun onSendGroupData(context: Context, intent: Intent) {
         val groupId = intent.getStringExtra(DmdLora.EX_GROUP_ID) ?: return
         val sender = intent.getStringExtra(DmdLora.EX_SENDER_USER_ID).orEmpty()
         val json = intent.getStringExtra(DmdLora.EX_RIDERS_JSON) ?: return
@@ -42,8 +42,9 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
         Session.groupId = groupId
         Session.groupName = intent.getStringExtra(DmdLora.EX_GROUP_NAME)
         Session.senderUserId = sender
-        // Knowing the group is enough to know the channel, so do not wait to be told one.
-        Radio.deriveConfigIfUnset(groupId)
+        // Knowing the group is enough to know the channel, so do not wait to be told one -
+        // and a different group is a different channel, so this is checked every time.
+        Radio.configureForGroup(context, groupId)
 
         learnOwnName(json, sender)
         val riders = parseRiders(json)
@@ -78,9 +79,7 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
             text,
             Session.nextSeq(),
         )
-        val wire = Codec.toWire(packet)
-        val queued = Radio.transmitChat(wire)
-        EventLog.log("TX chat ${packet.size} B ${if (queued) "queued" else "not queued"}")
+        EventLog.log("TX chat ${packet.size} B ${Radio.transmitChat(Codec.toWire(packet))}")
     }
 
     private fun onSetFrequency(context: Context, intent: Intent) {
@@ -93,7 +92,7 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
                 "power=${Session.power} lbt=${Session.lbt} region=${Session.regionDesc}"
         )
         // Records the request; the service applies it once a radio is actually attached.
-        Radio.requestConfig()
+        Radio.requestConfig(context)
         LoraService.start(context)
     }
 

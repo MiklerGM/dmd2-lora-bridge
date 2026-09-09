@@ -46,6 +46,7 @@ class BleRadioLink(context: Context) : RadioLink {
     @Volatile private var foundName: String? = null
     @Volatile private var lastDevice: BluetoothDevice? = null
     private var scanTimeout: Runnable? = null
+    private var readyTimeout: Runnable? = null
     private var handshakeDone = false
     private var gotData = false
     private var failedHandshakes = 0
@@ -331,6 +332,30 @@ class BleRadioLink(context: Context) : RadioLink {
                 failLink("could not subscribe to notifications")
                 return
             }
+            // Starting the write is not finishing it. The platform reports the outcome in
+            // onDescriptorWrite, and a subscription that fails there leaves a link that looks
+            // connected and never hears a thing - so the link only counts as ready in that
+            // callback, and a callback that never comes has to time out.
+            readyTimeout = Runnable {
+                if (!connected) failLink("bridge never confirmed the subscription")
+            }
+            handler.postDelayed(readyTimeout!!, READY_TIMEOUT_MS)
+        }
+
+        override fun onDescriptorWrite(
+            g: BluetoothGatt, d: BluetoothGattDescriptor, status: Int,
+        ) {
+            if (d.uuid != CCCD_UUID) return
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                failLink("notification subscription refused ($status)")
+                return
+            }
+            linkReady()
+        }
+
+        private fun linkReady() {
+            readyTimeout?.let { handler.removeCallbacks(it) }
+            readyTimeout = null
             connected = true
             handshakeDone = true
             foundName?.let { rememberBridge(it) }
@@ -433,6 +458,10 @@ class BleRadioLink(context: Context) : RadioLink {
         sendLine(config.toCommand())
     }
 
+    override fun echo(on: Boolean) {
+        sendLine("ECHO ${if (on) 1 else 0}")
+    }
+
     @Synchronized
     private fun sendLine(line: String) {
         if (closed) return
@@ -488,6 +517,8 @@ class BleRadioLink(context: Context) : RadioLink {
     }
 
     private fun teardown() {
+        readyTimeout?.let { handler.removeCallbacks(it) }
+        readyTimeout = null
         connected = false
         if (phase != "bluetooth off" && phase != "no permission") phase = "disconnected"
         rxChar = null
@@ -507,6 +538,7 @@ class BleRadioLink(context: Context) : RadioLink {
         closed = true
         onWire = null
         scanTimeout = null
+        readyTimeout = null
         retry = null
         handler.removeCallbacksAndMessages(null)
         stopScan()
@@ -529,6 +561,9 @@ class BleRadioLink(context: Context) : RadioLink {
         private const val ATT_OVERHEAD = 3
         private const val MAX_LINE = 4096
         private const val SCAN_TIMEOUT_MS = 30_000L
+
+        /** Generous: the descriptor write can sit behind a pairing dialog the rider has to see. */
+        private const val READY_TIMEOUT_MS = 20_000L
         private const val RETRY_MS = 10_000L
         private const val WRITE_RETRY_MS = 50L
 

@@ -149,16 +149,23 @@ phone. Anything slower than a fraction of a second means the stored key was not 
 
 ## Milestone 4.5 — the whole chain with no radio at all
 
-The bridge simulates a radio when no module answers at boot: it loops a transmit straight back
-as a receive. That exercises everything except the RF itself, on a bare ESP32.
+The bridge can simulate a radio: it loops a transmit straight back as a receive. That exercises
+everything except the RF itself, on a bare ESP32.
 
-1. Flash the firmware to any ESP32 (**no E220 needed**). The log should say
-   `no module acknowledged - echo (simulation) mode ON`.
-2. On the phone, start the service. It now scans for the advertised name **DMD-LoRa-Bridge**,
+Simulation has to be asked for. It used to switch itself on whenever no module answered, which
+made a broken radio and a bench board indistinguishable — the bridge went on answering `OK` to
+every command and the phone showed a healthy green link while nothing reached the air.
+
+1. Flash the firmware to any ESP32 (**no E220 needed**). With no module the log says
+   `no module acknowledged - conn=0, retrying`, and the phone shows the radio as
+   **`connected · no module`** with nothing transmitting.
+2. On the phone, start the service. It scans for the advertised name **DMD-LoRa-Bridge**,
    so it will not latch onto unrelated devices that share the Nordic UART UUID.
-   Expect `BLE bridge ready` and an `ST … echo=1` line.
-3. Have DMD2 in an active group with sharing on, so the app knows the group id.
-4. Press **Loopback**.
+   Expect `BLE bridge ready`.
+3. Open **Tools** and press **Simulate radio**. The status turns to
+   **`connected · simulating`** and the log says the air stays quiet.
+4. Have DMD2 in an active group with sharing on, so the app knows the group id.
+5. Press **Loopback**.
 
 **Pass:** a rider **`Rider 71E0`** appears in DMD2. That marker travelled
 phone → BLE → ESP32 → BLE → phone → codec → DMD2, so the transport, framing, codec and
@@ -175,6 +182,22 @@ STATUS        ->  ST conn=1 ch=18 … echo=1 fw=…
 A 200-character reply is far past the 23-byte default MTU, so if `PONG` comes back whole the
 fragmentation and reassembly are working.
 
+## Transmit power
+
+The app defaults to the weakest step the module offers and asks before going above it:
+**Settings → TX power**, which cycles 3 → 2 → 1 → 0 and colours itself as it climbs. The
+firmware keeps its own floor at index 3 underneath that, because the BLE command surface is
+unauthenticated and anything in range can send a `CFG`. Build with `-DMIN_POWER_INDEX=0` to
+lift it. If the bridge holds power weaker than the phone asked for, the phone accepts it and
+logs the difference rather than retrying for ever.
+
+**The weakest step is not automatically legal.** The index is only a step in the module's own
+table — 30/27/24/21 dBm on an E220-900T30, 22/17/13/10 on a T22 — and what may go on the air
+is set by the band and the country. On 868.0–868.6 MHz Germany allows 25 mW ERP, about 14 dBm
+(BNetzA Vfg 91/2025), which **no step of a T30 reaches**: that combination needs a lower-power
+variant, or measured attenuation, before it is transmitted for real. The DMD tablet's own
+request of index 0 with LBT off is its configuration, not a licence for ours.
+
 ## Milestone 5 — two bridges on the bench
 
 Configure both to the group profile and confirm one decodes the other:
@@ -183,7 +206,7 @@ Configure both to the group profile and confirm one decodes the other:
 CFG ch=18 rate=2 power=3 packet=0 trans=1 key=0 lbt=0 addr=0
 ```
 
-Keep power at index 3 (the weakest the module offers) and the antennas apart; at bench range a
+Keep power at index 3 (the weakest step) and the antennas apart; at bench range a
 strong transmitter can overload the receiver. The spare E22 is a useful negative control — it
 must **not** hear the E220s, because EBYTE maps the same air-rate index to different SF/BW on
 the two chip families.

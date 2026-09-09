@@ -4,6 +4,8 @@
 
 #include "esp_log.h"
 #include "esp_mac.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "host/ble_hs.h"
 #include "host/util/util.h"
 #include "nimble/nimble_port.h"
@@ -46,6 +48,15 @@ static uint8_t s_addr_type;
 /* Reassembly: BLE writes arrive in MTU-sized chunks, so lines must be stitched back. */
 static char s_line[NUS_LINE_MAX];
 static size_t s_line_len;
+
+/*
+ * One line at a time on the wire. ble_nus_send_line runs from three tasks - the NimBLE host
+ * for command replies, the radio task for received packets, the pair button for FORGET - and a
+ * line reaches the phone as several notifications. Without this, two of them interleave and
+ * the phone reassembles one unparseable line out of both.
+ */
+static SemaphoreHandle_t s_send_lock;
+#define SEND_LOCK_WAIT_MS 500
 /* Once a line has overflowed, everything up to the next newline is rubbish too. Without this
  * the tail of an oversized line gets dispatched as if it were a command of its own. */
 static bool s_discarding;
@@ -288,6 +299,8 @@ void ble_nus_init(const char *device_name, ble_nus_line_cb on_line) {
         ESP_LOGW(TAG, "boot pin held low - paired phones forgotten");
     }
 
+    s_send_lock = xSemaphoreCreateMutex();
+
     ble_svc_gap_init();
     ble_svc_gatt_init();
     ESP_ERROR_CHECK(ble_gatts_count_cfg(s_svcs));
@@ -311,6 +324,12 @@ void ble_nus_forget_bonds(void) {
 
 void ble_nus_send_line(const char *line) {
     if (!ble_nus_connected()) return;
+    if (s_send_lock && xSemaphoreTake(s_send_lock, pdMS_TO_TICKS(SEND_LOCK_WAIT_MS)) != pdTRUE) {
+        /* Half a second is far longer than a line takes; something is wedged, and dropping
+         * this line is better than queueing behind it for ever. */
+        ESP_LOGW(TAG, "outbound busy - line dropped");
+        return;
+    }
 
     /* A notification carries at most ATT_MTU-3 bytes and the stack silently truncates the
      * rest. Lines here reach ~250 characters, and if the MTU request failed we are still on
@@ -322,23 +341,35 @@ void ble_nus_send_line(const char *line) {
     size_t len = strlen(line);
     size_t sent = 0;
     bool terminated = false;
+    bool torn = false;
 
     while (sent < len) {
         size_t take = len - sent;
         if (take > chunk) take = chunk;
         struct os_mbuf *om = ble_hs_mbuf_from_flat(line + sent, take);
-        if (!om) return;
+        if (!om) {
+            torn = (sent > 0);
+            break;
+        }
         sent += take;
         if (sent == len && take < chunk) {
             os_mbuf_append(om, "\n", 1);
             terminated = true;
         }
-        if (ble_gatts_notify_custom(s_conn, s_tx_handle, om) != 0) return;
+        if (ble_gatts_notify_custom(s_conn, s_tx_handle, om) != 0) {
+            torn = true;
+            terminated = false;   /* whatever went out, the phone has no end of line yet */
+            break;
+        }
     }
 
     if (!terminated) {
-        /* The terminator did not fit in the final fragment, so it goes on its own. */
+        /* Either the terminator did not fit in the final fragment, or the line was cut short
+         * partway. Both need the newline: without it the phone glues the next line onto the
+         * tail of this one and parses neither. */
         struct os_mbuf *om = ble_hs_mbuf_from_flat("\n", 1);
         if (om) ble_gatts_notify_custom(s_conn, s_tx_handle, om);
     }
+    if (torn) ESP_LOGW(TAG, "outbound line cut short");
+    if (s_send_lock) xSemaphoreGive(s_send_lock);
 }

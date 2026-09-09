@@ -87,8 +87,15 @@ air → E220 → UART → ESP32 → BLE → codec.decode(wire, group_id)
 DMD2 ──SET_FREQUENCY{channel, power, lbt, region_desc}──► app
    → BLE config command → ESP32 → module registers
 ```
-DMD2 derives the channel from the group ID, so the radio follows the group automatically.
-We clamp power to what is locally legal rather than passing DMD2's request through.
+DMD2 derives the channel from the group ID, so the radio follows the group automatically —
+and because each group gets its own channel, the settings are stamped with the group they were
+worked out for and re-derived when it changes. Power is not passed through: DMD2's request is
+floored by the rider's own setting (Settings → TX power, weakest by default) and floored again
+by the firmware, since anything within Bluetooth range can send a config command.
+
+The bridge reports `conn=` for the module itself, separately from the Bluetooth link. A bridge
+whose module is dead is a perfectly healthy BLE device, so nothing is transmitted until the
+bridge says the module answered — or until simulation is deliberately switched on.
 
 **Handshake / liveness**
 ```
