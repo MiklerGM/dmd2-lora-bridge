@@ -29,6 +29,17 @@ pio device monitor                     # 115200
 
 On a board with two USB-C sockets, flash over the **UART** port; the other is native USB.
 
+> **Changing `sdkconfig.defaults` is not enough on its own.** PlatformIO seeds a
+> `sdkconfig.<env>` from it on the first build and then keeps that file, ignoring later edits to
+> the defaults. A stale one builds silently with the old settings — this is how bonding shipped
+> without NVS persistence, so keys lived in RAM and every reset lost the pairing. After editing
+> the defaults, delete the generated config and rebuild:
+>
+> ```sh
+> rm -f sdkconfig.esp32dev && pio run -e esp32dev
+> grep NIMBLE_NVS_PERSIST .pio/build/esp32dev/config/sdkconfig.h   # confirm it took
+> ```
+
 Wiring to the E220 — pin maps differ per chip, so they are build flags in `platformio.ini`
 rather than constants. The C3 has no GPIO 16/17/22/23 at all; on the S3, GPIO 19/20 are USB,
 26–32 are flash/PSRAM and 45/46 are strapping pins, so those are avoided.

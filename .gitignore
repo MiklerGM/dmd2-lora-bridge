@@ -13,4 +13,8 @@ keystore.properties
 __pycache__/
 *.pyc
 firmware/.pio/
-firmware/sdkconfig.esp32dev
+# Generated from sdkconfig.defaults on the first build and then kept, which is a trap:
+# PlatformIO will not revisit them when the defaults change, so a stale one silently
+# builds with the old configuration. They are artefacts, not sources.
+firmware/sdkconfig.*
+!firmware/sdkconfig.defaults
