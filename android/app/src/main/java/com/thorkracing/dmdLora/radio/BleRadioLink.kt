@@ -47,6 +47,7 @@ class BleRadioLink(context: Context) : RadioLink {
     @Volatile private var lastDevice: BluetoothDevice? = null
     private var scanTimeout: Runnable? = null
     private var handshakeDone = false
+    private var gotData = false
     private var failedHandshakes = 0
     private var retry: Runnable? = null
     @Volatile private var closed = false
@@ -232,6 +233,7 @@ class BleRadioLink(context: Context) : RadioLink {
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 handshakeDone = false
+                gotData = false
                 EventLog.log("BLE connected, discovering services")
                 // A full packet is ~270 base64 characters; the 23-byte default would fragment
                 // every single one. The central has to ask for this.
@@ -246,7 +248,11 @@ class BleRadioLink(context: Context) : RadioLink {
                 // bond, means the bridge has forgotten us - unplugged and reset, or unpaired
                 // with nobody connected to be told. Android will not drop a stale key by
                 // itself, so it has to be done here or the pair never recovers.
-                if (!handshakeDone) {
+                // Reaching "ready" is not proof of a working link. With a stale key the GATT
+                // handshake completes and only encryption fails, a few seconds later, when the
+                // first command is written - so a session that produced no data at all counts
+                // as a failure just as much as one that never connected.
+                if (!handshakeDone || !gotData) {
                     failedHandshakes++
                     if (failedHandshakes >= STALE_BOND_ATTEMPTS) {
                         failedHandshakes = 0
@@ -312,7 +318,6 @@ class BleRadioLink(context: Context) : RadioLink {
             }
             connected = true
             handshakeDone = true
-            failedHandshakes = 0
             state = if (g.device?.bondState == BluetoothDevice.BOND_BONDED) "connected" else "pairing"
             foundName?.let { rememberBridge(it) }
             EventLog.log("BLE bridge ready${foundName?.let { " ($it)" } ?: ""}")
@@ -372,6 +377,8 @@ class BleRadioLink(context: Context) : RadioLink {
 
     @Synchronized
     private fun onInbound(bytes: ByteArray) {
+        gotData = true
+        failedHandshakes = 0
         inbound.append(String(bytes, Charsets.US_ASCII))
         while (true) {
             val nl = inbound.indexOf("\n")
