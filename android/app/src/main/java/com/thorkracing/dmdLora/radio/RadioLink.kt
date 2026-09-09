@@ -58,6 +58,19 @@ object TxPower {
     }
 }
 
+/**
+ * Whether there is a radio worth telling DMD2 about, and worth transmitting into.
+ *
+ * Three separate facts, and each of the eight combinations has to land somewhere sensible:
+ * the Bluetooth link, whether the bridge says its module answers ([moduleOk], null until it
+ * has said either way), and whether the bridge is simulating one. A simulating bridge has no
+ * module by definition and is still perfectly usable - that is the whole point of it - while a
+ * link whose module has not reported in yet is not something to transmit into on the strength
+ * of not having heard bad news.
+ */
+fun radioUsable(linkConnected: Boolean, moduleOk: Boolean?, echoing: Boolean): Boolean =
+    linkConnected && (moduleOk == true || echoing)
+
 /** What to do about the radio configuration when DMD2 names a group. */
 sealed interface ConfigPlan {
     /** The settings already belong to this group. */

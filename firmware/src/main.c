@@ -40,6 +40,7 @@
 #define IDLE_GAP_MS 50
 #define RX_POLL_MS 100
 #define MODULE_RETRY_MS 5000
+#define MODULE_PROBE_MS 30000
 
 /*
  * Weakest power index this firmware will accept (0 is the strongest step, 3 the weakest; what
@@ -292,21 +293,33 @@ static void rx_task(void *arg) {
     (void)arg;
     static uint8_t buf[PACKET_MAX + 1];
     static char line[OUT_LINE_MAX];
-    int since_retry_ms = 0;
+    TickType_t last_probe = xTaskGetTickCount();
     for (;;) {
-        if (!s_module_ok && !s_echo) {
-            /* No module answering: nothing to read, and a wire that was loose or a module
-             * still powering up is worth another go. Say so when it comes back, so the phone
-             * lifts its own gate without waiting for the next configuration round.  */
-            since_retry_ms += RX_POLL_MS;
-            if (since_retry_ms >= MODULE_RETRY_MS) {
-                since_retry_ms = 0;
-                if (e220_apply(&s_cfg)) {
-                    s_module_ok = true;
-                    ESP_LOGI(TAG, "module answered - RF is up");
-                    send_status();
-                }
+        /*
+         * Re-apply the register block on a timer, whichever way the module is currently
+         * believed to be. Applying it is the only thing the module answers, so it doubles as
+         * the liveness check - and a conn= that goes to 1 once and stays there for ever is the
+         * same lie as a simulation that switches itself on. A module unplugged, browned out or
+         * reset since it last worked answers nothing, and both the phone and DMD2 have to hear
+         * about that rather than go on transmitting into a dead port. Re-applying also puts
+         * the registers back on a module that reset and lost them.
+         *
+         * Timed against the clock rather than counted in loop passes: those run far faster
+         * than the poll interval whenever packets are actually arriving.
+         */
+        TickType_t due = pdMS_TO_TICKS(s_module_ok ? MODULE_PROBE_MS : MODULE_RETRY_MS);
+        if (!s_echo && xTaskGetTickCount() - last_probe >= due) {
+            last_probe = xTaskGetTickCount();
+            bool ok = e220_apply(&s_cfg);
+            if (ok != s_module_ok) {
+                s_module_ok = ok;
+                ESP_LOGW(TAG, "module %s",
+                         ok ? "answered - RF is up" : "stopped answering - RF is down");
+                send_status();
             }
+        }
+        if (!s_module_ok && !s_echo) {
+            /* Nothing to read from a module that is not there; wait for the next probe. */
             vTaskDelay(pdMS_TO_TICKS(RX_POLL_MS));
             continue;
         }

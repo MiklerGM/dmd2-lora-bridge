@@ -353,8 +353,9 @@ void ble_nus_send_line(const char *line) {
         }
         sent += take;
         if (sent == len && take < chunk) {
-            os_mbuf_append(om, "\n", 1);
-            terminated = true;
+            /* An append that fails leaves the line unterminated, so it must not be recorded
+             * as terminated - the standalone newline below is then the only delimiter. */
+            terminated = (os_mbuf_append(om, "\n", 1) == 0);
         }
         if (ble_gatts_notify_custom(s_conn, s_tx_handle, om) != 0) {
             torn = true;
@@ -363,13 +364,24 @@ void ble_nus_send_line(const char *line) {
         }
     }
 
+    bool resync = false;
     if (!terminated) {
         /* Either the terminator did not fit in the final fragment, or the line was cut short
          * partway. Both need the newline: without it the phone glues the next line onto the
          * tail of this one and parses neither. */
         struct os_mbuf *om = ble_hs_mbuf_from_flat("\n", 1);
-        if (om) ble_gatts_notify_custom(s_conn, s_tx_handle, om);
+        if (!om || ble_gatts_notify_custom(s_conn, s_tx_handle, om) != 0) {
+            /* Whatever exhausted the buffers a moment ago has just done it again, which is
+             * the likely case rather than the unlucky one. If fragments of this line already
+             * reached the phone there is now no way to close it, so the only honest recovery
+             * is to drop the link: the phone clears its reassembly buffer on reconnect. */
+            resync = torn;
+        }
     }
     if (torn) ESP_LOGW(TAG, "outbound line cut short");
     if (s_send_lock) xSemaphoreGive(s_send_lock);
+    if (resync) {
+        ESP_LOGW(TAG, "no delimiter after a torn line - dropping the link to resynchronise");
+        ble_gap_terminate(s_conn, BLE_ERR_REM_USER_CONN_TERM);
+    }
 }

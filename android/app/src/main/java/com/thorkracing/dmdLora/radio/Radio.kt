@@ -81,9 +81,11 @@ object Radio {
 
     /**
      * What we tell DMD2 about the radio. A link to a bridge whose module is not answering is
-     * not a working radio, and DMD2 is where the rider is actually looking.
+     * not a working radio, and DMD2 is where the rider is actually looking - but a bridge that
+     * is deliberately simulating one is usable, or the bench test could never get group data
+     * out of DMD2 in the first place.
      */
-    val usable: Boolean get() = connected && moduleOk != false
+    val usable: Boolean get() = radioUsable(connected, moduleOk, echoing)
 
     /** Identity the loopback probe pretends to be. */
     const val LOOPBACK_PEER = "sim-peer"
@@ -313,7 +315,7 @@ object Radio {
      */
     private fun configReady(): Boolean {
         val want = desired ?: return false
-        return applied == want && (moduleOk == true || echoing)
+        return applied == want && usable
     }
 
     /** Why nothing is going out, in the words the log and the DMD2-side outcome both use. */
@@ -443,7 +445,12 @@ object Radio {
             EventLog.log("power index ${Session.power} requested, using $power (your setting)")
         }
         desired = RadioConfig(channel = Session.channel, powerIndex = power, lbt = Session.lbt)
-        configGroupId = Session.groupId
+        // Deliberately unstamped. DMD2 can announce the new group's frequency before it has
+        // told us the new group, and stamping this with whichever group is still in Session
+        // would make the next group event look like a change and throw DMD2's own settings
+        // away - region and LBT included - in favour of ones we derived. Left unstamped, the
+        // next group event adopts them, which is what they are for.
+        configGroupId = null
         configFromDmd2 = true
     }
 

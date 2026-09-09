@@ -248,6 +248,10 @@ class BleRadioLink(context: Context) : RadioLink {
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
+                // connectGatt's return value is assigned on the scanning thread and this
+                // callback can beat it there, so the object the callback hands us is the
+                // authoritative one. Every later callback is then checked against it.
+                gatt = g
                 handshakeDone = false
                 gotData = false
                 EventLog.log("BLE connected, discovering services")
@@ -259,6 +263,12 @@ class BleRadioLink(context: Context) : RadioLink {
                     if (!g.discoverServices()) failLink("service discovery refused")
                 }
             } else {
+                // A link we have already abandoned announcing its own death must not be
+                // allowed to tear down the one that replaced it.
+                if (gatt != null && gatt !== g) {
+                    runCatching { g.close() }
+                    return
+                }
                 EventLog.log("BLE disconnected (status $status)")
                 // A link that never gets as far as being usable, twice running, while we hold a
                 // bond, means the bridge has forgotten us - unplugged and reset, or unpaired
@@ -283,6 +293,7 @@ class BleRadioLink(context: Context) : RadioLink {
         }
 
         override fun onMtuChanged(g: BluetoothGatt, newMtu: Int, status: Int) {
+            if (gatt !== g) return
             // A refused negotiation is survivable — we just stay on the default and fragment
             // more — but a failed discovery is not.
             if (status == BluetoothGatt.GATT_SUCCESS) mtu = newMtu
@@ -291,6 +302,7 @@ class BleRadioLink(context: Context) : RadioLink {
         }
 
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
+            if (gatt !== g) return
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 failLink("service discovery failed ($status)")
                 return
@@ -345,6 +357,10 @@ class BleRadioLink(context: Context) : RadioLink {
         override fun onDescriptorWrite(
             g: BluetoothGatt, d: BluetoothGattDescriptor, status: Int,
         ) {
+            // A late arrival, after the timeout above already gave up on this link and tore it
+            // down, would otherwise mark a closed GATT as ready: connected with no gatt behind
+            // it, and the retry that was meant to rescue it never scanning again.
+            if (gatt !== g) return
             if (d.uuid != CCCD_UUID) return
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 failLink("notification subscription refused ($status)")
@@ -379,6 +395,7 @@ class BleRadioLink(context: Context) : RadioLink {
         override fun onCharacteristicWrite(
             g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int,
         ) {
+            if (gatt !== g) return
             val giveUp: Boolean
             synchronized(this@BleRadioLink) {
                 writeInFlight = false

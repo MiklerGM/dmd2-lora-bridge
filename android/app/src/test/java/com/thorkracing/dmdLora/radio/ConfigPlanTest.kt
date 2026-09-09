@@ -46,6 +46,30 @@ class ConfigPlanTest {
     }
 
     @Test
+    fun `DMD2 settings arriving before the new group are adopted by it, not overridden`() {
+        // The order DMD2 actually uses when a rider switches group: it announces the frequency
+        // for the new group before it names the group. Those settings carry the region and LBT
+        // we could not have derived, so the group that follows has to adopt them.
+        assertTrue(plan("bravo", stamped = null, fromDmd2 = true) is ConfigPlan.Adopt)
+    }
+
+    @Test
+    fun `a usable radio needs a module or a deliberate simulation`() {
+        // No link: nothing else matters.
+        assertEquals(false, radioUsable(false, moduleOk = true, echoing = false))
+        assertEquals(false, radioUsable(false, moduleOk = null, echoing = true))
+        // Linked, and the bridge says its module answers.
+        assertEquals(true, radioUsable(true, moduleOk = true, echoing = false))
+        // Linked, module dead - which is what the whole conn= reporting exists to catch.
+        assertEquals(false, radioUsable(true, moduleOk = false, echoing = false))
+        // Linked, module dead, simulating on purpose: usable, and it has to be, or DMD2 never
+        // sends the group data the bench loopback test needs.
+        assertEquals(true, radioUsable(true, moduleOk = false, echoing = true))
+        // Linked, nothing reported yet. Not heard from is not the same as heard to be well.
+        assertEquals(false, radioUsable(true, moduleOk = null, echoing = false))
+    }
+
+    @Test
     fun `power is clamped into the module's range`() {
         assertEquals(TxPower.STRONGEST, TxPower.clamp(-1))
         assertEquals(TxPower.WEAKEST, TxPower.clamp(9))

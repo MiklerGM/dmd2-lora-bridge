@@ -173,7 +173,12 @@ Only once M6 passes:
 
 ---
 
-## M7.5 — What the third review found
+## M7.5 — What the reviews found
+
+**These are changes, not verifications.** Everything below compiles and is covered by unit
+tests where the logic is pure, but none of it has been re-run against a phone, a bridge or a
+radio yet. The rows in M7 above that say *verified* were watched happening on hardware; these
+are not those.
 
 An outside read of `1491311` turned up six things, all of which came down to the same habit:
 a status that is *computed* somewhere else being *believed* here without being checked.
@@ -218,6 +223,40 @@ a status that is *computed* somewhere else being *believed* here without being c
   line goes out as several notifications, so two could interleave into one unparseable line.
   A mutex serialises them, and a line cut short by a failed notification still gets its
   newline so the next one is not glued onto its tail.
+
+A second read, of `15d4be9`, found five more — including one the first round had introduced:
+
+- **The usable-radio test had the wrong shape.** Written as "connected and not known to be
+  broken", it counted a link that had reported nothing yet as working, and counted a
+  deliberately simulating bridge as broken — which would have stopped DMD2 sending the group
+  data the bench loopback test is built on. It is now "connected, and either the module
+  answers or we are simulating on purpose", as a pure function with all six states tested.
+
+- **A frequency for the new group was stamped with the old one.** DMD2 announces the new
+  group's channel *before* it names the group, so stamping its settings with whatever group id
+  was still in the session made the next group event look like a change — and threw DMD2's own
+  region and LBT away in favour of ones we derived, while the heartbeat went on reporting the
+  values DMD2 had asked for. Settings from a SET_FREQUENCY are now left unstamped, and the
+  next group adopts them, which is what the adopt case was for.
+
+- **`conn=1` was believed for ever once set.** The module was only ever probed while it was
+  known to be down, and a transmit reports nothing, so a module unplugged or reset after a
+  good start left the phone and DMD2 showing a working radio while packets went nowhere. The
+  register block is now re-applied on a timer in both directions — it is the only thing the
+  module answers, so it is also the liveness check, and it puts the registers back on a module
+  that reset and lost them.
+
+- **A late subscription callback could resurrect a closed link.** After the ready timeout tore
+  the GATT down, an `onDescriptorWrite` arriving afterwards still marked the link ready:
+  connected, with no GATT behind it, and the retry that was meant to rescue it never scanning
+  again. Every GATT callback is now checked against the link it belongs to.
+
+- **The recovery newline was best-effort.** Whatever exhausted the notification buffers a
+  moment earlier is likely to do it again immediately, so a torn line could go out with no
+  delimiter and the phone would glue the next line onto its tail. The append result is checked,
+  and if the delimiter cannot be placed after fragments have already gone out, the link is
+  dropped — the phone clears its reassembly buffer on reconnect, which is the only recovery
+  that does not depend on the thing that just failed.
 
 ---
 
