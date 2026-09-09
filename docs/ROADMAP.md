@@ -151,6 +151,20 @@ Only once M6 passes:
   Outgoing messages are signed with the rider's own display name, learned from the roster DMD2
   already sends, falling back to the `Rider XXXX` shape DMD2 itself uses when the roster has
   no name for us.
+
+  The outbound half was verified separately on 2026-09-09, typing into DMD2's own group chat
+  while in airplane mode:
+
+  ```
+  RX intent SEND_CHAT_MESSAGE  [message=Hey, offline test]
+  TX chat 45 B queued
+  TX chat released
+  ```
+
+  45 bytes is the arithmetic working out — 12 header, 1 name length, 13 for the name, 17 for
+  the text, 2 CRC — which is also the proof that the sender's name really is on the wire. The
+  queued/released pair a second apart shows chat going through its own queue rather than the
+  latest-position slot that would have overwritten it.
 - **Match the bridge by device name, not the service UUID alone.** Observed on a real phone:
   the scan filters only on the Nordic UART Service UUID, which many unrelated DIY/IoT devices
   also advertise, so the app repeatedly connected to strangers' devices (GATT status 133/147)
