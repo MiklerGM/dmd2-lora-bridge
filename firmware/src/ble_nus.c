@@ -177,7 +177,22 @@ static int on_gap(struct ble_gap_event *event, void *arg) {
             advertise();
             break;
         case BLE_GAP_EVENT_ENC_CHANGE:
-            ESP_LOGI(TAG, "encryption %s", event->enc_change.status == 0 ? "on" : "FAILED");
+            if (event->enc_change.status == 0) {
+                ESP_LOGI(TAG, "encryption on");
+            } else {
+                /*
+                 * The stored key did not work, so it is worthless: the phone has forgotten us
+                 * and will not offer a matching one again. Holding on to it means every future
+                 * connection tries to encrypt with a key nobody else has, no pairing is ever
+                 * started, and the link simply dies of supervision timeout - which is exactly
+                 * the loop this produced. Drop it and let the next connection pair cleanly.
+                 */
+                struct ble_gap_conn_desc desc;
+                if (ble_gap_conn_find(event->enc_change.conn_handle, &desc) == 0) {
+                    ble_store_util_delete_peer(&desc.peer_id_addr);
+                }
+                ESP_LOGW(TAG, "encryption FAILED - stale key dropped, will pair afresh");
+            }
             break;
         case BLE_GAP_EVENT_REPEAT_PAIRING: {
             /* The phone forgot us but we still hold its key: drop the stale bond and let it
