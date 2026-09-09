@@ -120,6 +120,12 @@ Only once M6 passes:
 
 - TX pacing that respects the slot/interval model; never transmit faster than the stock app.
 - Dedup ring, sequence handling, stale-position expiry.
+- ~~Link recovery.~~ **Verified 2026-09-09** against a bridge reset, a USB power cycle and
+  Bluetooth turned off and on again. Each recovers the same way — disconnect, rescan, ready,
+  and `ST` about 200 ms later, which is the stored key being used rather than a fresh pairing.
+  Recovery takes eleven to thirteen seconds, nearly all of it the fixed ten-second wait before
+  rescanning; harmless while positions stay fresh for four minutes, but it could start faster
+  and back off.
 - ~~BLE reconnect, backgrounding, Android battery-optimisation exemptions, boot restart.~~
   **Done and proven on hardware, 2026-09-08.** Autostart is opt-in and survived a real reboot:
   `boot: service started` to `BLE bridge ready` in 1.1 s, straight to the pinned bridge. The
