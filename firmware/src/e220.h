@@ -25,8 +25,24 @@
 
 void e220_init(void);
 
-/* Applies the register block. Drops into configuration mode and back automatically. */
+/* Applies the register block. Drops into configuration mode and back automatically.
+ * This writes the module's flash, so it belongs to a real configuration change. */
 bool e220_apply(const e220_config_t *cfg);
+
+typedef enum {
+    E220_OK,          /* answered, and holding the registers asked about */
+    E220_MISMATCH,    /* answered, holding something else */
+    E220_NO_ANSWER,   /* nothing there */
+    E220_BUSY,        /* the port was in use; nothing was learned either way */
+} e220_state_t;
+
+/*
+ * Reads the register block back and compares it, writing nothing. This is what a liveness
+ * check uses: re-applying the configuration to find out whether the module is alive would
+ * rewrite its flash thousands of times a day, and could put back a configuration that had
+ * just been superseded.
+ */
+e220_state_t e220_verify(const e220_config_t *cfg);
 
 /* Reads the module firmware code. Returns bytes written to out, or 0. */
 size_t e220_read_firmware(char *out, size_t out_len);

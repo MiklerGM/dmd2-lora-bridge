@@ -53,6 +53,14 @@ object Radio {
     @Volatile private var configFromDmd2 = false
 
     /**
+     * Which group the queued traffic was encoded for. Deliberately not the same field as the
+     * configuration stamp: settings can carry over from one group to the next - that is what
+     * adopting them means - while a packet never can, because the group id is baked into its
+     * hash and its keystream. Sharing one field let adopted settings carry a queue with them.
+     */
+    @Volatile private var queueGroupId: String? = null
+
+    /**
      * What the bridge says about its module: whether it answers at all, and whether it is
      * simulating. A bridge with a dead module is still a perfectly healthy Bluetooth device,
      * so without asking it directly a green link says nothing about the air.
@@ -118,6 +126,7 @@ object Radio {
     fun detach() {
         link?.close()
         link = null
+        queueGroupId = null
         applied = null
         moduleOk = null
         echoing = false
@@ -272,6 +281,11 @@ object Radio {
                 )
             }
             moduleOk = ok
+            // Registers we cannot rely on any more: the module went away, came back on its
+            // own defaults, or drifted. Forget the confirmation so tick() sends the
+            // configuration again - the phone is the only thing that writes it, and this is
+            // how it finds out that it has to.
+            if (!ok) applied = null
         }
         parseField(status, "echo=")?.let { echo ->
             val on = echo != 0
@@ -407,6 +421,15 @@ object Radio {
      */
     fun configureForGroup(context: Context, groupId: String?) {
         if (groupId.isNullOrEmpty()) return
+
+        // Queued packets belong to the group they were encoded for, whatever happens to the
+        // settings. Decided before the configuration, and independently of it.
+        if (queueGroupId != groupId) {
+            val had = queueGroupId != null
+            queueGroupId = groupId
+            discardQueued(had)
+        }
+
         val plan = planForGroup(
             group = groupId,
             stampedGroup = configGroupId,
@@ -425,9 +448,6 @@ object Radio {
                 configGroupId = groupId
                 configFromDmd2 = false
                 desired = plan.config
-                // Everything already queued was encoded for the group we are leaving, and
-                // cannot be read by the one we are joining.
-                discardQueued(previous != null)
                 EventLog.log(
                     "channel ${plan.config.channel} derived for this group" +
                         if (previous != null) " (group changed)" else
@@ -467,7 +487,7 @@ object Radio {
         EventLog.log("power limit changed to index $power; re-configuring the radio")
     }
 
-    /** Drop anything encoded for a group we are no longer in. */
+    /** Drop anything encoded for a group we are no longer in; it cannot be read by the new one. */
     private fun discardQueued(announce: Boolean) {
         val chats = chatQueue.size
         chatQueue.clear()

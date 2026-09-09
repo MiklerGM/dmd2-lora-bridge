@@ -57,8 +57,14 @@ void e220_build_frame(const e220_config_t *cfg, uint8_t *out) {
     reg[6] = (uint8_t)(cfg->key >> 8);
     reg[7] = (uint8_t)(cfg->key & 0xFF);
 
-    out[0] = 0xC0;              /* write registers */
+    out[0] = 0xC0;              /* write registers - to flash, so use it sparingly */
     out[1] = 0x00;              /* starting at register 0 */
     out[2] = E220_REG_COUNT;
     for (int i = 0; i < E220_REG_COUNT; i++) out[3 + i] = reg[i];
+}
+
+void e220_build_read_frame(uint8_t *out) {
+    out[0] = 0xC1;              /* read registers - writes nothing, wears nothing */
+    out[1] = 0x00;
+    out[2] = E220_REG_COUNT;
 }

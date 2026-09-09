@@ -258,6 +258,36 @@ A second read, of `15d4be9`, found five more — including one the first round h
   dropped — the phone clears its reassembly buffer on reconnect, which is the only recovery
   that does not depend on the thing that just failed.
 
+A third read, of `6e61ca7`, found four more — again including one the previous round had
+introduced:
+
+- **The liveness probe wrote the module's flash.** Re-applying the register block answers the
+  liveness question, but `C0` is a *write*, and at one probe every thirty seconds that is 2880
+  flash writes a day; worse, a frame built from the settings of a moment ago could be applied
+  after new ones had landed, putting the radio back on the wrong channel while the status said
+  otherwise. EBYTE has a separate `C1` read for exactly this. The probe now reads and compares
+  and never writes, and when the registers have drifted it reports the module as down so the
+  phone re-sends its configuration — leaving one writer instead of two. A module that
+  persistently reads back something other than what it accepted would turn that into the same
+  loop at a slower rate, so after three such rounds the comparison is abandoned and presence
+  alone is used, with a line in the log saying so.
+
+- **Adopting settings adopted the queue with them.** Queue ownership was riding on the
+  configuration stamp, so the one case where settings legitimately carry from one group to the
+  next carried a chat message with them — encoded for the old group, transmitted on the new
+  group's channel. The queue now tracks its own group: settings can be inherited, a packet
+  never can, because the group id is baked into its hash and its keystream.
+
+- **The resync condition was too narrow.** A line whose length is an exact multiple of the
+  fragment size needs a delimiter of its own without ever being torn, so a failed standalone
+  newline there left the link up and the next line glued onto it. What matters is whether bytes
+  went out, not how they ended.
+
+- **Two more callbacks were unguarded.** Both `onCharacteristicChanged` overloads could refill
+  a reassembly buffer that had just been cleared for a new connection, putting somebody else's
+  tail in front of its first line; and the connected branch adopted whatever GATT object
+  arrived. Both directions of `onConnectionStateChange` are now checked.
+
 ---
 
 ## Explicitly out of scope

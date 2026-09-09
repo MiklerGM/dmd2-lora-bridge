@@ -24,5 +24,19 @@ typedef struct {
                       .power = 3, .packet_size = 0, .transparent = true,  \
                       .lbt = false, .key = 0 }
 
-/* Builds the C0 write-register frame. out must hold E220_FRAME_LEN bytes. */
+/* Builds the C0 write-register frame. out must hold E220_FRAME_LEN bytes.
+ *
+ * C0 writes to the module's flash, so it belongs to a deliberate configuration change and
+ * nowhere else. Anything that only wants to know what the module is holding uses the read
+ * frame below, which changes nothing. */
 void e220_build_frame(const e220_config_t *cfg, uint8_t *out);
+
+/* Builds the C1 read-register request for the same block. out must hold 3 bytes. */
+void e220_build_read_frame(uint8_t *out);
+
+/*
+ * How many of the registers a read gives back a usable answer for. The last two hold the
+ * encryption key, which this family accepts but never reads back - it answers zero - so
+ * comparing them would report a mismatch on every read of a module that is perfectly fine.
+ */
+#define E220_REG_READBACK 6

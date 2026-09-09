@@ -247,6 +247,13 @@ class BleRadioLink(context: Context) : RadioLink {
 
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
+            // A GATT we have already replaced must not steer the live one in either direction:
+            // adopting it below would hand the link to a dead object, and letting its
+            // disconnect through would tear down the connection that replaced it.
+            if (gatt != null && gatt !== g) {
+                runCatching { g.close() }
+                return
+            }
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 // connectGatt's return value is assigned on the scanning thread and this
                 // callback can beat it there, so the object the callback hands us is the
@@ -263,12 +270,6 @@ class BleRadioLink(context: Context) : RadioLink {
                     if (!g.discoverServices()) failLink("service discovery refused")
                 }
             } else {
-                // A link we have already abandoned announcing its own death must not be
-                // allowed to tear down the one that replaced it.
-                if (gatt != null && gatt !== g) {
-                    runCatching { g.close() }
-                    return
-                }
                 EventLog.log("BLE disconnected (status $status)")
                 // A link that never gets as far as being usable, twice running, while we hold a
                 // bond, means the bridge has forgotten us - unplugged and reset, or unpaired
@@ -382,13 +383,20 @@ class BleRadioLink(context: Context) : RadioLink {
             sendLine("STATUS")
         }
 
+        // A fragment from an abandoned connection would land in a reassembly buffer that was
+        // cleared for the new one, and the first real line of the new link would be parsed
+        // with somebody else's tail in front of it.
         override fun onCharacteristicChanged(
             g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray,
-        ) = onInbound(value)
+        ) {
+            if (gatt !== g) return
+            onInbound(value)
+        }
 
         @Deprecated("Pre-33 callback")
         @Suppress("DEPRECATION")
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic) {
+            if (gatt !== g) return
             onInbound(c.value ?: return)
         }
 

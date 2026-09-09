@@ -155,6 +155,39 @@ bool e220_apply(const e220_config_t *cfg) {
     return ok;
 }
 
+e220_state_t e220_verify(const e220_config_t *cfg) {
+    uint8_t want[E220_FRAME_LEN];
+    e220_build_frame(cfg, want);
+    uint8_t req[3];
+    e220_build_read_frame(req);
+
+    if (!uart_lock()) return E220_BUSY;
+    e220_mode_config();
+    uart_flush_input(E220_UART);
+    uart_write_bytes(E220_UART, (const char *)req, sizeof(req));
+    wait_aux(500);
+
+    uint8_t resp[3 + E220_REG_COUNT] = {0};
+    int n = uart_read_bytes(E220_UART, resp, sizeof(resp), pdMS_TO_TICKS(500));
+    e220_mode_normal();
+    uart_unlock();
+
+    /* Accept either head byte, the same way e220_apply does: which one a given module answers
+     * with is not what is being checked here, and being strict about it would turn a healthy
+     * module into a permanent mismatch. */
+    if (n != (int)sizeof(resp) || (resp[0] != CMD_HEAD_READ && resp[0] != CMD_HEAD_WRITE) ||
+        resp[2] != E220_REG_COUNT) {
+        return E220_NO_ANSWER;
+    }
+    /* Only the registers that read back: the key is write-only on this family and answers
+     * zero, so including it would call every healthy module a mismatch. */
+    if (memcmp(&resp[3], &want[3], E220_REG_READBACK) != 0) {
+        ESP_LOGW(TAG, "verify: registers drifted");
+        return E220_MISMATCH;
+    }
+    return E220_OK;
+}
+
 size_t e220_read_firmware(char *out, size_t out_len) {
     /* The stock DMD firmware answers AT+FWCODE=?; a distributor module may not. Harmless
      * either way — an unanswered probe just yields nothing. */

@@ -87,6 +87,17 @@ static bool s_echo = false;
 /* Whether the module acknowledged the last configuration. Reported as conn=. */
 static bool s_module_ok = false;
 
+/*
+ * A module that consistently reads its registers back as something other than what it accepted
+ * would otherwise sit in a loop: verify says drifted, conn goes to 0, the phone re-sends its
+ * configuration, the module writes its flash, and thirty seconds later the same thing again -
+ * which is the flash wear the read-only probe exists to avoid, only slower. After a few of
+ * those, believe the module rather than the comparison and go on using presence alone.
+ */
+#define MISMATCH_TOLERANCE 3
+static int s_mismatch_streak = 0;
+static bool s_trust_readback = true;
+
 /* ---- command handling ---------------------------------------------------- */
 
 static void send_status(void) {
@@ -296,13 +307,18 @@ static void rx_task(void *arg) {
     TickType_t last_probe = xTaskGetTickCount();
     for (;;) {
         /*
-         * Re-apply the register block on a timer, whichever way the module is currently
-         * believed to be. Applying it is the only thing the module answers, so it doubles as
-         * the liveness check - and a conn= that goes to 1 once and stays there for ever is the
-         * same lie as a simulation that switches itself on. A module unplugged, browned out or
-         * reset since it last worked answers nothing, and both the phone and DMD2 have to hear
-         * about that rather than go on transmitting into a dead port. Re-applying also puts
-         * the registers back on a module that reset and lost them.
+         * Ask the module what it is holding, on a timer, whichever way it is currently believed
+         * to be. A conn= that goes to 1 once and stays there for ever is the same lie as a
+         * simulation that switches itself on: a module unplugged, browned out or reset since it
+         * last worked answers nothing, and both the phone and DMD2 have to hear about that
+         * rather than go on transmitting into a dead port.
+         *
+         * It reads (C1) and never writes. Re-applying the block would have answered the same
+         * question, but C0 writes the module's flash - 2880 times a day at this interval - and
+         * it would race a configuration change: a frame built from the old settings, applied
+         * after the new ones landed, puts the radio back on the wrong channel while the status
+         * says otherwise. Reading cannot do that. When the registers have drifted, conn goes to
+         * 0 and the phone re-sends its configuration, which keeps one writer rather than two.
          *
          * Timed against the clock rather than counted in loop passes: those run far faster
          * than the poll interval whenever packets are actually arriving.
@@ -310,12 +326,26 @@ static void rx_task(void *arg) {
         TickType_t due = pdMS_TO_TICKS(s_module_ok ? MODULE_PROBE_MS : MODULE_RETRY_MS);
         if (!s_echo && xTaskGetTickCount() - last_probe >= due) {
             last_probe = xTaskGetTickCount();
-            bool ok = e220_apply(&s_cfg);
-            if (ok != s_module_ok) {
-                s_module_ok = ok;
-                ESP_LOGW(TAG, "module %s",
-                         ok ? "answered - RF is up" : "stopped answering - RF is down");
-                send_status();
+            e220_state_t st = e220_verify(&s_cfg);
+            /* Busy means the port was in use, which says nothing about the module. */
+            if (st != E220_BUSY) {
+                if (st == E220_MISMATCH) {
+                    if (++s_mismatch_streak >= MISMATCH_TOLERANCE && s_trust_readback) {
+                        s_trust_readback = false;
+                        ESP_LOGW(TAG, "module keeps reading back registers it accepted; "
+                                      "checking presence only from now on");
+                    }
+                } else {
+                    s_mismatch_streak = 0;
+                }
+                bool ok = (st == E220_OK) || (st == E220_MISMATCH && !s_trust_readback);
+                if (ok != s_module_ok) {
+                    s_module_ok = ok;
+                    ESP_LOGW(TAG, "module %s", ok ? "answered - RF is up"
+                             : (st == E220_MISMATCH ? "holds different registers - RF is down"
+                                                    : "stopped answering - RF is down"));
+                    send_status();
+                }
             }
         }
         if (!s_module_ok && !s_echo) {

@@ -81,6 +81,15 @@ int main(void) {
     assert(f[9] == 0x12 && f[10] == 0x34);
     printf("%-28s ok\n", "address and key");
 
+    /* 7. The read request writes nothing. A heartbeat built on C0 would rewrite the
+     *    module's flash thousands of times a day, and could put back a configuration that
+     *    had just been superseded. */
+    uint8_t rd[3];
+    e220_build_read_frame(rd);
+    assert(rd[0] == 0xC1 && rd[1] == 0x00 && rd[2] == E220_REG_COUNT);
+    assert(E220_REG_READBACK < E220_REG_COUNT);   /* the key never reads back */
+    printf("%-28s ok\n", "read request is C1");
+
     printf("\nall register checks passed\n");
     return 0;
 }

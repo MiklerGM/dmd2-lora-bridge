@@ -375,7 +375,11 @@ void ble_nus_send_line(const char *line) {
              * the likely case rather than the unlucky one. If fragments of this line already
              * reached the phone there is now no way to close it, so the only honest recovery
              * is to drop the link: the phone clears its reassembly buffer on reconnect. */
-            resync = torn;
+            /* Anything already delivered leaves the phone holding the front of a line with
+             * no end to it - including a line whose length happened to be an exact multiple
+             * of the fragment size, which needs a delimiter of its own without ever being
+             * torn. What matters is that bytes went out, not how they ended. */
+            resync = (sent > 0);
         }
     }
     if (torn) ESP_LOGW(TAG, "outbound line cut short");
