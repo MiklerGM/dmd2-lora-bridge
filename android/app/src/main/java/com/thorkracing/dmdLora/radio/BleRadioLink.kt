@@ -60,8 +60,23 @@ class BleRadioLink(context: Context) : RadioLink {
     @Volatile override var connected: Boolean = false
         private set
 
-    @Volatile override var state: String = "idle"
-        private set
+    /**
+     * Only the phases before a link exists are remembered. Whether a live link counts as
+     * connected or still pairing is asked fresh each time: bonding finishes some seconds after
+     * services are discovered, so a value latched at discovery would say "pairing" forever
+     * while traffic was already flowing.
+     */
+    @Volatile private var phase: String = "idle"
+
+    override val state: String
+        get() = when {
+            !connected -> phase
+            isBonded() -> "connected"
+            else -> "pairing"
+        }
+
+    private fun isBonded(): Boolean =
+        runCatching { gatt?.device?.bondState == BluetoothDevice.BOND_BONDED }.getOrDefault(false)
 
     override var onWire: ((String) -> Unit)? = null
     override var onStatus: ((String) -> Unit)? = null
@@ -72,7 +87,7 @@ class BleRadioLink(context: Context) : RadioLink {
     fun start() {
         if (closed || connected || scanning) return
         if (!hasBlePermissions()) {
-            state = "no permission"
+            phase = "no permission"
             // DMD2 can start the service before the user has been through the permission
             // dialog. Scanning without the grant throws SecurityException and kills the
             // process, so wait and try again once the UI has asked.
@@ -83,7 +98,7 @@ class BleRadioLink(context: Context) : RadioLink {
         val manager = appContext.getSystemService(BluetoothManager::class.java)
         val adapter: BluetoothAdapter? = manager?.adapter
         if (adapter == null || !adapter.isEnabled) {
-            state = "bluetooth off"
+            phase = "bluetooth off"
             EventLog.log("BLE unavailable or disabled")
             retryLater()
             return
@@ -98,7 +113,7 @@ class BleRadioLink(context: Context) : RadioLink {
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
         scanning = true
-        state = "scanning"
+        phase = "scanning"
         EventLog.log("BLE scanning for the bridge")
         scanner.startScan(listOf(filter), settings, scanCallback)
 
@@ -108,7 +123,7 @@ class BleRadioLink(context: Context) : RadioLink {
         scanTimeout = Runnable {
             if (scanning && !connected) {
                 stopScan()
-                state = "not found"
+                phase = "not found"
                 EventLog.log("BLE scan timed out")
                 retryLater()
             }
@@ -211,7 +226,7 @@ class BleRadioLink(context: Context) : RadioLink {
             }
             foundName = name
             stopScan()
-            state = "connecting"
+            phase = "connecting"
             EventLog.log("BLE found ${device.address}, connecting")
             try {
                     lastDevice = device
@@ -318,7 +333,6 @@ class BleRadioLink(context: Context) : RadioLink {
             }
             connected = true
             handshakeDone = true
-            state = if (g.device?.bondState == BluetoothDevice.BOND_BONDED) "connected" else "pairing"
             foundName?.let { rememberBridge(it) }
             EventLog.log("BLE bridge ready${foundName?.let { " ($it)" } ?: ""}")
             // A fresh link means a module on unknown registers - a new bridge, or one that
@@ -475,7 +489,7 @@ class BleRadioLink(context: Context) : RadioLink {
 
     private fun teardown() {
         connected = false
-        if (state != "bluetooth off" && state != "no permission") state = "disconnected"
+        if (phase != "bluetooth off" && phase != "no permission") phase = "disconnected"
         rxChar = null
         txChar = null
         mtu = DEFAULT_MTU
