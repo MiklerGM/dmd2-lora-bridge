@@ -23,20 +23,23 @@ Read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) first, then [`docs/ROADMAP.m
 
 ## Status
 
-Both components build and their logic is covered by tests that need neither a phone nor a
-radio — `make check` runs all of it.
+**Experimental.** Everything on the phone side is proven on hardware; nothing has yet been on
+the air. `make check` runs the whole test suite, which needs neither a phone nor a radio.
 
 | | State |
 |---|---|
-| Packet codec, receive path, injection contract | 41 JVM tests pass, including byte-for-byte reproduction of the reference vectors |
+| Packet codec, receive path, injection contract | JVM tests pass, including byte-for-byte reproduction of the reference vectors |
 | E220 register packing | host test passes under plain gcc |
-| Companion app | builds; **never run against DMD2 yet** |
-| ESP32 firmware | builds (RAM 9.4%, flash 30.6%); **never met a radio yet** |
+| Stock DMD2 accepts the app | **proven** — DMD2 sends us group data and chat, and shows riders we inject |
+| Works with no network | **proven** — 50 packets in 45 s in airplane mode |
+| BLE link, bonding, reconnect, autostart | **proven** across bridge resets, USB cycles, Bluetooth off/on and a reboot |
+| Two E220s hearing each other | **not tried** — waiting on modules |
+| A real NOR7E hearing us, and us hearing it | **not tried**, and until it is, end-to-end compatibility is not claimed |
 
-Nothing is proven on hardware. The protocol was recovered by static analysis, and the first
-milestone exists specifically to test the one assumption everything else rests on: that a
-same-named package is accepted by stock DMD2 at all. See `docs/ROADMAP.md` — **M1 needs no
-radio and no hardware budget**, and `docs/BUILDING.md` has the procedure.
+The protocol was recovered by static analysis and matches on every byte we can check without a
+radio. Whether an E220 we configure ourselves lands on the same PHY as a NOR7E is the one
+question no amount of testing on this side can answer. See `docs/ROADMAP.md` for what remains
+and `docs/BUILDING.md` for how each milestone was checked.
 
 ## Hard constraints (not negotiable, they come from DMD2's code)
 
@@ -54,4 +57,7 @@ radio and no hardware budget**, and `docs/BUILDING.md` has the procedure.
 - Interoperability work on hardware we own. **No third-party copyrighted source is committed
   to this repo** — the protocol facts live in `docs/PROTOCOL.md` as a specification.
 - A NOR7E requests 30 dBm with LBT off. That is *its* configuration, not a licence for ours.
-  Set our transmit power and duty cycle to what the local regulator actually permits on 868.
+  Transmit power is a setting in the app (**Settings → TX power**), defaulting to the weakest
+  step the module offers, with a floor in the firmware underneath it. Note that the weakest
+  step is not automatically legal: 868.0–868.6 MHz in Germany allows 25 mW ERP, about 14 dBm,
+  and no step of an E220-900T30 reaches that without attenuation. See `docs/BUILDING.md`.
