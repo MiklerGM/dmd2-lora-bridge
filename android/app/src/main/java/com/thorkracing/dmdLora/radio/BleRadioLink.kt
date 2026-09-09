@@ -44,6 +44,8 @@ class BleRadioLink(context: Context) : RadioLink {
     @Volatile private var mtu = DEFAULT_MTU
     @Volatile private var scanning = false
     @Volatile private var foundName: String? = null
+    private var scanTimeout: Runnable? = null
+    private var retry: Runnable? = null
     @Volatile private var closed = false
 
     private val inbound = StringBuilder()
@@ -97,14 +99,17 @@ class BleRadioLink(context: Context) : RadioLink {
         scanner.startScan(listOf(filter), settings, scanCallback)
 
         // A scan that never finds anything should not run forever and drain the battery.
-        handler.postDelayed({
+        // Held as a named callback so it can be cancelled: an uncancelled one from a previous
+        // scan would fire during the next and cut it short after a few seconds.
+        scanTimeout = Runnable {
             if (scanning && !connected) {
                 stopScan()
                 state = "not found"
                 EventLog.log("BLE scan timed out")
                 retryLater()
             }
-        }, SCAN_TIMEOUT_MS)
+        }
+        handler.postDelayed(scanTimeout!!, SCAN_TIMEOUT_MS)
     }
 
     private fun prefs() = appContext.getSharedPreferences("bridge", Context.MODE_PRIVATE)
@@ -157,6 +162,8 @@ class BleRadioLink(context: Context) : RadioLink {
             appContext.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
 
     private fun stopScan() {
+        scanTimeout?.let { handler.removeCallbacks(it) }
+        scanTimeout = null
         if (!scanning) return
         scanning = false
         runCatching {
@@ -165,10 +172,15 @@ class BleRadioLink(context: Context) : RadioLink {
         }
     }
 
-    /** A bridge that is out of range now may be in range later; keep trying, gently. */
+    /**
+     * A bridge that is out of range now may be in range later; keep trying, gently. Only one
+     * retry is ever pending, so the paths that all end in "try again" cannot stack up.
+     */
     private fun retryLater() {
         if (closed) return
-        handler.postDelayed({ start() }, RETRY_MS)
+        retry?.let { handler.removeCallbacks(it) }
+        retry = Runnable { start() }
+        handler.postDelayed(retry!!, RETRY_MS)
     }
 
     private val scanCallback = object : ScanCallback() {
@@ -446,6 +458,8 @@ class BleRadioLink(context: Context) : RadioLink {
     override fun close() {
         closed = true
         onWire = null
+        scanTimeout = null
+        retry = null
         handler.removeCallbacksAndMessages(null)
         stopScan()
         teardown()
