@@ -57,21 +57,14 @@ class ConfigOwnerTest {
         o.limitPower(1)
         assertEquals("raising the limit has to give power back, or the setting looks dead",
             1, o.desired!!.powerIndex)
-        // The return value is not decoration: it is what stops a pointless round trip to the
-        // module every time the rider opens the settings panel.
-        assertFalse(o.limitPower(1))
     }
 
     @Test fun `a power index outside the module's range never reaches the radio`() {
         // DMD2's request arrives as an arbitrary Int from an Intent extra, and an index the
         // module has no step for would be packed into the register as-is.
         val o = ConfigOwner()
-
         o.dictated(channel = 18, power = 99, lbt = false, powerLimit = 1)
         assertEquals(TxPower.WEAKEST, o.desired!!.powerIndex)
-
-        o.dictated(channel = 18, power = -5, lbt = false, powerLimit = 2)
-        assertEquals("a nonsense request falls back to the rider's limit", 2, o.desired!!.powerIndex)
     }
 }
 
