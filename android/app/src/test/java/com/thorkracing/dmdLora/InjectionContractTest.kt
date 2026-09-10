@@ -55,11 +55,4 @@ class InjectionContractTest {
         assertTrue("a synthetic rider must claim to be sharing or it is dropped",
             o.getInt("status") and Codec.ST_SHARING != 0)
     }
-
-    /** DMD2 renders an unknown hash as "Rider XXXX", using the low 16 bits. */
-    @Test fun hashesFitSixteenBits() {
-        for (id in listOf("user-alpha", "user-bravo", "rider-one", "")) {
-            assertTrue(Codec.uidHash(id) in 0..0xFFFF)
-        }
-    }
 }

@@ -9,7 +9,6 @@ import com.thorkracing.dmdLora.Session
 import com.thorkracing.dmdLora.protocol.Codec
 import com.thorkracing.dmdLora.protocol.Regions
 import com.thorkracing.dmdLora.protocol.TxRider
-import java.util.concurrent.ConcurrentLinkedQueue
 
 /**
  * Joins the DMD2 side to the radio side. Everything protocol-shaped happens here or in Codec;
@@ -27,18 +26,14 @@ object Radio {
     private val router = WireRouter()
     private val scheduler = TxScheduler()
 
-    // Chat is rare and must not be lost, so it does not share the latest-only position slot;
-    // it waits in its own queue and is drained ahead of position updates. A message is accepted
-    // whatever the radio is doing - pairing, reconnecting, waiting for its registers - because
-    // positions repeat a second later and chat does not.
-    private class PendingChat(val wire: String, val queuedMs: Long)
+    // Chat does not share the latest-only position slot: it waits in its own queue and is
+    // drained ahead of position updates.
+    private val chat = ChatQueue()
 
-    private val chatQueue = ConcurrentLinkedQueue<PendingChat>()
-    private const val CHAT_QUEUE_MAX = 16
-    private const val CHAT_MAX_AGE_MS = 10 * 60_000L
+    /** What the radio should be set to, and which group that was worked out for. */
+    private val config = ConfigOwner()
 
-    /** What the radio should be set to, what was confirmed, and when we last tried. */
-    @Volatile private var desired: RadioConfig? = null
+    /** What the bridge has confirmed it is actually running, and when we last tried. */
     @Volatile private var applied: RadioConfig? = null
     @Volatile private var lastConfigSentMs = 0L
     @Volatile private var lastGateLogMs = 0L
@@ -46,17 +41,11 @@ object Radio {
     private const val GATE_LOG_INTERVAL_MS = 10_000L
 
     /**
-     * Which group [desired] was worked out for, and whether DMD2 dictated it rather than us
-     * deriving it. Without the stamp a new group kept transmitting on the old one's channel.
-     */
-    @Volatile private var configGroupId: String? = null
-    @Volatile private var configFromDmd2 = false
-
-    /**
-     * Which group the queued traffic was encoded for. Deliberately not the same field as the
-     * configuration stamp: settings can carry over from one group to the next - that is what
-     * adopting them means - while a packet never can, because the group id is baked into its
-     * hash and its keystream. Sharing one field let adopted settings carry a queue with them.
+     * Which group the queued traffic was encoded for. Deliberately not the same thing as the
+     * group the configuration belongs to: settings can carry over from one group to the next -
+     * that is what adopting them means - while a packet never can, because the group id is
+     * baked into its hash and its keystream. Sharing one field let adopted settings carry a
+     * queue of the previous group's messages with them.
      */
     @Volatile private var queueGroupId: String? = null
 
@@ -131,7 +120,7 @@ object Radio {
         moduleOk = null
         echoing = false
         Session.radioAttached = false
-        chatQueue.clear()
+        chat.clear()
         router.reset()
         scheduler.reset()
     }
@@ -214,32 +203,14 @@ object Radio {
      * Queue a chat line. Unlike position it is never coalesced away, and unlike position it is
      * accepted even with no usable radio: the rider typed it once, and a bridge that is still
      * pairing or re-applying its registers will be ready in seconds. It waits in the queue
-     * until then. What it will not do is wait for ever - see [nextChat].
+     * until then. What it will not do is wait for ever - see [ChatQueue].
      */
     fun transmitChat(wire: String): String {
-        chatQueue.add(PendingChat(wire, nowMs()))
-        var dropped = 0
-        while (chatQueue.size > CHAT_QUEUE_MAX) {
-            chatQueue.poll()
-            dropped++
-        }
+        val dropped = chat.add(wire, nowMs())
         return when {
             dropped > 0 -> "queued, $dropped dropped (queue full)"
             configReady() -> "queued"
             else -> "queued — " + gateReason()
-        }
-    }
-
-    /**
-     * The head of the chat queue, discarding anything that has waited too long. A message
-     * delivered half an hour after it was typed reads as a fresh one and is worse than silence.
-     */
-    private fun nextChat(now: Long): PendingChat? {
-        while (true) {
-            val head = chatQueue.peek() ?: return null
-            if (now - head.queuedMs <= CHAT_MAX_AGE_MS) return head
-            chatQueue.poll()
-            EventLog.log("chat dropped — waited too long to be worth sending")
         }
     }
 
@@ -293,7 +264,7 @@ object Radio {
             echoing = on
         }
 
-        val want = desired ?: return
+        val want = config.desired ?: return
         // Every field we asked for has to come back, not just the two that are easy to read:
         // a matching channel and power says nothing about whether LBT took effect.
         val ch = parseField(status, "ch=")
@@ -323,13 +294,13 @@ object Radio {
      * is dead confirm nothing.
      */
     private fun configReady(): Boolean {
-        val want = desired ?: return false
+        val want = config.desired ?: return false
         return applied == want && usable
     }
 
     /** Why nothing is going out, in the words the log and the DMD2-side outcome both use. */
     private fun gateReason(): String = when {
-        desired == null -> "no channel yet"
+        config.desired == null -> "no channel yet"
         moduleOk == false -> "radio module down"
         moduleOk == null && !echoing -> "waiting for the bridge to report in"
         else -> "waiting for config"
@@ -366,7 +337,7 @@ object Radio {
         val now = nowMs()
 
         // Push configuration until the bridge confirms it via ST; do not assume it landed.
-        val want = desired
+        val want = config.desired
         if (want != null && want != applied && now - lastConfigSentMs >= CONFIG_RETRY_MS) {
             EventLog.log("configuring radio: ch=${want.channel} power=${want.powerIndex}")
             l.configure(want)
@@ -375,7 +346,9 @@ object Radio {
 
         // Expire stale chat even while the gate is shut, so a long outage does not end in a
         // burst of messages nobody has any use for.
-        val chatWaiting = nextChat(now) != null
+        val expired = chat.prune(now)
+        if (expired > 0) EventLog.log("$expired chat message(s) dropped — too old to be worth sending")
+        val chatWaiting = chat.peek() != null
 
         // Nothing goes out until the bridge has confirmed the requested settings: a packet
         // sent on the previous channel or PHY is not merely lost, it is transmitted wrongly.
@@ -389,7 +362,7 @@ object Radio {
         // One transmission per pacing window: chat first (rare, must not drop), else position.
         if (chatWaiting) {
             if (scheduler.tryPace(now)) {
-                chatQueue.poll()?.let { l.send(it.wire) }
+                chat.poll()?.let { l.send(it) }
                 EventLog.log("TX chat released")
             }
             return
@@ -425,48 +398,23 @@ object Radio {
             discardQueued(had)
         }
 
-        val plan = planForGroup(
-            group = groupId,
-            stampedGroup = configGroupId,
-            fromDmd2 = configFromDmd2,
-            channel = Regions.channelForGroup(DEFAULT_REGION, groupId),
-            powerIndex = Prefs.powerIndex(context),
-        )
-        when (plan) {
-            is ConfigPlan.Keep -> return
-            is ConfigPlan.Adopt -> {
-                configGroupId = groupId
-                EventLog.log("group named; keeping the channel DMD2 gave us")
-            }
-            is ConfigPlan.Switch -> {
-                val previous = configGroupId
-                configGroupId = groupId
-                configFromDmd2 = false
-                desired = plan.config
-                EventLog.log(
-                    "channel ${plan.config.channel} derived for this group" +
-                        if (previous != null) " (group changed)" else
-                            " (DMD2 has not sent SET_FREQUENCY)"
-                )
-            }
+        when (config.forGroup(groupId, Regions.channelForGroup(DEFAULT_REGION, groupId),
+                              Prefs.powerIndex(context))) {
+            ConfigChange.NONE -> return
+            ConfigChange.ADOPTED -> EventLog.log("group named; keeping the channel DMD2 gave us")
+            ConfigChange.DERIVED ->
+                EventLog.log("channel ${config.desired?.channel} derived for this group")
         }
     }
 
-    /** DMD2 dictating a channel and power. Authoritative, and stamped with the live group. */
+    /** DMD2 dictating a channel and power. Authoritative; see [ConfigOwner.dictated]. */
     fun requestConfig(context: Context) {
         val limit = Prefs.powerIndex(context)
-        val power = maxOf(Session.power, limit)
+        config.dictated(Session.channel, Session.power, Session.lbt, limit)
+        val power = config.desired?.powerIndex
         if (power != Session.power) {
             EventLog.log("power index ${Session.power} requested, using $power (your setting)")
         }
-        desired = RadioConfig(channel = Session.channel, powerIndex = power, lbt = Session.lbt)
-        // Deliberately unstamped. DMD2 can announce the new group's frequency before it has
-        // told us the new group, and stamping this with whichever group is still in Session
-        // would make the next group event look like a change and throw DMD2's own settings
-        // away - region and LBT included - in favour of ones we derived. Left unstamped, the
-        // next group event adopts them, which is what they are for.
-        configGroupId = null
-        configFromDmd2 = true
     }
 
     /**
@@ -474,18 +422,13 @@ object Radio {
      * waiting for the next group or frequency change to notice.
      */
     fun onPowerLimitChanged(context: Context) {
-        val want = desired ?: return
-        val power = maxOf(if (configFromDmd2) Session.power else TxPower.STRONGEST,
-                          Prefs.powerIndex(context))
-        if (power == want.powerIndex) return
-        desired = want.copy(powerIndex = power)
-        EventLog.log("power limit changed to index $power; re-configuring the radio")
+        if (!config.limitPower(Prefs.powerIndex(context))) return
+        EventLog.log("power limit now index ${config.desired?.powerIndex}; re-configuring the radio")
     }
 
     /** Drop anything encoded for a group we are no longer in; it cannot be read by the new one. */
     private fun discardQueued(announce: Boolean) {
-        val chats = chatQueue.size
-        chatQueue.clear()
+        val chats = chat.clear()
         scheduler.reset()
         router.reset()
         if (announce && chats > 0) EventLog.log("$chats queued message(s) dropped with the group")

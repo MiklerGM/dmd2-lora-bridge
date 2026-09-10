@@ -17,24 +17,25 @@ class HostileInputTest {
     private fun encodeOne(rider: TxRider) =
         Codec.decode(Codec.encodeGroup(group, "me", listOf(rider), 1), group) as Decoded.Group
 
-    @Test fun positionsStayInsideTheEncodableRange() {
-        for (lat in listOf(-1e9, -91.0, 90.5, 1e9, Double.NaN, Double.POSITIVE_INFINITY)) {
-            for (lon in listOf(-1e9, -181.0, 180.5, 1e9, Double.NaN, Double.NEGATIVE_INFINITY)) {
-                val g = encodeOne(TxRider("x", lat, lon, 0.0, Codec.ST_SHARING, 0))
-                val r = g.riders[0]
-                assertTrue("lat $lat -> ${r.lat}", r.lat in -90.0..90.0)
-                assertTrue("lon $lon -> ${r.lon}", r.lon in -180.0..180.0)
-            }
-        }
-    }
+    /**
+     * The 24-bit fields wrap, so an unclamped out-of-range input decodes as a rider standing
+     * somewhere real rather than as an obvious fault - which is the worse failure, because
+     * nobody looking at the map would question it.
+     *
+     * Asserted on the decoded position rather than the encoded integer: a decoded value is
+     * always inside the range by construction, so "is it in range" is a question that cannot
+     * fail and proves nothing. Where it saturates *to* is the actual claim.
+     */
+    @Test fun impossiblePositionsSaturateInsteadOfLandingSomewherePlausible() {
+        assertEquals(-90.0, encodeOne(TxRider("x", -1000.0, 0.0)).riders[0].lat, 1e-4)
+        assertEquals(90.0, encodeOne(TxRider("x", 1000.0, 0.0)).riders[0].lat, 1e-4)
+        assertEquals(-180.0, encodeOne(TxRider("x", 0.0, -1000.0)).riders[0].lon, 1e-4)
+        assertEquals(180.0, encodeOne(TxRider("x", 0.0, 1000.0)).riders[0].lon, 1e-4)
 
-    @Test fun extremesSaturateRatherThanWrap() {
-        assertEquals(0, Codec.encodeLat(-1000.0))
-        assertEquals(0, Codec.encodeLon(-1000.0))
-        assertTrue(Codec.encodeLat(1000.0) <= 0xFFFFFF)
-        assertTrue(Codec.encodeLon(1000.0) <= 0xFFFFFF)
-        // A NaN position is not silently the south pole.
-        assertEquals(Codec.encodeLat(0.0), Codec.encodeLat(Double.NaN))
+        // And a missing position is not silently the south pole.
+        val nan = encodeOne(TxRider("x", Double.NaN, Double.NaN)).riders[0]
+        assertEquals(0.0, nan.lat, 1e-4)
+        assertEquals(0.0, nan.lon, 1e-4)
     }
 
     /** A negative speed would narrow to 0xFFxx and decode as roughly 6553 km/h. */

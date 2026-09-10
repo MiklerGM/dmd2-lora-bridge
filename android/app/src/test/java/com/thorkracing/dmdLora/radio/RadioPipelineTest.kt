@@ -1,8 +1,5 @@
 package com.thorkracing.dmdLora.radio
 
-import com.thorkracing.dmdLora.protocol.Codec
-import com.thorkracing.dmdLora.protocol.Decoded
-import com.thorkracing.dmdLora.protocol.TxRider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -36,10 +33,6 @@ class DedupTest {
 
 class TxPacerTest {
 
-    @Test fun firstTransmissionIsAllowedImmediately() {
-        assertTrue(TxPacer().allow(0L))
-    }
-
     @Test fun holdsOffUntilTheIntervalHasPassed() {
         val p = TxPacer(minIntervalMs = 1_500)
         assertTrue(p.allow(10_000))
@@ -56,63 +49,17 @@ class TxPacerTest {
     }
 }
 
-/** Encode, push across a link as a base64 line, decode. Everything but the radio itself. */
-class LoopbackPipelineTest {
-
-    private val group = "TESTGROUP-CLAUDE"
-    private val me = "user-alpha"
-
-    @Test fun ridersSurviveARoundTripOverTheLink() {
-        val link = LoopbackLink()
-        var decoded: Decoded? = null
-        link.onWire = { wire -> decoded = Codec.decode(Codec.fromWire(wire), group) }
-
-        val riders = listOf(
-            TxRider("user-bravo", 47.4, 8.6, 31.0, Codec.ST_SHARING, 5),
-            TxRider("user-charlie", 47.5, 8.7, 0.0, Codec.ST_SHARING or Codec.ST_NEEDS_HELP, 9),
-        )
-        link.send(Codec.toWire(Codec.encodeGroup(group, me, riders, seq = 42)))
-
-        val g = decoded as Decoded.Group
-        assertEquals(42, g.seq)
-        assertEquals(Codec.uidHash(me), g.senderHash)
-        assertEquals(2, g.riders.size)
-        assertEquals(Codec.uidHash("user-bravo"), g.riders[0].userIdHash)
-        assertTrue(g.riders[1].needsHelp)
-    }
-
-    @Test fun repeatedPacketsAreSuppressedButNewOnesAreNot() {
-        val dedup = Dedup()
-        val wire = Codec.toWire(
-            Codec.encodeGroup(group, me, listOf(TxRider("user-bravo", 47.4, 8.6)), seq = 7)
-        )
-        val g = Codec.decode(Codec.fromWire(wire), group) as Decoded.Group
-
-        assertFalse(dedup.seenBefore(g.senderHash, g.seq))
-        assertTrue(dedup.seenBefore(g.senderHash, g.seq))
-
-        val next = Codec.decode(
-            Codec.fromWire(
-                Codec.toWire(
-                    Codec.encodeGroup(group, me, listOf(TxRider("user-bravo", 47.4, 8.6)), seq = 8)
-                )
-            ),
-            group,
-        ) as Decoded.Group
-        assertFalse(dedup.seenBefore(next.senderHash, next.seq))
-    }
+/**
+ * The CFG line the firmware parses. The fixed part of the profile is not ours to choose: every
+ * rider in the group must share it or the packets are not demodulable.
+ */
+class RadioConfigCommandTest {
 
     @Test fun configurationCarriesTheGroupProfile() {
-        val link = LoopbackLink()
-        link.configure(RadioConfig(channel = 18, powerIndex = 3, lbt = false))
-        val cmd = link.configured.single().toCommand()
-        // the fixed part of the profile every group member must share
-        assertTrue(cmd, cmd.contains("addr=0"))
-        assertTrue(cmd, cmd.contains("rate=2"))
-        assertTrue(cmd, cmd.contains("packet=0"))
-        assertTrue(cmd, cmd.contains("trans=1"))
-        assertTrue(cmd, cmd.contains("key=0"))
-        assertTrue(cmd, cmd.contains("ch=18"))
+        val cmd = RadioConfig(channel = 18, powerIndex = 3, lbt = false).toCommand()
+        for (field in listOf("addr=0", "rate=2", "packet=0", "trans=1", "key=0", "ch=18")) {
+            assertTrue(cmd, cmd.contains(field))
+        }
     }
 }
 

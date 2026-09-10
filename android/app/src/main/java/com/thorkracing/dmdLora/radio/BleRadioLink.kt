@@ -47,9 +47,8 @@ class BleRadioLink(context: Context) : RadioLink {
     @Volatile private var lastDevice: BluetoothDevice? = null
     private var scanTimeout: Runnable? = null
     private var readyTimeout: Runnable? = null
-    private var handshakeDone = false
     private var gotData = false
-    private var failedHandshakes = 0
+    private val bond = BondHealth(STALE_BOND_ATTEMPTS)
     private var retry: Runnable? = null
     @Volatile private var closed = false
 
@@ -259,7 +258,6 @@ class BleRadioLink(context: Context) : RadioLink {
                 // callback can beat it there, so the object the callback hands us is the
                 // authoritative one. Every later callback is then checked against it.
                 gatt = g
-                handshakeDone = false
                 gotData = false
                 EventLog.log("BLE connected, discovering services")
                 // A full packet is ~270 base64 characters; the 23-byte default would fragment
@@ -271,22 +269,14 @@ class BleRadioLink(context: Context) : RadioLink {
                 }
             } else {
                 EventLog.log("BLE disconnected (status $status)")
-                // A link that never gets as far as being usable, twice running, while we hold a
-                // bond, means the bridge has forgotten us - unplugged and reset, or unpaired
-                // with nobody connected to be told. Android will not drop a stale key by
-                // itself, so it has to be done here or the pair never recovers.
-                // Reaching "ready" is not proof of a working link. With a stale key the GATT
-                // handshake completes and only encryption fails, a few seconds later, when the
-                // first command is written - so a session that produced no data at all counts
-                // as a failure just as much as one that never connected.
-                if (!handshakeDone || !gotData) {
-                    failedHandshakes++
-                    if (failedHandshakes >= STALE_BOND_ATTEMPTS) {
-                        failedHandshakes = 0
-                        EventLog.log("pairing looks stale — clearing it and starting over")
-                        prefs().edit().remove(KEY_PINNED).apply()
-                        removeSystemBond()
-                    }
+                // Whether the pairing is still any good is [BondHealth]'s decision; data having
+                // arrived is the only evidence of it that this class can offer. Reaching
+                // "ready" is not evidence: with a stale key the handshake completes and only
+                // the encryption fails, seconds later, when the first command is written.
+                if (bond.sessionEnded(carriedData = gotData)) {
+                    EventLog.log("pairing looks stale — clearing it and starting over")
+                    prefs().edit().remove(KEY_PINNED).apply()
+                    removeSystemBond()
                 }
                 teardown()
                 retryLater()
@@ -374,7 +364,6 @@ class BleRadioLink(context: Context) : RadioLink {
             readyTimeout?.let { handler.removeCallbacks(it) }
             readyTimeout = null
             connected = true
-            handshakeDone = true
             foundName?.let { rememberBridge(it) }
             EventLog.log("BLE bridge ready${foundName?.let { " ($it)" } ?: ""}")
             // A fresh link means a module on unknown registers - a new bridge, or one that
@@ -442,7 +431,7 @@ class BleRadioLink(context: Context) : RadioLink {
     @Synchronized
     private fun onInbound(bytes: ByteArray) {
         gotData = true
-        failedHandshakes = 0
+        bond.dataArrived()
         inbound.append(String(bytes, Charsets.US_ASCII))
         while (true) {
             val nl = inbound.indexOf("\n")

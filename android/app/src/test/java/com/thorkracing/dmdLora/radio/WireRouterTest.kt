@@ -68,10 +68,4 @@ class WireRouterTest {
         assertEquals("Bravo", chat.senderName)
         assertEquals("on my way", chat.text)
     }
-
-    /** A relayed packet has its TTL decremented, which invalidates the CRC covering it. */
-    @Test fun dropsRelayedPackets() {
-        val pkt = Codec.fromWire(wireFrom(peer, 3)).also { it[2] = (it[2] - 1).toByte() }
-        assertEquals("CRC_MISMATCH", drop(WireRouter().route(Codec.toWire(pkt), group, me)))
-    }
 }

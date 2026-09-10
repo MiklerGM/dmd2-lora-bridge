@@ -91,39 +91,92 @@ fun configConfirmed(
     usable: Boolean,
 ): Boolean = usable && channel == want.channel && powerIndex >= want.powerIndex && lbt == want.lbt
 
-/** What to do about the radio configuration when DMD2 names a group. */
-sealed interface ConfigPlan {
-    /** The settings already belong to this group. */
-    object Keep : ConfigPlan
+/** What changed when DMD2 named the group being ridden. */
+enum class ConfigChange {
+    /** The settings already belonged to this group. */
+    NONE,
 
-    /** Settings DMD2 gave us before it named a group; they belong to this one. */
-    object Adopt : ConfigPlan
+    /** Settings DMD2 gave before it named a group; they belong to this one now. */
+    ADOPTED,
 
-    /** A different group, so a different channel. */
-    data class Switch(val config: RadioConfig) : ConfigPlan
+    /** A different group, so a channel worked out from its id. */
+    DERIVED,
 }
 
 /**
- * A group's channel is derived from its id, so a new group means a new channel - and until the
- * module confirms it, anything transmitted goes out on the previous group's frequency. Deciding
- * that here rather than inside Radio keeps it testable, which is where two bugs have lived.
+ * Which radio configuration is in force, and which group it belongs to.
  *
- * [fromDmd2] marks settings that came from a SET_FREQUENCY rather than being derived. Those are
- * authoritative, but DMD2 sends them before it has named a group, so the first group to come
- * along adopts them instead of overriding them.
+ * A group's channel is derived from its id, so a new group means a new channel - and until the
+ * module confirms it, anything transmitted goes out on the previous group's frequency, which is
+ * transmitted wrongly rather than merely lost. Two separate bugs have lived in the handful of
+ * fields that decide this, so they live here where a sequence of events can be replayed against
+ * them rather than scattered across the object that also owns queues, links and timers.
  */
-fun planForGroup(
-    group: String,
-    stampedGroup: String?,
-    fromDmd2: Boolean,
-    channel: Int,
-    powerIndex: Int,
-): ConfigPlan = when {
-    group == stampedGroup -> ConfigPlan.Keep
-    fromDmd2 && stampedGroup == null -> ConfigPlan.Adopt
-    else -> ConfigPlan.Switch(
-        RadioConfig(channel = channel, powerIndex = TxPower.clamp(powerIndex), lbt = false)
-    )
+class ConfigOwner {
+
+    @Volatile
+    var desired: RadioConfig? = null
+        private set
+
+    /** The group [desired] was worked out for, if it was worked out for one yet. */
+    private var stamp: String? = null
+    private var fromDmd2 = false
+
+    /**
+     * The power that was *asked* for, before the rider's limit was applied to it. Kept so that
+     * raising the limit can give the power back: flooring the running value in place would let
+     * it weaken and never strengthen, and the setting would look dead to anyone turning it up.
+     */
+    private var requestedPower = TxPower.STRONGEST
+
+    /**
+     * DMD2 dictated a channel and power. Authoritative, and deliberately left unstamped: it
+     * announces the frequency for a group *before* it names that group, so stamping this with
+     * whichever group is currently running would make the next group event look like a change
+     * and throw these settings away - region and LBT included - for ones we derived ourselves.
+     * Unstamped, the next group adopts them, which is what they are for.
+     */
+    fun dictated(channel: Int, power: Int, lbt: Boolean, powerLimit: Int) {
+        requestedPower = TxPower.clamp(power)
+        desired = RadioConfig(
+            channel = channel,
+            powerIndex = maxOf(requestedPower, TxPower.clamp(powerLimit)),
+            lbt = lbt,
+        )
+        stamp = null
+        fromDmd2 = true
+    }
+
+    /** DMD2 named the group being ridden. */
+    fun forGroup(group: String, channel: Int, powerLimit: Int): ConfigChange {
+        if (group == stamp) return ConfigChange.NONE
+        if (fromDmd2 && stamp == null) {
+            stamp = group
+            return ConfigChange.ADOPTED
+        }
+        stamp = group
+        fromDmd2 = false
+        // Nobody asked for a particular power here, so the rider's limit is the whole answer.
+        requestedPower = TxPower.STRONGEST
+        desired = RadioConfig(
+            channel = channel,
+            powerIndex = TxPower.clamp(powerLimit),
+            lbt = false,
+        )
+        return ConfigChange.DERIVED
+    }
+
+    /**
+     * Apply a new power limit to whatever is running. Returns true when it changed something,
+     * so the caller knows the radio has to be re-configured.
+     */
+    fun limitPower(index: Int): Boolean {
+        val current = desired ?: return false
+        val power = maxOf(requestedPower, TxPower.clamp(index))
+        if (power == current.powerIndex) return false
+        desired = current.copy(powerIndex = power)
+        return true
+    }
 }
 
 /**
@@ -145,19 +198,4 @@ data class RadioConfig(
         "CFG addr=$address ch=$channel rate=$airRateIndex power=$powerIndex " +
             "packet=$packetSizeIndex trans=${if (transparent) 1 else 0} " +
             "key=$key lbt=${if (lbt) 1 else 0}"
-}
-
-/** A link that hands everything sent straight back. Lets the pipeline be tested without radios. */
-class LoopbackLink : RadioLink {
-    override val connected = true
-    override val state = "loopback"
-    override var onWire: ((String) -> Unit)? = null
-    override var onStatus: ((String) -> Unit)? = null
-    override var onConnected: (() -> Unit)? = null
-    val configured = mutableListOf<RadioConfig>()
-
-    override fun send(wire: String) { onWire?.invoke(wire) }
-    override fun configure(config: RadioConfig) { configured += config }
-    override fun echo(on: Boolean) = Unit
-    override fun close() { onWire = null }
 }
