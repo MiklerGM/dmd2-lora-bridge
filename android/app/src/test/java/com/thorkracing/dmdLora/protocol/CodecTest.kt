@@ -6,8 +6,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Vectors generated from the reference implementation. V1 is the two-rider packet whose
- * length (42 bytes / 56 base64 chars) a real DMD device reported for the same input.
+ * Vectors generated from our own Python reference codec, which is written from the
+ * specification in docs/PROTOCOL.md. V1 is the two-rider packet whose length
+ * (42 bytes / 56 base64 chars) a real DMD device reported for the same input.
+ * All identifiers, coordinates and packets here are synthetic.
  */
 class CodecTest {
 

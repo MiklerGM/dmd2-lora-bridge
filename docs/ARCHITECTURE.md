@@ -48,7 +48,7 @@ Package **must** be `com.thorkracing.dmdLora` (see README constraints).
    - Emits `STATUS_UPDATE` on a heartbeat. **DMD2 will not send us anything until it has seen
      `connected=true`** — this is the handshake, not a nicety.
    - Emits `GROUP_DATA_RECEIVED` / `CHAT_MESSAGE_RECEIVED` to inject what the radio heard.
-2. **Codec** — port of the reference implementation; see `PROTOCOL.md`.
+2. **Codec** — independent implementation of the wire format specified in `PROTOCOL.md`.
 3. **Session state** — active group ID, sequence counter, 64-entry dedup ring, TX pacing,
    last-known roster.
 4. **Radio face** — BLE central to the bridge: line-oriented wire strings + config commands.

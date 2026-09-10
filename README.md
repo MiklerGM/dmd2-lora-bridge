@@ -54,8 +54,18 @@ and `docs/BUILDING.md` for how each milestone was checked.
 
 ## Legal / RF
 
+- **Unofficial project. Not affiliated with, authorised by, or endorsed by DMD Navigation /
+  Thork Racing.** "DMD2", "DMD-LoRa" and "NOR7E" are used only to say what this interoperates
+  with. No connection to the vendor is implied.
 - Interoperability work on hardware we own. **No third-party copyrighted source is committed
-  to this repo** — the protocol facts live in `docs/PROTOCOL.md` as a specification.
+  to this repo** — the protocol facts live in `docs/PROTOCOL.md` as a specification, and every
+  line of code here was written against that specification rather than translated from vendor
+  code.
+- The radio-module settings are the vendor's own published
+  [DMD-LoRa Open API](https://docs.dmdnavigation.com/dev/lora-api/). Only the undocumented
+  group-mode packet contract was recovered by static analysis.
+- All identifiers, coordinates and packets in the tests are synthetic. No real captures, group
+  IDs or user data are in this repo.
 - A NOR7E requests 30 dBm with LBT off. That is *its* configuration, not a licence for ours.
   Transmit power is a setting in the app (**Settings → TX power**), defaulting to the weakest
   step the module offers, with a floor in the firmware underneath it. Note that the weakest

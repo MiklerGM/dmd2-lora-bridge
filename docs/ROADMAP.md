@@ -49,7 +49,7 @@ SHA-256 XOR pad, u24 fields, base64 no-padding wire, 9-rider cap.
 **Accept:** unit tests reproduce the reference vectors byte-for-byte, including the known
 42-byte / 56-char two-rider vector, and round-trip through decode.
 
-**Result:** passing. 36 JVM tests cover the codec, dedup, pacing and the receive path.
+**Result:** passing. JVM tests cover the codec, dedup, pacing and the receive path.
 
 ---
 
@@ -212,7 +212,7 @@ a status that is *computed* somewhere else being *believed* here without being c
   group id, but it was derived only once and never revisited, so the first packets of a new
   ride went out on the old frequency — transmitted wrongly, not merely lost. Settings are now
   stamped with the group they were worked out for; the decision is a pure function with its own
-  tests (`ConfigPlanTest`), including the case where DMD2 dictates a channel before it has
+  tests (`ConfigOwnerTest`), including the case where DMD2 dictates a channel before it has
   named a group.
 
 - **Notification subscription was assumed rather than confirmed.** `writeDescriptor` only
