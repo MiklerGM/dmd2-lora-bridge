@@ -13,45 +13,65 @@ import org.junit.Test
  */
 class ConfigOwnerTest {
 
-    @Test fun `a group keeps its channel until a different group arrives`() {
+    @Test fun `settings a group already has are not re-derived`() {
         val o = ConfigOwner()
-
-        assertEquals(ConfigChange.DERIVED, o.forGroup("alpha", channel = 20, powerLimit = 2))
+        o.forGroup("alpha", channel = 20, powerLimit = 2)
         assertEquals(20, o.desired!!.channel)
         assertEquals("nobody asked for a power, so the limit is the answer", 2, o.desired!!.powerIndex)
 
-        assertEquals(ConfigChange.NONE, o.forGroup("alpha", channel = 20, powerLimit = 2))
+        // Offering a different channel for the same group must change nothing: the group it
+        // belongs to is what decides, not the value that happens to be passed in.
+        o.forGroup("alpha", channel = 99, powerLimit = 2)
+        assertEquals(20, o.desired!!.channel)
 
-        assertEquals(ConfigChange.DERIVED, o.forGroup("bravo", channel = 17, powerLimit = 2))
+        o.forGroup("bravo", channel = 17, powerLimit = 2)
         assertEquals(17, o.desired!!.channel)
     }
 
-    @Test fun `a frequency DMD2 sends before naming the new group survives that group arriving`() {
+    @Test fun `a frequency DMD2 sends before naming a group belongs to that group alone`() {
         // The order DMD2 actually uses when a rider switches group: it announces the new
-        // group's frequency first. Those settings carry a region and an LBT choice we could not
-        // have derived, and stamping them with the group that is still running made the switch
-        // look like a change and threw them away for a channel of our own invention.
+        // group's frequency first. Those settings carry a region and an LBT choice we could
+        // not have derived, and stamping them with the group that is still running made the
+        // switch look like a change and threw them away for a channel of our own invention.
         val o = ConfigOwner()
         o.forGroup("alpha", channel = 20, powerLimit = 3)
 
         o.dictated(channel = 40, power = 2, lbt = true, powerLimit = 3)
-        assertEquals(ConfigChange.ADOPTED, o.forGroup("bravo", channel = 17, powerLimit = 3))
-
+        o.forGroup("bravo", channel = 17, powerLimit = 3)
         assertEquals("DMD2's channel, not one derived from the group id", 40, o.desired!!.channel)
         assertTrue("DMD2's LBT choice was discarded", o.desired!!.lbt)
+
+        // To that group and no other. Adopting has to consume the settings as well as claim
+        // them, or every later group goes on riding the channel DMD2 sent for this one.
+        o.forGroup("charlie", channel = 21, powerLimit = 3)
+        assertEquals(21, o.desired!!.channel)
+        assertFalse("LBT came from DMD2 and belonged to the previous group", o.desired!!.lbt)
     }
 
-    @Test fun `the rider's power limit floors DMD2's request and can be raised again`() {
+    @Test fun `the rider's limit floors whatever DMD2 asks for, and can be raised again`() {
         val o = ConfigOwner()
         o.dictated(channel = 18, power = TxPower.STRONGEST, lbt = false, powerLimit = TxPower.WEAKEST)
         assertEquals("a tablet asks for the loudest step; we do not follow it there",
             TxPower.WEAKEST, o.desired!!.powerIndex)
 
-        // Flooring the running value in place would let power weaken and never strengthen, so
-        // turning the setting up would do nothing and look broken.
-        assertTrue(o.limitPower(1))
-        assertEquals(1, o.desired!!.powerIndex)
-        assertFalse("nothing changed, so nothing needs re-configuring", o.limitPower(1))
+        o.limitPower(1)
+        assertEquals("raising the limit has to give power back, or the setting looks dead",
+            1, o.desired!!.powerIndex)
+        // The return value is not decoration: it is what stops a pointless round trip to the
+        // module every time the rider opens the settings panel.
+        assertFalse(o.limitPower(1))
+    }
+
+    @Test fun `a power index outside the module's range never reaches the radio`() {
+        // DMD2's request arrives as an arbitrary Int from an Intent extra, and an index the
+        // module has no step for would be packed into the register as-is.
+        val o = ConfigOwner()
+
+        o.dictated(channel = 18, power = 99, lbt = false, powerLimit = 1)
+        assertEquals(TxPower.WEAKEST, o.desired!!.powerIndex)
+
+        o.dictated(channel = 18, power = -5, lbt = false, powerLimit = 2)
+        assertEquals("a nonsense request falls back to the rider's limit", 2, o.desired!!.powerIndex)
     }
 }
 

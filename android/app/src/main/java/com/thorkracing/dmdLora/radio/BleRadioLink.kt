@@ -431,7 +431,6 @@ class BleRadioLink(context: Context) : RadioLink {
     @Synchronized
     private fun onInbound(bytes: ByteArray) {
         gotData = true
-        bond.dataArrived()
         inbound.append(String(bytes, Charsets.US_ASCII))
         while (true) {
             val nl = inbound.indexOf("\n")

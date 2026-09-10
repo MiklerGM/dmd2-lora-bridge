@@ -17,12 +17,14 @@ class BondHealth(private val attempts: Int = 2) {
 
     private var deadSessions = 0
 
-    /** Anything at all arrived from the bridge, so the key we hold is the one it holds. */
-    fun dataArrived() {
-        deadSessions = 0
-    }
-
-    /** A link ended. True when the pairing should be cleared and adopted afresh. */
+    /**
+     * A link ended, and [carriedData] says whether anything at all arrived over it. That is
+     * the only proof the key we hold is the one the bridge holds, and it is enough on its own:
+     * a mid-session reset would be undone by nothing, since the session it belongs to ends by
+     * reporting the same fact.
+     *
+     * True when the pairing should be cleared and adopted afresh.
+     */
     fun sessionEnded(carriedData: Boolean): Boolean {
         if (carriedData) {
             deadSessions = 0

@@ -19,14 +19,16 @@ class ChatQueueTest {
     @Test fun `messages that waited too long are dropped rather than sent late`() {
         val q = ChatQueue(capacity = 8, maxAgeMs = 10_000)
         q.add("stale", 1_000)
+        q.add("also stale", 1_500)
         q.add("fresh", 9_000)
 
         assertEquals("nothing has aged out yet", 0, q.prune(10_000))
         assertEquals("stale", q.peek())
 
         // A message delivered long after it was typed reads as a fresh one, which is worse
-        // than one that never arrived.
-        assertEquals(1, q.prune(12_000))
+        // than one that never arrived. More than one can age out between two calls, so this
+        // has to clear the whole run and not merely the head of it.
+        assertEquals(2, q.prune(12_000))
         assertEquals("fresh", q.peek())
         assertEquals(0, q.prune(12_000))
     }
@@ -50,10 +52,5 @@ class BondHealthTest {
         assertEquals(false, b.sessionEnded(carriedData = true))
         assertEquals("the run was broken, so this is the first failure again",
             false, b.sessionEnded(carriedData = false))
-
-        // Data arriving mid-session counts too: with a stale key the handshake completes and
-        // only the encryption fails, so bytes are the only proof the key is the right one.
-        b.dataArrived()
-        assertEquals(false, b.sessionEnded(carriedData = false))
     }
 }
