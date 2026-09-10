@@ -24,13 +24,13 @@
     <application
         android:allowBackup="false"
         android:icon="@android:drawable/ic_menu_compass"
-        android:label="DMD LoRa Bridge"
+        android:label="LoRa Bridge for DMD2"
         android:supportsRtl="true">
 
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:label="DMD LoRa Bridge">
+            android:label="LoRa Bridge for DMD2">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

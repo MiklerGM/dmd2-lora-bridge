@@ -159,7 +159,7 @@ every command and the phone showed a healthy green link while nothing reached th
 1. Flash the firmware to any ESP32 (**no E220 needed**). With no module the log says
    `no module acknowledged - conn=0, retrying`, and the phone shows the radio as
    **`connected · no module`** with nothing transmitting.
-2. On the phone, start the service. It scans for the advertised name **DMD-LoRa-Bridge**,
+2. On the phone, start the service. It scans for the advertised name **LoRaBridge-for-DMD2**,
    so it will not latch onto unrelated devices that share the Nordic UART UUID.
    Expect `BLE bridge ready`.
 3. Open **Tools** and press **Simulate radio**. The status turns to

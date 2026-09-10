@@ -565,8 +565,8 @@ class BleRadioLink(context: Context) : RadioLink {
         val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
         /** Must match the name the firmware advertises. */
-        /** Firmware advertises this plus a per-board suffix, e.g. DMD-LoRa-Bridge-3F42. */
-        const val BRIDGE_NAME_PREFIX = "DMD-LoRa-Bridge"
+        /** Firmware advertises this plus a per-board suffix, e.g. LoRaBridge-for-DMD2-3F42. */
+        const val BRIDGE_NAME_PREFIX = "LoRaBridge-for-DMD2"
         private const val KEY_PINNED = "pinned_bridge"
 
         private const val DEFAULT_MTU = 23

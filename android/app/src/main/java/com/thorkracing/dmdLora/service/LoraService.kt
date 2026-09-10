@@ -104,7 +104,7 @@ class LoraService : Service() {
         val text = "ch ${Session.channel} · ${Bridge.freqLabel(Session.channel)}" +
             (Session.groupName?.let { " · $it" } ?: "")
         return Notification.Builder(this, CHANNEL_ID)
-            .setContentTitle("DMD LoRa Bridge")
+            .setContentTitle("LoRa Bridge for DMD2")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_menu_compass)
             .setContentIntent(open)

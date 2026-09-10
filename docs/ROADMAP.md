@@ -169,7 +169,7 @@ Only once M6 passes:
   the scan filters only on the Nordic UART Service UUID, which many unrelated DIY/IoT devices
   also advertise, so the app repeatedly connected to strangers' devices (GATT status 133/147)
   and retried. Harmless — the loop self-recovers — but it should also require the advertised
-  name `DMD-LoRa-Bridge` so it does not knock on other people's radios.
+  name `LoRaBridge-for-DMD2` so it does not knock on other people's radios.
 
 ---
 

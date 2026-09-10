@@ -1,4 +1,4 @@
-# DMD2 LoRa Bridge
+# Unofficial LoRa Bridge for DMD2
 
 Put a **plain Android phone running stock DMD2** into a **DMD2 Group Ride over LoRa**,
 with no DMD hardware — position sharing both ways with riders on DMD NOR7E devices,

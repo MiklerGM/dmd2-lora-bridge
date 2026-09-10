@@ -371,7 +371,7 @@ void app_main(void) {
         ESP_LOGW(TAG, "no module acknowledged - conn=0, retrying; send ECHO 1 to simulate one");
     }
 
-    ble_nus_init("DMD-LoRa-Bridge", on_ble_line);
+    ble_nus_init("LoRaBridge-for-DMD2", on_ble_line);
 
     gpio_config_t pair_pin = {
         .pin_bit_mask = (1ULL << PIN_PAIR_BUTTON),
