@@ -100,8 +100,9 @@ jobs:
       - run: make release
       - name: Build flashable firmware images
         run: |
-          cd firmware && pio run -s
-          make -C firmware merged
+          cd firmware
+          pio run -s
+          make merged
 
       - name: Collect assets
         run: |
