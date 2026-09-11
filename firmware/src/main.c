@@ -359,7 +359,11 @@ void app_main(void) {
     ESP_ERROR_CHECK(err);
 
     s_cfg = E220_GROUP_CONFIG;
+#if MIN_POWER_INDEX > 0
+    /* Guarded: power is unsigned, so with no cap this comparison is always false and
+     * -Werror=type-limits rejects it. */
     if (s_cfg.power < MIN_POWER_INDEX) s_cfg.power = MIN_POWER_INDEX;
+#endif
     s_tx_queue = xQueueCreate(8, sizeof(char *));
 
     e220_init();

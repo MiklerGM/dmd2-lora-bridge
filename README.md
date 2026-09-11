@@ -68,6 +68,7 @@ and `docs/BUILDING.md` for how each milestone was checked.
   IDs or user data are in this repo.
 - A NOR7E requests 30 dBm with LBT off. That is *its* configuration, not a licence for ours.
   Transmit power is a setting in the app (**Settings → TX power**), defaulting to the weakest
-  step the module offers, with a floor in the firmware underneath it. Note that the weakest
+  step the module offers. This build carries `-DMIN_POWER_INDEX=0`, so the firmware no longer
+  caps what the app may ask for — the whole range is reachable at runtime. Note that the weakest
   step is not automatically legal: 868.0–868.6 MHz in Germany allows 25 mW ERP, about 14 dBm,
   and no step of an E220-900T30 reaches that without attenuation. See `docs/BUILDING.md`.

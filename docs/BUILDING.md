@@ -186,10 +186,13 @@ fragmentation and reassembly are working.
 
 The app defaults to the weakest step the module offers and asks before going above it:
 **Settings → TX power**, which cycles 3 → 2 → 1 → 0 and colours itself as it climbs. The
-firmware keeps its own floor at index 3 underneath that, because the BLE command surface is
-unauthenticated and anything in range can send a `CFG`. Build with `-DMIN_POWER_INDEX=0` to
-lift it. If the bridge holds power weaker than the phone asked for, the phone accepts it and
-logs the difference rather than retrying for ever.
+firmware can keep its own cap underneath that, because the BLE command surface is
+unauthenticated and anything in range can send a `CFG`. **This build sets
+`-DMIN_POWER_INDEX=0` in every environment, so that cap is off** and any CFG in Bluetooth
+range can select 30 dBm. Build with a higher `-DMIN_POWER_INDEX` to put the cap back —
+`3` restricts the bridge to the weakest step whatever the phone asks for. If the bridge holds
+power weaker than the phone asked for, the phone accepts it and logs the difference rather
+than retrying for ever.
 
 **The weakest step is not automatically legal.** The index is only a step in the module's own
 table — 30/27/24/21 dBm on an E220-900T30, 22/17/13/10 on a T22 — and what may go on the air
