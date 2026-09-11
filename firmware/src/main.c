@@ -28,6 +28,7 @@
 #include "ble_nus.h"
 #include "driver/gpio.h"
 #include "e220.h"
+#include "led.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -156,6 +157,7 @@ static void handle_cfg(const char *args) {
     /* Always ask the module, even while simulating: it is the only way conn= can ever go
      * back to 1 once a module is plugged in, and the old early return made that unreachable. */
     s_module_ok = e220_apply(&next);
+    led_set_module_ok(s_module_ok);
     if (s_module_ok || s_echo) {
         /* A simulated radio accepts the settings so the phone can confirm them and the rest
          * of the chain behaves exactly as it will with hardware. */
@@ -252,6 +254,7 @@ static void tx_task(void *arg) {
             /* A DMD packet starts 0xD2 0x03, which is "0g" in base64 - a wrong or foreign
              * payload is obvious at a glance. */
             ESP_LOGI(TAG, "tx %u bytes: %.12s...", (unsigned)len, payload);
+            led_activity();
             free(payload);
             /* e220_write already blocked until the module returned to idle (AUX high), so no
              * fixed settling delay is needed here; pacing is the phone's job. */
@@ -281,6 +284,7 @@ static void pair_button_task(void *arg) {
                     vTaskDelay(pdMS_TO_TICKS(300));
                 }
                 ble_nus_forget_bonds();
+                led_bond_cleared();
             }
         } else {
             held_ms = 0;
@@ -327,6 +331,7 @@ static void rx_task(void *arg) {
                 bool ok = (st == E220_OK);
                 if (ok != s_module_ok) {
                     s_module_ok = ok;
+                    led_set_module_ok(ok);
                     ESP_LOGW(TAG, "module %s", ok ? "answered - RF is up"
                              : (st == E220_MISMATCH ? "holds different registers - RF is down"
                                                     : "stopped answering - RF is down"));
@@ -344,6 +349,7 @@ static void rx_task(void *arg) {
         if (n == 0) continue;
         buf[n] = '\0';
         ESP_LOGI(TAG, "rx %u bytes: %.12s...", (unsigned)n, (const char *)buf);
+        led_activity();
         if (!ble_nus_connected()) continue;
         snprintf(line, sizeof(line), "RX %s", (const char *)buf);
         ble_nus_send_line(line);
@@ -366,9 +372,13 @@ void app_main(void) {
 #endif
     s_tx_queue = xQueueCreate(8, sizeof(char *));
 
+    /* Before the radio, so a board that hangs in e220_init still shows it is alive. */
+    led_init();
+
     e220_init();
     e220_read_firmware(s_fw, sizeof(s_fw));
     s_module_ok = e220_apply(&s_cfg);
+    led_set_module_ok(s_module_ok);
     if (!s_module_ok) {
         /* Almost certainly no module wired up. Report it as conn=0 and keep trying - do not
          * quietly stand in for the radio, or a bench board and a broken one look the same. */

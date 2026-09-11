@@ -1,4 +1,5 @@
 #include "ble_nus.h"
+#include "led.h"
 
 #include <string.h>
 
@@ -296,6 +297,7 @@ void ble_nus_init(const char *device_name, ble_nus_line_cb on_line) {
     gpio_config(&boot_pin);
     if (gpio_get_level((gpio_num_t)PIN_BOND_RESET) == 0) {
         ble_store_clear();
+        led_bond_cleared();
         ESP_LOGW(TAG, "boot pin held low - paired phones forgotten");
     }
 

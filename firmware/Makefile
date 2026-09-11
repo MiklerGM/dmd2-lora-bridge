@@ -3,6 +3,8 @@ test:
 	@gcc -std=c11 -Wall -Wextra -Werror -o /tmp/test_e220_regs \
 		test/test_e220_regs.c src/e220_regs.c
 	@/tmp/test_e220_regs
+	@gcc -std=c11 -Wall -Wextra -Werror -o /tmp/test_led_priority test/test_led_priority.c
+	@/tmp/test_led_priority
 
 
 # One flashable file per board, for people who want to run the bridge without a build
