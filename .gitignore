@@ -19,3 +19,4 @@ firmware/.pio/
 # builds with the old configuration. They are artefacts, not sources.
 firmware/sdkconfig.*
 !firmware/sdkconfig.defaults
+firmware/dist/

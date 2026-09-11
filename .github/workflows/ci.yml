@@ -4,6 +4,7 @@ name: check
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -47,3 +48,84 @@ jobs:
           restore-keys: pio-${{ runner.os }}-
       - run: pip install --upgrade platformio
       - run: make check-firmware
+
+  # Tags only, and only behind both checks: a release nobody ran the suite on is worse
+  # than no release.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [android, firmware]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # describe --tags feeds versionName, and a shallow clone has no tags to describe.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('firmware/platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-
+      - run: pip install --upgrade platformio
+
+      # The same key that signed every APK handed out so far, or riders have to uninstall
+      # before they can update. Missing secrets stop the release here rather than producing
+      # an unsigned APK that looks like a real one.
+      - name: Restore signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          test -n "$KEYSTORE_B64" || { echo "::error::KEYSTORE_B64 secret is not set"; exit 1; }
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          cat > android/keystore.properties <<PROPS
+          storeFile=$RUNNER_TEMP/release.jks
+          storePassword=$KEYSTORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          PROPS
+
+      - run: make release
+      - name: Build flashable firmware images
+        run: |
+          cd firmware && pio run -s
+          make -C firmware merged
+
+      - name: Collect assets
+        run: |
+          mkdir -p dist
+          cp dmd-lora-bridge-*-release.apk "dist/dmd2-lora-bridge-${GITHUB_REF_NAME}.apk"
+          cp firmware/dist/*.bin dist/
+          cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            --notes-file - <<'NOTES'
+          **Unofficial. Not affiliated with or endorsed by DMD Navigation / Thork Racing.**
+          Experimental: nothing here has been proven on the air against a NOR7E.
+
+          Sideload the APK (it replaces the genuine DMD-LoRa app; they cannot coexist), and
+          flash the image for your board with `esptool.py write_flash 0x0 <file>`. Both halves
+          come from the same commit and must match — the BLE name they agree on is part of it.
+          NOTES
+
+      - name: Clean up the key
+        if: always()
+        run: rm -f android/keystore.properties "$RUNNER_TEMP/release.jks"

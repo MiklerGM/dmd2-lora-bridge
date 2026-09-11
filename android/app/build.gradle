@@ -12,6 +12,15 @@ try {
 } catch (ignored) {
 }
 
+// On a tagged commit this is the tag, so a release APK says which release it is; off a tag it
+// says how far past one it is. Falls back to the commit alone while no tag exists yet.
+def versionString = "0.1+$gitSha"
+try {
+    versionString = providers.exec { commandLine 'git', 'describe', '--tags', '--dirty' }
+            .standardOutput.asText.get().trim()
+} catch (ignored) {
+}
+
 // Signing identity lives outside the repository; without it a release build is simply
 // unsigned, so the project still builds for anyone who does not have the key.
 def keystorePropsFile = rootProject.file("keystore.properties")
@@ -34,7 +43,7 @@ android {
         minSdk 31
         targetSdk 35
         versionCode 1
-        versionName "0.1+$gitSha"
+        versionName versionString
     }
 
     signingConfigs {
