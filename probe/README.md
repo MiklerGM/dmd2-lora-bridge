@@ -18,12 +18,17 @@ make test                                  # the recognizer, no hardware
 | Line | Meaning |
 |---|---|
 | `*** DMD PAYLOAD ***` | Done. That candidate is the PHY |
-| `CRC MISMATCH ... PHY looks RIGHT` | **Nearly there.** Preamble, sync word and header all decoded, so the SF/BW/sync are right and only the payload or the CRC setting is off |
+| `CRC MISMATCH ... PHY looks RIGHT` | **Nearly there.** The header decoded, so preamble and sync word matched and only the payload or the CRC setting is off |
+| `header error ... not this PHY` | Energy on the channel, but the header did not decode — this candidate is wrong |
 | `packet, N bytes` with no `DMD PAYLOAD` | Something else lives on this channel |
 | `done: 0 packets` | Nothing heard. Next candidate |
 
 A CRC mismatch is the most informative result short of success, which is why it is reported
 loudly rather than swallowed: silence says nothing, a mismatch says the PHY is almost right.
+
+The two are separated by reading the radio's own latched interrupt flags, because RadioLib
+returns the same code for both a payload CRC error and a header error — and here they mean
+opposite things. Only a header error with no valid header is the bad one.
 
 If the hit lands inside the printable run rather than at its start, the offset is the number of
 framing bytes the module wraps around the payload — one of the open questions in PHY-notes.
@@ -35,6 +40,21 @@ the pin map, and show the noise floor — nothing more. **The first real run nee
 E220 or a NOR7E on the air.** Until then a silent probe and a broken probe look the same.
 
 Transmission is not attempted and is not the next step: hearing first, and only then answering.
+
+## The front end will be off
+
+V4 has a front-end module between the SX1262 and the antenna, and it comes up disabled. This is
+the failure worth knowing about in advance: SPI answers, `begin()` succeeds, every candidate
+reports a clean zero — and the radio was switched off the whole time. **A silent probe and a
+deaf one look identical**, so check the boot line:
+
+```
+FEM enable on GPIO 2, held high
+```
+
+Revisions have moved that pin and changed the FEM part (GC1109, then KCT8103L from V4.3.1), so
+confirm it against the schematic of the board actually in hand. `-DFEM_EN_PIN=-1` is correct
+for a V3, which has no FEM at all.
 
 ## Board
 
