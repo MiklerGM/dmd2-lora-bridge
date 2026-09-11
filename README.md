@@ -52,6 +52,31 @@ and `docs/BUILDING.md` for how each milestone was checked.
 - The radio must be an **EBYTE E220** (LLCC68) family module. Not E22 (SX1262) — EBYTE maps
   the same air-rate index to different SF/BW per chip family, so an E22 will not hear a NOR7E.
 
+## Bridge LED
+
+The bridge is meant to live under the seat or in a top box, so its LED is service indication
+for the board itself, not something the rider reads while moving — the phone remains the only
+source of semantically reliable status. **Healthy is dark**, which is also why there is no off
+switch: there is nothing to be annoyed by when it all works.
+
+| What it does | What it means |
+|---|---|
+| Three quick flashes, once | Paired phones were just forgotten — the reset took |
+| **Two flashes every 3 s** | The radio module is not answering. Nothing is reaching the air |
+| One flash every 3 s | Alive, but no phone connected yet |
+| Brief single flash | Bytes moved to or from the module |
+| Dark | Connected, module answering, nothing to say |
+
+One LED cannot carry four facts at once, so this is a priority and not a blend: a module fault
+is never hidden by traffic or by a missing phone. A module that dies while healthy is noticed
+at the next probe, so that pattern can lag by up to 30 seconds.
+
+The brief flash is *radio activity*, not delivery. It means bytes crossed the UART to the
+module, which says nothing about what went out over the air or arrived anywhere — for that,
+watch the `RX→DMD2` counter on the receiving phone.
+
+Only the classic ESP32 board is built with an indicator, on GPIO2. See `docs/BUILDING.md`.
+
 ## Legal / RF
 
 - **Unofficial project. Not affiliated with, authorised by, or endorsed by DMD Navigation /

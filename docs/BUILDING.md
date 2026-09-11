@@ -61,6 +61,20 @@ rather than constants. The C3 has no GPIO 16/17/22/23 at all; on the S3, GPIO 19
 **Never power the module without an antenna attached** — transmitting into an open port can
 destroy the output stage.
 
+### The indicator LED
+
+Patterns are in the README; this is where the pin comes from. `-DPIN_LED=<gpio>` is set per
+environment and only for `esp32dev`, where GPIO2 is the onboard LED of the board this was
+checked on. That is a property of *that board*, not of the target: PlatformIO's `esp32dev` is
+the generic "ESP32 Dev Module" and says nothing about an onboard LED. **Leave `PIN_LED`
+undefined for a board you have not confirmed** — the whole feature then compiles out, which is
+better than a guessed pin that is either dark or quietly drives something that is not an
+indicator.
+
+The S3 and C3 devkits are deliberately built without one. Their LED is a WS2812, which needs
+`led_strip`/RMT rather than `gpio_set_level`, and the S3-DevKitC-1 moved it between revisions
+(GPIO48 on the first, GPIO38 on v1.1), so there is no single pin to pick.
+
 ## Milestone 1 — does DMD2 accept us?
 
 No radio needed.
@@ -109,6 +123,9 @@ Three ways to undo it, for three different situations:
 | **Unpair** in the app | phone in hand, link up | sends `FORGET`; both sides clear together |
 | **Hold BOOT for 3 s** | phone lost or replaced, bridge in hand | bridge clears its keys and drops the link |
 | **Hold BOOT while powering on** | firmware not responding | keys cleared during startup |
+
+Both paths flash the LED three times to confirm they took. Without it the only evidence either
+worked was a line on the serial console — no use with the board already in the bike.
 
 After any of them the bridge accepts the next phone that comes along, because there is no bond
 left for anyone to be a stranger to.
