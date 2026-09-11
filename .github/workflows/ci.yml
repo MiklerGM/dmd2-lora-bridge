@@ -48,6 +48,8 @@ jobs:
           restore-keys: pio-${{ runner.os }}-
       - run: pip install --upgrade platformio
       - run: make check-firmware
+      # One gcc invocation; it needs neither the Arduino framework nor a board.
+      - run: make check-probe
 
   # Tags only, and only behind both checks: a release nobody ran the suite on is worse
   # than no release.

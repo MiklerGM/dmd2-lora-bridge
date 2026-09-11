@@ -1,5 +1,5 @@
 # Everything that can be checked without a phone or a radio.
-check: check-android check-firmware
+check: check-android check-firmware check-probe
 
 check-android:
 	@cd android && ./gradlew --console=plain -q :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
@@ -9,6 +9,11 @@ check-firmware:
 	@$(MAKE) -s -C firmware test
 	@cd firmware && pio run -s
 	@echo "firmware: host tests pass, image built"
+
+# Only the host half: the probe's radio code is diagnostic scaffolding that needs a board and a
+# transmitter, but its payload recognizer is pure and must not be allowed to rot.
+check-probe:
+	@$(MAKE) -s -C probe test
 
 # Build a debug APK named after the commit it came from, so which build is on the phone is
 # never in doubt.
@@ -29,4 +34,4 @@ release:
 	@ls -l dmd-lora-bridge-$$(git rev-parse --short HEAD)-release.apk
 	@sha256sum dmd-lora-bridge-$$(git rev-parse --short HEAD)-release.apk
 
-.PHONY: check check-android check-firmware apk release
+.PHONY: check check-android check-firmware check-probe apk release

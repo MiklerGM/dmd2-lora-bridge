@@ -41,12 +41,31 @@ them).
    match by reading a datasheet — it would need the PHY measured off the air first. The E220
    matches by construction; that is now the only documentation-supported path, not just a
    preference.
-2. **An SDR is the only way to recover the exact PHY** (SF/BW/CR/sync/preamble), and it is only
-   needed if a correctly-configured E220 still cannot hear a NOR7E, or if we ever want to move
-   off EBYTE hardware. It is a fallback diagnostic, not a first step.
+2. **Use the raw SX1262 board as the first PHY probe.** Repeated, known E220 packets let us
+   scan the small set of plausible SF/BW/sync combinations and distinguish preamble, sync,
+   header and CRC failures. An SDR remains the fallback if no candidate reaches a valid
+   header.
 3. The unknown closes empirically the moment a matching E220 receives a NOR7E packet (M5 → M6).
 
-## If we ever do try a raw SX1262 — the first combination to attempt
+## Hardware decision — ordered for the interop bench
+
+Ordered:
+
+- **2 × EBYTE E220** — the reference path for M5 and the first NOR7E interoperability attempt.
+- **1 × EBYTE E22** — a negative control: it must not receive the E220 fixed-mode link merely
+  because both products contain an SX126x radio.
+- **1 × Heltec WiFi LoRa 32 V4-compatible ESP32-S3/SX1262 full kit** — a raw SPI radio
+  test platform, supplied with an OLED and a separate GNSS module.
+- **A separate set of 868 MHz antennas** — so every radio in the bench and field tests uses an
+  antenna intended for the target band.
+
+The raw SX1262 board is experimental, not a replacement for the E220 path and not yet a
+supported firmware target. First complete E220 ↔ E220, then E220 ↔ NOR7E. After that, use the
+raw SX1262 receive-only against repeated known E220 packets; attempt transmission only after
+reception works. The OLED may later expose field diagnostics. The GNSS module does not change
+the current ownership model: DMD2/the phone remains the source of rider position.
+
+## Raw SX1262 — the first combination to attempt
 
 Worth recording because the odds are better than "brute force" suggests. Our inferred E220
 setting (SF9 / BW125) is also RadioLib's default for the SX1262, so a stock board may already
@@ -74,3 +93,23 @@ its own — extra bytes would show up around the `0g…` run.
 
 This is not Meshtastic-compatible: Meshtastic uses sync word 0x2B and its own presets and frame
 format. The hardware can be reused, the firmware cannot.
+
+## Why the probe is a separate program, not a radio backend
+
+`probe/` is its own PlatformIO project with its own `main`. It is tempting to treat the SX1262
+as "the bridge with a different transport", but UART versus SPI is the shallow half of the
+difference. The deep half is that an E220 **hides** the PHY behind an index (`rate=2`) while an
+SX1262 **exposes** it, and everything above says those parameters are still a guess. A backend
+written now would bake that guess in as configuration, and when it failed there would be no way
+to tell a wrong driver from a wrong guess.
+
+The coupling also runs past the driver. `e220_config_t` is EBYTE vocabulary, and it is not
+private: it goes to the phone in the `ST`/`CFG` contract (`ch`, `rate`, `packet`, `trans`,
+`lbt`, `addr`), which the Android app parses. Generalising the radio means renegotiating that
+contract too — so doing it before the SX1262's real requirements are known means guessing
+twice.
+
+The probe's job is also not the bridge's shape: walk a small grid, classify failures, dump what
+arrives. It shares nothing with forwarding packets. Once the PHY is measured, a backend becomes
+writable against facts, and `e220_write` / `e220_read_packet` are already the transport-neutral
+seam it would attach to.
