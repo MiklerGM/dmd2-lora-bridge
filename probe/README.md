@@ -49,12 +49,20 @@ reports a clean zero — and the radio was switched off the whole time. **A sile
 deaf one look identical**, so check the boot line:
 
 ```
-FEM enable on GPIO 2, held high
+FEM on: VFEM_Ctrl GPIO7 high, PA_CSD GPIO2 high, PA_CTX GPIO5 low (RX)
 ```
 
-Revisions have moved that pin and changed the FEM part (GC1109, then KCT8103L from V4.3.1), so
-confirm it against the schematic of the board actually in hand. `-DFEM_EN_PIN=-1` is correct
-for a V3, which has no FEM at all.
+Revisions have moved these pins and changed the FEM part, so confirm against the schematic of
+the board in hand. `-DFEM_VCTRL_PIN=-1` disables the block, which is correct for a V3.
+
+Pins come from the HTIT-WB32LAF V4.3 schematic (`PA_CSD` → GPIO2, `PA_CTX` → GPIO5,
+`VFEM_Ctrl` → GPIO7); that reading is confirmed by `LoRa_NSS` → GPIO8 in the same table, which
+is known independently. Powering the FEM needs all three — driving only the enable leaves it
+unpowered and just as deaf.
+
+**The noise floor is how you know the radio is really listening.** A dead receiver reports a
+stuck value; a live one drifts. On this board it sits around −73 to −84 dBm and moves between
+candidates. A constant reading means the front end is off, whatever `begin()` said.
 
 ## Board
 

@@ -30,18 +30,30 @@
 #endif
 
 /*
- * V4 puts a front-end module (GC1109, KCT8103L from V4.3.1) between the SX1262 and the antenna,
- * and it comes up disabled. This is the failure that would waste a day: SPI answers, begin()
- * succeeds, every candidate reports a clean zero, and the radio was simply switched off the
- * whole time. A silent probe and a deaf one look identical.
+ * V4 puts a front-end module between the SX1262 and the antenna, and it comes up dead. This is
+ * the failure that would waste a day: SPI answers, begin() succeeds, every candidate reports a
+ * clean zero, and the radio was switched off the whole time. A silent probe and a deaf one look
+ * identical.
  *
- * FEM_EN is held high to power the front end; DIO2 then selects the path, low for the LNA in
- * receive. Revisions have moved this pin, so it is a build flag and the value in use is printed
- * at boot - check it against the schematic of the board in hand rather than trusting this.
- * Build with -DFEM_EN_PIN=-1 for a V3, which has no FEM at all.
+ * Pins read off the HTIT-WB32LAF V4.3 schematic, where the module pin table gives
+ * PA_CSD -> GPIO2, PA_CTX -> GPIO5, VFEM_Ctrl -> GPIO7. That reading is confirmed by
+ * LoRa_NSS -> GPIO8 in the same table, which is known independently. The part is a KCT8103L.
+ *
+ * For receive: power the front end, release its shutdown, and hold the path in receive. CTX
+ * high would select the transmit path, which is not what a receive-only probe wants pointed at
+ * its LNA. PA_CPS only selects transmit power and is left alone.
+ *
+ * Heltec has moved these between revisions, so they are build flags and the values in use are
+ * printed at boot. -DFEM_VCTRL_PIN=-1 disables the whole block, which is correct for a V3.
  */
-#ifndef FEM_EN_PIN
-#define FEM_EN_PIN 2
+#ifndef FEM_VCTRL_PIN
+#define FEM_VCTRL_PIN 7   /* VFEM_Ctrl - supplies the FEM */
+#endif
+#ifndef FEM_CSD_PIN
+#define FEM_CSD_PIN 2     /* PA_CSD - chip shutdown, high to enable */
+#endif
+#ifndef FEM_CTX_PIN
+#define FEM_CTX_PIN 5     /* PA_CTX - high selects TX, low selects the LNA */
 #endif
 
 /* Channel 18 of the DMD profile. The one number we are certain of. */
@@ -95,9 +107,6 @@ static void listen(const candidate &c) {
         Serial.printf("   begin failed: %d - wrong pins or no radio\n", st);
         return;
     }
-    /* DIO2 drives the front end's path selection: low selects the LNA for receive. Harmless on
-     * a board with no FEM, required on one that has it. */
-    radio.setDio2AsRfSwitch(true);
     radio.setPacketReceivedAction(on_irq);
     radio.startReceive();
 
@@ -167,12 +176,18 @@ void setup() {
                   LORA_NSS, LORA_SCK, LORA_MOSI, LORA_MISO, LORA_RST, LORA_BUSY, LORA_DIO1);
     spi.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_NSS);
 
-#if FEM_EN_PIN >= 0
-    pinMode(FEM_EN_PIN, OUTPUT);
-    digitalWrite(FEM_EN_PIN, HIGH);
-    Serial.printf("FEM enable on GPIO %d, held high\n", FEM_EN_PIN);
+#if FEM_VCTRL_PIN >= 0
+    pinMode(FEM_VCTRL_PIN, OUTPUT);
+    digitalWrite(FEM_VCTRL_PIN, HIGH);   /* power it */
+    pinMode(FEM_CSD_PIN, OUTPUT);
+    digitalWrite(FEM_CSD_PIN, HIGH);     /* release shutdown */
+    pinMode(FEM_CTX_PIN, OUTPUT);
+    digitalWrite(FEM_CTX_PIN, LOW);      /* receive path through the LNA */
+    delay(10);
+    Serial.printf("FEM on: VFEM_Ctrl GPIO%d high, PA_CSD GPIO%d high, PA_CTX GPIO%d low (RX)\n",
+                  FEM_VCTRL_PIN, FEM_CSD_PIN, FEM_CTX_PIN);
 #else
-    Serial.println("no FEM configured - correct for V3, wrong for V4");
+    Serial.println("no FEM configured - correct for V3, deaf on V4");
 #endif
 }
 
