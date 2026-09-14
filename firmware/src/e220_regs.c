@@ -32,6 +32,16 @@ static const uint8_t STOCK[E220_REG_COUNT] = {
 #define REG1_POWER_MASK 0x03
 #define REG3_FIXED_BIT 0x40
 #define REG3_LBT_BIT 0x10
+#define CMD_HEAD_WRITE 0xC0
+#define CMD_HEAD_READ 0xC1
+
+e220_config_t e220_config_for(const radio_request_t *req) {
+    e220_config_t cfg = E220_GROUP_CONFIG;
+    cfg.channel = req->channel;
+    cfg.power = req->power_level;
+    cfg.lbt = req->lbt;
+    return cfg;
+}
 
 void e220_build_frame(const e220_config_t *cfg, uint8_t *out) {
     uint8_t reg[E220_REG_COUNT];
@@ -66,12 +76,28 @@ void e220_build_frame(const e220_config_t *cfg, uint8_t *out) {
 const uint8_t E220_READBACK_MASK[E220_REG_READBACK] = {
     0xFF,   /* ADDH */
     0xFF,   /* ADDL */
-    0x07,   /* REG0: air rate. The UART bits above it are not worth checking - if they were
-             * wrong we could not be talking to the module at all. */
+    0xFF,   /* REG0: UART baud/parity and air rate. Config-mode replies can still work while
+             * wrong normal-mode UART bits make every data packet unreadable. */
     0xC3,   /* REG1: sub-packet size (7-6) and power (1-0) */
     0xFF,   /* REG2: channel */
     0xD0,   /* REG3: RSSI append (7), fixed/transparent (6), LBT (4) */
 };
+
+int e220_first_mismatch(const uint8_t *actual, const e220_config_t *expected) {
+    uint8_t frame[E220_FRAME_LEN];
+    e220_build_frame(expected, frame);
+    for (int i = 0; i < E220_REG_READBACK; i++) {
+        uint8_t mask = E220_READBACK_MASK[i];
+        if ((actual[i] & mask) != (frame[3 + i] & mask)) return i;
+    }
+    return -1;
+}
+
+bool e220_reply_valid(const uint8_t *reply, size_t len) {
+    return len == E220_REPLY_LEN &&
+           (reply[0] == CMD_HEAD_READ || reply[0] == CMD_HEAD_WRITE) &&
+           reply[1] == 0x00 && reply[2] == E220_REG_COUNT;
+}
 
 void e220_build_read_frame(uint8_t *out) {
     out[0] = 0xC1;              /* read registers - writes nothing, wears nothing */

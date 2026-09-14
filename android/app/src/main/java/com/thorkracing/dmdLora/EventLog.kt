@@ -5,7 +5,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** In-memory log. The whole point of milestone 1 is watching what DMD2 actually sends us. */
+/** Small in-memory operational log shown by the companion UI. */
 object EventLog {
     private const val MAX = 400
     private val stamp = SimpleDateFormat("HH:mm:ss", Locale.US)

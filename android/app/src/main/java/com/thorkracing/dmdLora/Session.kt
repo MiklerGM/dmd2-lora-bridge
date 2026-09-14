@@ -10,17 +10,40 @@ object Session {
     @Volatile var groupName: String? = null
     @Volatile var senderUserId: String? = null
 
+    data class Ride(val groupId: String?, val groupName: String?, val senderUserId: String?)
+
+    /** Group identity is one fact: RX must never decode against one group and label it as another. */
+    @Synchronized
+    fun updateRide(id: String, name: String?, sender: String) {
+        if (groupId != id || senderUserId != sender) myDisplayName = null
+        groupId = id
+        groupName = name
+        senderUserId = sender
+    }
+
+    @Synchronized
+    fun ride(): Ride = Ride(groupId, groupName, senderUserId)
+
+    @Synchronized
+    fun clearRide() {
+        groupId = null
+        groupName = null
+        senderUserId = null
+        myDisplayName = null
+    }
+
     /** Our own display name, learned from the roster DMD2 sends us. Chat is attributed to it. */
     @Volatile var myDisplayName: String? = null
 
-    // Radio config as last requested by DMD2. We report it back in STATUS_UPDATE.
-    @Volatile var channel: Int = 18
+    // Radio config as last requested by DMD2. Unknown until SET_FREQUENCY on every process
+    // start. DMD2 may wait for a location fix before sending it; keeping -1/blank here can stall
+    // safely, while guessing a remembered/default region can transmit illegally after travel.
+    @Volatile var channel: Int = -1
     @Volatile var power: Int = 0
     @Volatile var lbt: Boolean = false
-    @Volatile var regionDesc: String = "EU 868MHz"
+    @Volatile var regionDesc: String = ""
 
-    /** Set true once a radio is actually attached. Until then we still claim connected during
-     *  milestone 1, because DMD2 sends us nothing at all unless it believes a radio is up. */
+    /** Whether a radio link object is attached. DMD2 connectivity is reported from Radio.usable. */
     @Volatile var radioAttached: Boolean = false
 
     /** Set by the service itself. The UI used to infer this from counters, which stayed true

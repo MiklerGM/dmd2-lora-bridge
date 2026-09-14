@@ -15,18 +15,21 @@ import com.thorkracing.dmdLora.Bridge
 import com.thorkracing.dmdLora.DmdLora
 import com.thorkracing.dmdLora.EventLog
 import com.thorkracing.dmdLora.MainActivity
+import com.thorkracing.dmdLora.Prefs
 import com.thorkracing.dmdLora.Session
 import com.thorkracing.dmdLora.radio.BleRadioLink
 import com.thorkracing.dmdLora.radio.Radio
 
 /**
  * Foreground service at the exact path DMD2 targets with startForegroundService when our
- * status goes quiet. Its job in milestone 1 is simply to exist and keep the heartbeat going.
+ * status goes quiet. It owns the BLE link, DMD2 heartbeat and paced radio work while the UI is
+ * not running.
  */
 class LoraService : Service() {
 
     private val handler = Handler(Looper.getMainLooper())
     private var beating = false
+    private var foregroundReady = false
 
     /** Frequent enough to release a held transmission and to re-apply config after a
      *  reconnect promptly, cheap enough to ignore. */
@@ -58,6 +61,7 @@ class LoraService : Service() {
         // uncaught throw here takes the whole app down at exactly the wrong moment.
         try {
             startForeground(NOTIFICATION_ID, notification())
+            foregroundReady = true
             Session.serviceRunning = true
             EventLog.log("service created")
         } catch (e: Exception) {
@@ -69,6 +73,19 @@ class LoraService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         EventLog.log("service onStartCommand action=${intent?.action}")
+        // stopSelf() from onCreate does not cancel a start command that Android has already
+        // queued. Do not start BLE/timers after the mandatory foreground promotion failed.
+        if (!foregroundReady) {
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
+        if (!Prefs.bridgeEnabled(this)) {
+            // DMD2 starts this exact component when a previously enabled bridge goes quiet.
+            // A durable user Stop must answer that probe with enabled=false, then leave again.
+            Bridge.sendStatusUpdate(this, connected = false)
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
         if (!beating) {
             beating = true
             handler.post(heartbeat)
@@ -101,7 +118,9 @@ class LoraService : Service() {
             this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val text = "ch ${Session.channel} · ${Bridge.freqLabel(Session.channel)}" +
+        val text = (Session.channel.takeIf { it >= 0 }?.let {
+            "ch $it · ${Bridge.freqLabel(it)}"
+        } ?: "waiting for DMD2 radio config") +
             (Session.groupName?.let { " · $it" } ?: "")
         return Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("LoRa Bridge for DMD2")
@@ -133,8 +152,21 @@ class LoraService : Service() {
             context.startForegroundService(i)
         }
 
+        fun startByUser(context: Context) {
+            Prefs.setBridgeEnabled(context, true)
+            start(context)
+        }
+
         fun stop(context: Context) {
             context.stopService(Intent(context, LoraService::class.java))
+        }
+
+        fun stopByUser(context: Context) {
+            Prefs.setBridgeEnabled(context, false)
+            // Send immediately as stopService is asynchronous; onDestroy repeats the same
+            // truthful state and covers a service that was already on its way down.
+            Bridge.sendStatusUpdate(context, connected = false)
+            stop(context)
         }
     }
 }

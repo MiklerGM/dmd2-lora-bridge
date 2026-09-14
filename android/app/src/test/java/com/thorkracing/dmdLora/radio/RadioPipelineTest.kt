@@ -50,20 +50,6 @@ class TxPacerTest {
 }
 
 /**
- * The CFG line the firmware parses. The fixed part of the profile is not ours to choose: every
- * rider in the group must share it or the packets are not demodulable.
- */
-class RadioConfigCommandTest {
-
-    @Test fun configurationCarriesTheGroupProfile() {
-        val cmd = RadioConfig(channel = 18, powerIndex = 3, lbt = false).toCommand()
-        for (field in listOf("addr=0", "rate=2", "packet=0", "trans=1", "key=0", "ch=18")) {
-            assertTrue(cmd, cmd.contains(field))
-        }
-    }
-}
-
-/**
  * Pacing must not cost us the newest position: a payload offered during the hold-off replaces
  * whatever was waiting, rather than queueing behind it.
  */
@@ -71,29 +57,41 @@ class TxSchedulerTest {
 
     @Test fun firstOfferGoesOutImmediately() {
         val s = TxScheduler(TxPacer(1_500))
-        assertEquals("first", s.offer("first", 10_000))
+        assertEquals("first", s.offer("first", 10_000, transmitAllowed = true))
     }
 
     @Test fun anOfferInsideTheWindowIsHeld() {
         val s = TxScheduler(TxPacer(1_500))
-        s.offer("first", 10_000)
-        assertNull(s.offer("second", 10_200))
+        s.offer("first", 10_000, transmitAllowed = true)
+        assertNull(s.offer("second", 10_200, transmitAllowed = true))
         assertTrue(s.hasPending())
     }
 
     @Test fun theNewestHeldPayloadWins() {
         val s = TxScheduler(TxPacer(1_500))
-        s.offer("first", 10_000)
-        s.offer("stale", 10_200)
-        s.offer("freshest", 10_400)
+        s.offer("first", 10_000, transmitAllowed = true)
+        s.offer("stale", 10_200, transmitAllowed = true)
+        s.offer("freshest", 10_400, transmitAllowed = true)
         assertNull("still inside the window", s.poll(11_000))
         assertEquals("freshest", s.poll(11_500))
     }
 
+    @Test fun aClosedHealthGateCannotReleaseAnOldPositionAfterRecovery() {
+        val s = TxScheduler(TxPacer(1_500))
+        s.offer("sent", 10_000, transmitAllowed = true)
+        s.offer("old pending", 10_100, transmitAllowed = true)
+
+        // Configuration/health closes. Neither an older paced value nor a value with no age
+        // received during an unbounded outage may be released as if it were fresh on recovery.
+        assertNull(s.offer("seen while gated", 10_400, transmitAllowed = false))
+
+        assertNull(s.poll(11_500))
+    }
+
     @Test fun pollingDrainsOnlyOnce() {
         val s = TxScheduler(TxPacer(1_500))
-        s.offer("first", 10_000)
-        s.offer("held", 10_100)
+        s.offer("first", 10_000, transmitAllowed = true)
+        s.offer("held", 10_100, transmitAllowed = true)
         assertEquals("held", s.poll(11_500))
         assertNull(s.poll(20_000))
         assertFalse(s.hasPending())
@@ -106,9 +104,9 @@ class TxSchedulerTest {
 
     @Test fun sendingImmediatelyClearsAnythingHeld() {
         val s = TxScheduler(TxPacer(1_500))
-        s.offer("first", 10_000)
-        s.offer("held", 10_100)
-        assertEquals("later", s.offer("later", 11_500))
+        s.offer("first", 10_000, transmitAllowed = true)
+        s.offer("held", 10_100, transmitAllowed = true)
+        assertEquals("later", s.offer("later", 11_500, transmitAllowed = true))
         assertFalse("the held payload was superseded", s.hasPending())
     }
 }
@@ -120,7 +118,7 @@ class TxSchedulerPaceTest {
         val s = TxScheduler(TxPacer(1_500))
         assertTrue(s.tryPace(10_000))
         // position offered in the same window is now held, since the slot was just used
-        assertNull(s.offer("pos", 10_100))
+        assertNull(s.offer("pos", 10_100, transmitAllowed = true))
         assertTrue(s.hasPending())
         assertNull("window still closed", s.poll(11_000))
         assertEquals("pos", s.poll(11_500))

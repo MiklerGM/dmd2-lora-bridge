@@ -25,7 +25,8 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.thorkracing.dmdLora.radio.Radio
-import com.thorkracing.dmdLora.radio.TxPower
+import com.thorkracing.dmdLora.radio.BridgeMode
+import com.thorkracing.dmdLora.radio.PowerLevel
 import com.thorkracing.dmdLora.service.LoraService
 import java.util.Locale
 
@@ -53,7 +54,9 @@ class MainActivity : Activity() {
     private lateinit var autostartButton: Button
     private lateinit var batteryButton: Button
     private lateinit var powerButton: Button
-    private lateinit var simButton: Button
+
+    /** Shown only while no bridge has been chosen: one button per bridge in range. */
+    private lateinit var bridgePicker: LinearLayout
 
     private lateinit var hashField: EditText
     private lateinit var latField: EditText
@@ -63,8 +66,13 @@ class MainActivity : Activity() {
 
     private var walking = false
     private var openPanel = Panel.NONE
+    private var radioAction = RadioAction.NONE
+
+    /** What the picker is currently showing, so it is not rebuilt under the rider's finger. */
+    private var pickerShowing: List<String>? = null
 
     private enum class Panel { NONE, TOOLS, SETTINGS }
+    private enum class RadioAction { NONE, CHANGE, UNPAIR }
 
     private val walk = object : Runnable {
         override fun run() {
@@ -107,6 +115,10 @@ class MainActivity : Activity() {
     // ---- layout ----
 
     private fun buildUi(): View {
+        bridgePicker = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+        }
         serviceValue = valueText()
         radioValue = valueText()
         groupValue = valueText()
@@ -115,7 +127,16 @@ class MainActivity : Activity() {
         // One control per row, next to the thing it acts on: the service action sits with the
         // service state, unpairing sits with the radio it would disconnect.
         serviceAction = styled("", C.CONTROL) { toggleService() }
-        unpairAction = styled("Unpair", C.CONTROL) { Radio.forgetBridge() }
+        unpairAction = styled("", C.CONTROL) {
+            // Execute what the button actually said when it was rendered. Re-reading live
+            // readiness here could turn a visible "Change" into destructive unpairing during
+            // the fraction of a second in which the link finishes verification.
+            when (radioAction) {
+                RadioAction.UNPAIR -> Radio.forgetBridge()
+                RadioAction.CHANGE -> Radio.chooseAnotherBridge()
+                RadioAction.NONE -> {}
+            }
+        }
 
         val statusCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -123,11 +144,10 @@ class MainActivity : Activity() {
             setPadding(dp(10), dp(8), dp(10), dp(8))
             addView(statusRow("Service", serviceValue, serviceAction))
             addView(statusRow("Radio", radioValue, unpairAction))
+            addView(bridgePicker)
             addView(statusRow("Group", groupValue, null))
             addView(statusRow("Traffic", trafficValue, null))
         }
-
-        simButton = styled("", C.CONTROL) { Radio.setEcho(!Radio.simulating) }
 
         hashField = field("1234", "hash")
         latField = field("52.520008", "lat")
@@ -157,18 +177,6 @@ class MainActivity : Activity() {
                 setPadding(0, dp(4), 0, 0)
                 addView(styled("Inject", C.CONTROL) { inject() }, cell(1f))
                 addView(walkButton, cell(1f))
-                addView(styled("Loopback", C.CONTROL) { loopback() }, cell(1f))
-                addView(styled("Chat", C.CONTROL) {
-                    Radio.sendLoopbackChat("loopback ${System.currentTimeMillis() % 100000}")
-                }, cell(1f))
-            })
-            // Loopback needs a bridge that echoes, and the firmware no longer switches itself
-            // into that mode - a bridge that quietly stands in for a broken radio looks exactly
-            // like a working one. So it is turned on here, on purpose, and shown while it is on.
-            addView(LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                setPadding(0, dp(4), 0, 0)
-                addView(simButton, cell(1f))
             })
         }
 
@@ -190,10 +198,11 @@ class MainActivity : Activity() {
                 addView(powerButton, cell(1f))
             })
             addView(TextView(this@MainActivity).apply {
-                text = "Steps are the module's own: 30/27/24/21 dBm on an E220-T30, " +
-                    "22/17/13/10 on a T22. What you may transmit depends on your band and " +
-                    "country, not on the module — on 868.0–868.6 MHz Germany allows 25 mW " +
-                    "ERP, about 14 dBm, which no T30 step reaches without attenuation."
+                text = "Level 0 is the strongest step, 3 the weakest. What a level is worth " +
+                    "in dBm is the bridge's to say, and it reports one only if its build was " +
+                    "told which module is fitted. What you may transmit depends on your band " +
+                    "and country — on 868.0–868.6 MHz Germany allows 25 mW ERP, about 14 dBm, " +
+                    "which no step of an E220-900T30 reaches without attenuation."
                 textSize = 10f
                 setTextColor(C.MUTED)
                 setPadding(dp(5), dp(2), dp(5), dp(4))
@@ -269,24 +278,39 @@ class MainActivity : Activity() {
         serviceAction.text = if (running) "Stop" else "Start"
         serviceAction.background = rounded(if (running) C.DANGER else C.GO)
 
-        val radio = if (Session.radioAttached) Radio.linkState else "off"
-        // The link and the air are two different things: a bridge whose module is dead is a
+        // The link and the radio are two different things: a bridge whose module is dead is a
         // perfectly healthy Bluetooth device, and saying only "connected" hid exactly that.
-        val air = Radio.airState
-        radioValue.text = if (air == null) radio else "$radio · $air"
+        val link = if (Session.radioAttached) Radio.linkState else "off"
+        val air = airState()
+        radioValue.text = if (air == null) link else "$link · $air"
         radioValue.setTextColor(
-            when (air) {
-                null -> stateColor(radio)
-                "no module" -> C.DANGER_TEXT
-                else -> C.WARN
+            when {
+                air == null -> stateColor(link)
+                Radio.txReady -> C.OK
+                Radio.usable -> C.WARN
+                else -> C.DANGER_TEXT
             }
         )
-        // Unpairing only means something once a bridge has actually been adopted.
-        unpairAction.visibility = if (radio == "connected") View.VISIBLE else View.INVISIBLE
+        // A dead/offline selection must not hide every other bridge. "Change" only clears the
+        // local choice; full unpairing is offered when both ends can actually forget each other.
+        radioAction = when {
+            Radio.canUnpair -> RadioAction.UNPAIR
+            Radio.bridgeSelected -> RadioAction.CHANGE
+            else -> RadioAction.NONE
+        }
+        unpairAction.text = if (radioAction == RadioAction.UNPAIR) "Unpair" else "Change"
+        unpairAction.visibility =
+            if (radioAction != RadioAction.NONE) View.VISIBLE else View.INVISIBLE
+        renderBridgePicker()
 
+        val channel = Radio.desiredRequest?.channel ?: Session.channel.takeIf { it >= 0 }
+        val channelText = channel?.let {
+            "ch $it · ${"%.3f".format(Locale.US, 850.125 + it)} MHz"
+        } ?: "radio config pending"
         groupValue.text = (Session.groupName ?: Session.groupId?.take(8) ?: "—") +
-            "   ch ${Session.channel} · ${"%.3f".format(Locale.US, 850.125 + Session.channel)} MHz"
-        trafficValue.text = "TX ${Session.packetsEncoded.get()}   RX→DMD2 ${Session.groupDataReceived.get()}"
+            "   $channelText"
+        trafficValue.text =
+            "Encoded ${Session.packetsEncoded.get()}   RX→DMD2 ${Session.groupDataReceived.get()}"
 
         val auto = Prefs.autostart(this)
         autostartButton.text = if (auto) "Autostart: on" else "Autostart: off"
@@ -296,23 +320,87 @@ class MainActivity : Activity() {
         batteryButton.text = if (free) "Battery: free" else "Battery: limited"
         batteryButton.background = rounded(if (free) C.GO else C.DANGER)
 
-        val power = Prefs.powerIndex(this)
-        powerButton.text = "TX power $power · ${TxPower.label(power)}"
+        // Keep three different values named: the rider's ceiling, the app's request after DMD2
+        // and that ceiling are combined, and what the bridge actually holds after its own floor.
+        // The app no longer holds a table of its own: which module is fitted is the firmware's
+        // to know, and a build that was not told reports no dBm at all.
+        val limit = Prefs.powerLevel(this)
+        val requested = Radio.desiredRequest?.powerLevel
+        val st = Radio.bridgeStatus
+        val confirmed = st?.takeIf { Radio.connected && it.online && it.configured }
+        val held = when {
+            !Radio.connected || st == null -> "—"
+            confirmed == null -> "unconfirmed"
+            else -> confirmed.powerLevel.toString()
+        }
+        val dbm = when {
+            confirmed == null -> "dBm —"
+            confirmed.txDbm != null -> "${confirmed.txDbm} dBm"
+            else -> "dBm unknown"
+        }
+        powerButton.text =
+            "Your limit $limit · app request ${requested ?: "—"} · bridge $held · $dbm"
         // Neutral at the weakest step, warmer as it climbs: the colour is the only thing
         // between a curious tap and a transmitter that is louder than the licence allows.
         powerButton.background = rounded(
-            when (power) {
-                TxPower.WEAKEST -> C.CONTROL
-                TxPower.STRONGEST -> C.DANGER
+            when (limit) {
+                PowerLevel.WEAKEST -> C.CONTROL
+                PowerLevel.STRONGEST -> C.DANGER
                 else -> C.WARN
             }
         )
-        powerButton.setTextColor(if (power < TxPower.WEAKEST) C.ON_ACCENT else C.TEXT)
+        powerButton.setTextColor(if (limit < PowerLevel.WEAKEST) C.ON_ACCENT else C.TEXT)
+    }
 
-        val sim = Radio.simulating
-        simButton.text = if (sim) "Simulating — nothing on the air" else "Simulate radio"
-        simButton.background = rounded(if (sim) C.WARN else C.CONTROL)
-        simButton.setTextColor(if (sim) C.ON_ACCENT else C.TEXT)
+    /**
+     * What is wrong with the radio rather than with the Bluetooth link, or null when nothing
+     * is. A bridge whose radio is dead, whose build may not transmit, or which is beaconing
+     * its own position is a perfectly connected Bluetooth device either way.
+     */
+    private fun airState(): String? {
+        if (Radio.link?.connected != true) return null   // the link state already explains that
+        val st = Radio.bridgeStatus
+        return when {
+            Radio.bridgeUnsupported -> "unsupported firmware"
+            st == null -> "waiting for status"
+            st.mode != BridgeMode.BRIDGE -> "${st.mode.name.lowercase()} mode — not a bridge"
+            !st.online -> "no radio"
+            !st.tx -> "${st.radio}, transmit disabled in this build"
+            Radio.desiredRequest == null -> "${st.radio}, waiting for group"
+            !Radio.configOwnedByGroup -> "${st.radio}, waiting for group after config"
+            !st.configured -> "${st.radio}, waiting for config"
+            !Radio.txReady -> "${st.radio}, config mismatch"
+            // Which backend, which mode, which firmware: on a bench with several boards,
+            // "connected" on its own does not say which one is answering.
+            else -> "${st.radio} ${st.mode.name.lowercase()}" +
+                (st.firmware.takeIf { it.isNotEmpty() }?.let { " · $it" } ?: "")
+        }
+    }
+
+    /**
+     * Several of our own bridges answer to the same name prefix, so one is chosen rather than
+     * grabbed. Rebuilt only when the list actually changes: replacing the buttons once a second
+     * would take them out from under the finger about to tap one.
+     */
+    private fun renderBridgePicker() {
+        val choices = Radio.bridgeChoices
+        if (choices == pickerShowing) return
+        pickerShowing = choices
+        bridgePicker.removeAllViews()
+        bridgePicker.visibility = if (choices.isEmpty()) View.GONE else View.VISIBLE
+        if (choices.isEmpty()) return
+        bridgePicker.addView(TextView(this).apply {
+            text = "Choose a bridge"
+            textSize = 10f
+            setTextColor(C.MUTED)
+            setPadding(dp(2), dp(2), 0, dp(2))
+        })
+        for (name in choices) {
+            bridgePicker.addView(styled(name, C.ACCENT, C.ON_ACCENT) { Radio.chooseBridge(name) },
+                LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply {
+                    setMargins(0, 0, 0, dp(3))
+                })
+        }
     }
 
     /**
@@ -320,8 +408,8 @@ class MainActivity : Activity() {
      * rider to dial it down would put the loudest setting one tap from the default.
      */
     private fun cyclePower() {
-        val next = Prefs.powerIndex(this) - 1
-        Prefs.setPowerIndex(this, if (next < TxPower.STRONGEST) TxPower.WEAKEST else next)
+        val next = Prefs.powerLevel(this) - 1
+        Prefs.setPowerLevel(this, if (next < PowerLevel.STRONGEST) PowerLevel.WEAKEST else next)
         Radio.onPowerLimitChanged(this)
         renderStatus()
     }
@@ -362,7 +450,7 @@ class MainActivity : Activity() {
     // ---- actions ----
 
     private fun toggleService() {
-        if (Session.serviceRunning) LoraService.stop(this) else LoraService.start(this)
+        if (Session.serviceRunning) LoraService.stopByUser(this) else LoraService.startByUser(this)
         ui.postDelayed({ renderStatus() }, 300)
     }
 
@@ -399,16 +487,6 @@ class MainActivity : Activity() {
             Bridge.syntheticRider(hash, lat, lon, readDouble(speedField, 0.0)),
             groupId = null,
         )
-    }
-
-    private fun loopback() {
-        val lat = readDouble(latField, Double.NaN)
-        val lon = readDouble(lonField, Double.NaN)
-        if (!lat.isFinite() || !lon.isFinite()) {
-            EventLog.log("loopback skipped — check lat / lon")
-            return
-        }
-        Radio.sendLoopbackProbe(lat, lon, readDouble(speedField, 0.0))
     }
 
     private fun toggleWalk() {

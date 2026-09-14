@@ -37,6 +37,11 @@
 
 #define UART_BUF 1024
 #define UART_LOCK_WAIT_MS 2000
+#define AUX_POLL_MS 10
+#define MODE_SWITCH_WAIT_MS 2000
+/* LBT may legally defer a transmission for two seconds before the module sends anyway. The
+ * completion wait also has to cover the packet's airtime and scheduler/module margin. */
+#define TX_COMPLETE_WAIT_MS 5000
 
 /*
  * One port, three users: the receive loop, the transmit task and configuration. Without this
@@ -51,24 +56,36 @@ static bool uart_lock(void) {
 }
 
 static void uart_unlock(void) { xSemaphoreGive(s_uart_lock); }
-#define CMD_HEAD_WRITE 0xC0
-#define CMD_HEAD_READ 0xC1
+
+static bool wait_aux(uint32_t timeout_ms);
 
 /* E220 mode table (differs from the E22!): M1 M0 = 1 1 is configuration. */
-static void e220_mode_normal(void) {
-    gpio_set_level(PIN_M0, 0);
-    gpio_set_level(PIN_M1, 0);
+static bool e220_set_mode(int m0, int m1, const char *name) {
+    /* EBYTE only samples a mode change while AUX is stably high. In particular, a TX can have
+     * drained the ESP UART while the module is still finishing the RF packet; toggling M0/M1
+     * then makes the change deferred, and a blind delay can send C0 into transparent mode. */
+    if (!wait_aux(MODE_SWITCH_WAIT_MS)) {
+        ESP_LOGW(TAG, "cannot enter %s mode: AUX stayed busy before switch", name);
+        return false;
+    }
+    gpio_set_level(PIN_M0, m0);
+    gpio_set_level(PIN_M1, m1);
+    /* 20 ms is deliberately above the documented 1-2 ms mode-settle interval. Re-check AUX
+     * afterwards as well: leaving configuration mode can hold it low while parameters load. */
     vTaskDelay(pdMS_TO_TICKS(20));
+    if (!wait_aux(MODE_SWITCH_WAIT_MS)) {
+        ESP_LOGW(TAG, "cannot enter %s mode: AUX stayed busy after switch", name);
+        return false;
+    }
+    return true;
 }
 
-static void e220_mode_config(void) {
-    gpio_set_level(PIN_M0, 1);
-    gpio_set_level(PIN_M1, 1);
-    vTaskDelay(pdMS_TO_TICKS(20));
-}
+static bool e220_mode_normal(void) { return e220_set_mode(0, 0, "normal"); }
+static bool e220_mode_config(void) { return e220_set_mode(1, 1, "configuration"); }
 
 void e220_init(void) {
     s_uart_lock = xSemaphoreCreateMutex();
+    configASSERT(s_uart_lock != NULL);
     gpio_config_t io = {
         .pin_bit_mask = (1ULL << PIN_M0) | (1ULL << PIN_M1),
         .mode = GPIO_MODE_OUTPUT,
@@ -94,50 +111,69 @@ void e220_init(void) {
     ESP_ERROR_CHECK(uart_param_config(E220_UART, &cfg));
     ESP_ERROR_CHECK(uart_set_pin(E220_UART, PIN_TX, PIN_RX,
                                  UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
-    e220_mode_normal();
+    if (!e220_mode_normal()) ESP_LOGW(TAG, "normal mode not confirmed during init");
     ESP_LOGI(TAG, "uart up at 9600 8N1 (tx=%d rx=%d m0=%d m1=%d aux=%d)",
              PIN_E220_TX, PIN_E220_RX, PIN_E220_M0, PIN_E220_M1, PIN_E220_AUX);
 }
 
-/* Waits for AUX to go high, which the module uses to signal "idle, command accepted". */
-static void wait_aux(uint32_t timeout_ms) {
-    uint32_t waited = 0;
-    while (gpio_get_level(PIN_AUX) == 0 && waited < timeout_ms) {
-        vTaskDelay(pdMS_TO_TICKS(5));
-        waited += 5;
+/* Waits for AUX to go high, which the module uses to signal that it is idle again. */
+static bool wait_aux(uint32_t timeout_ms) {
+    /* AUX being high at one instant is not enough: it can fall just after the ESP UART drains
+     * while the module starts RF work. Keep the whole deadline available for a stable-high
+     * sample instead of failing on that first edge. */
+    const TickType_t started = xTaskGetTickCount();
+    const TickType_t timeout = pdMS_TO_TICKS(timeout_ms);
+    const TickType_t settle = pdMS_TO_TICKS(AUX_POLL_MS);
+    for (;;) {
+        if (gpio_get_level(PIN_AUX) != 0) {
+            vTaskDelay(settle);
+            TickType_t elapsed = xTaskGetTickCount() - started;
+            if (gpio_get_level(PIN_AUX) != 0 && elapsed <= timeout) return true;
+        }
+        if (xTaskGetTickCount() - started >= timeout) return false;
+        /* The shipped configs use a 100 Hz FreeRTOS tick; 5 ms converts to zero ticks and
+         * would turn both the timeout and the stability delay into a busy-loop. */
+        vTaskDelay(settle);
     }
-    vTaskDelay(pdMS_TO_TICKS(5));
 }
 
-bool e220_apply(const e220_config_t *cfg) {
+e220_state_t e220_apply(const e220_config_t *cfg) {
     uint8_t frame[E220_FRAME_LEN];
     e220_build_frame(cfg, frame);
 
     if (!uart_lock()) {
         ESP_LOGW(TAG, "apply: uart busy");
-        return false;
+        return E220_BUSY;
     }
-    e220_mode_config();
+    if (!e220_mode_config()) {
+        uart_unlock();
+        return E220_NO_ANSWER;
+    }
     uart_flush_input(E220_UART);
-    uart_write_bytes(E220_UART, (const char *)frame, sizeof(frame));
-    wait_aux(500);
+    int written = uart_write_bytes(E220_UART, (const char *)frame, sizeof(frame));
+    bool drained = uart_wait_tx_done(E220_UART, pdMS_TO_TICKS(500)) == ESP_OK;
+    bool idle = wait_aux(500);
 
     uint8_t resp[3 + E220_REG_COUNT] = {0};
-    int n = uart_read_bytes(E220_UART, resp, sizeof(resp), pdMS_TO_TICKS(500));
-    e220_mode_normal();
+    int n = (written == (int)sizeof(frame) && drained && idle)
+                ? uart_read_bytes(E220_UART, resp, sizeof(resp), pdMS_TO_TICKS(500))
+                : 0;
+    bool normal = e220_mode_normal();
     uart_unlock();
 
     /*
      * The module answers a write with the full block it now holds: C1, start address, length,
      * then the parameters. Accepting "three bytes starting with C0/C1" would call a rejected
-     * or truncated write a success and leave the radio on the old channel, so compare the
-     * registers that came back against the ones we asked for.
+     * or truncated write a success and leave the radio on the old channel. As with verify,
+     * compare only the fields this driver controls: reserved bits may differ and the key is not
+     * reliably readable on this family. UART bits are controlled and must match because normal
+     * mode otherwise cannot carry the data plane.
      */
-    bool ok = (n == (int)sizeof(resp)) &&
-              (resp[0] == CMD_HEAD_READ || resp[0] == CMD_HEAD_WRITE) &&
-              (resp[2] == E220_REG_COUNT) &&
-              (memcmp(&resp[3], &frame[3], E220_REG_COUNT) == 0);
-    if (!ok) {
+    bool answered = e220_reply_valid(resp, n > 0 ? (size_t)n : 0);
+    int mismatch = answered ? e220_first_mismatch(&resp[3], cfg) : -1;
+    e220_state_t state = !answered || !normal ? E220_NO_ANSWER
+                         : mismatch < 0 ? E220_OK : E220_MISMATCH;
+    if (state != E220_OK) {
         /* First contact with a real module fails for dull reasons - swapped TX/RX, wrong
          * M0/M1, a module that is not an E220 - and every one of them looks identical unless
          * the raw reply is visible. Print what actually came back, and what was expected. */
@@ -145,14 +181,16 @@ bool e220_apply(const e220_config_t *cfg) {
         char want[3 * E220_REG_COUNT + 1] = {0};
         for (int i = 0; i < n && i < (int)sizeof(resp); i++) sprintf(got + 3 * i, "%02X ", resp[i]);
         for (int i = 0; i < E220_REG_COUNT; i++) sprintf(want + 3 * i, "%02X ", frame[3 + i]);
-        ESP_LOGW(TAG, "apply: reply %d bytes [%s] - expected C1 00 08 [%s]", n, got, want);
-        if (n == 0) {
+        ESP_LOGW(TAG, "apply: reply %d bytes [%s] - expected C0/C1 00 08 [%s]", n, got, want);
+        if (!idle) ESP_LOGW(TAG, "apply: AUX stayed low");
+        if (state == E220_NO_ANSWER) {
             ESP_LOGW(TAG, "apply: nothing at all - check TX/RX not swapped, M0/M1 wiring, 3V3");
         }
     }
     ESP_LOGI(TAG, "apply ch=%u rate=%u power=%u lbt=%d -> %s (%d bytes back)",
-             cfg->channel, cfg->air_rate, cfg->power, (int)cfg->lbt, ok ? "ok" : "FAILED", n);
-    return ok;
+             cfg->channel, cfg->air_rate, cfg->power, (int)cfg->lbt,
+             state == E220_OK ? "ok" : state == E220_MISMATCH ? "MISMATCH" : "NO ANSWER", n);
+    return state;
 }
 
 e220_state_t e220_verify(const e220_config_t *cfg) {
@@ -162,21 +200,26 @@ e220_state_t e220_verify(const e220_config_t *cfg) {
     e220_build_read_frame(req);
 
     if (!uart_lock()) return E220_BUSY;
-    e220_mode_config();
+    if (!e220_mode_config()) {
+        uart_unlock();
+        return E220_NO_ANSWER;
+    }
     uart_flush_input(E220_UART);
-    uart_write_bytes(E220_UART, (const char *)req, sizeof(req));
-    wait_aux(500);
+    int written = uart_write_bytes(E220_UART, (const char *)req, sizeof(req));
+    bool drained = uart_wait_tx_done(E220_UART, pdMS_TO_TICKS(500)) == ESP_OK;
+    bool idle = wait_aux(500);
 
     uint8_t resp[3 + E220_REG_COUNT] = {0};
-    int n = uart_read_bytes(E220_UART, resp, sizeof(resp), pdMS_TO_TICKS(500));
-    e220_mode_normal();
+    int n = (written == (int)sizeof(req) && drained && idle)
+                ? uart_read_bytes(E220_UART, resp, sizeof(resp), pdMS_TO_TICKS(500))
+                : 0;
+    bool normal = e220_mode_normal();
     uart_unlock();
 
     /* Accept either head byte, the same way e220_apply does: which one a given module answers
      * with is not what is being checked here, and being strict about it would turn a healthy
      * module into a permanent mismatch. */
-    if (n != (int)sizeof(resp) || (resp[0] != CMD_HEAD_READ && resp[0] != CMD_HEAD_WRITE) ||
-        resp[2] != E220_REG_COUNT) {
+    if (!normal || !e220_reply_valid(resp, n > 0 ? (size_t)n : 0)) {
         return E220_NO_ANSWER;
     }
     /*
@@ -185,13 +228,13 @@ e220_state_t e220_verify(const e220_config_t *cfg) {
      * stock template rather than from a decision. Comparing either would call a healthy module
      * a mismatch, and a mismatch costs a re-configuration - which is a flash write.
      */
-    for (int i = 0; i < E220_REG_READBACK; i++) {
-        uint8_t mask = E220_READBACK_MASK[i];
-        if ((resp[3 + i] & mask) == (want[3 + i] & mask)) continue;
+    int mismatch = e220_first_mismatch(&resp[3], cfg);
+    if (mismatch >= 0) {
+        uint8_t mask = E220_READBACK_MASK[mismatch];
         /* Say which register and what came back: a persistent mismatch keeps the radio down,
          * and this line is what makes it fixable rather than merely visible. */
         ESP_LOGW(TAG, "verify: register %d is %02X, expected %02X (mask %02X)",
-                 i, resp[3 + i], want[3 + i], mask);
+                 mismatch, resp[3 + mismatch], want[3 + mismatch], mask);
         return E220_MISMATCH;
     }
     return E220_OK;
@@ -202,38 +245,62 @@ size_t e220_read_firmware(char *out, size_t out_len) {
      * either way — an unanswered probe just yields nothing. */
     const char *probe = "AT+FWCODE=?\r\n";
     if (!uart_lock()) return 0;
-    e220_mode_config();
+    if (!e220_mode_config()) {
+        uart_unlock();
+        return 0;
+    }
     uart_flush_input(E220_UART);
     uart_write_bytes(E220_UART, probe, strlen(probe));
     int n = uart_read_bytes(E220_UART, (uint8_t *)out, out_len - 1, pdMS_TO_TICKS(300));
-    e220_mode_normal();
+    bool normal = e220_mode_normal();
     uart_unlock();
-    if (n <= 0) return 0;
+    if (!normal || n <= 0) return 0;
 
-    /* The reply carries CR/LF. It ends up inside a newline-delimited status line, so anything
-     * that is not printable has to go or the phone sees the line split in two. */
+    /*
+     * The reply carries CR/LF. It ends up as the value of fw= in a space-separated status
+     * line, so anything that is not printable has to go or the phone sees the line split in
+     * two - and a space has to go too, or a module answering "v1 online=1" would inject
+     * tokens into a status the phone then believes. The phone rejects duplicates for exactly
+     * this reason; this side simply does not produce them.
+     */
     size_t kept = 0;
     for (int i = 0; i < n; i++) {
         char c = out[i];
-        if (c >= 0x20 && c < 0x7F) out[kept++] = c;
+        if (c == ' ') c = '_';
+        if (c > 0x20 && c < 0x7F) out[kept++] = c;
     }
     out[kept] = '\0';
     return kept;
 }
 
-void e220_write(const uint8_t *data, size_t len) {
+bool e220_write(const uint8_t *data, size_t len) {
     if (!uart_lock()) {
         ESP_LOGW(TAG, "write: uart busy, packet dropped");
-        return;
+        return false;
     }
-    uart_write_bytes(E220_UART, (const char *)data, len);
-    uart_wait_tx_done(E220_UART, pdMS_TO_TICKS(1000));
+    /* State says normal mode was confirmed, but AUX can be low because an asynchronous RF RX
+     * is still being delivered. Do not write into a busy module and hope the UART buffers it. */
+    if (!wait_aux(MODE_SWITCH_WAIT_MS)) {
+        ESP_LOGW(TAG, "write: AUX stayed busy before transmission");
+        uart_unlock();
+        return false;
+    }
+    int written = uart_write_bytes(E220_UART, (const char *)data, len);
+    bool drained = uart_wait_tx_done(E220_UART, pdMS_TO_TICKS(1000)) == ESP_OK;
+    /* A short write is a truncated air packet, which the group decodes as corruption rather
+     * than as a shorter roster. Report it as a failure instead of logging a transmission. */
+    bool idle = wait_aux(TX_COMPLETE_WAIT_MS);
+    bool ok = (written == (int)len) && drained && idle;
+    if (!ok) {
+        ESP_LOGW(TAG, "write: %d of %u bytes accepted, drained=%d aux_idle=%d", written,
+                 (unsigned)len, (int)drained, (int)idle);
+    }
     /* Draining the ESP32 UART only means the bytes reached the module, not that the module
      * has finished sending them over the air. At 2.4 kbps a full packet takes a few hundred
      * ms. Hold the lock until AUX goes high, or a later config could flip M0/M1 mid-packet
      * and truncate the transmission. */
-    wait_aux(2000);
     uart_unlock();
+    return ok;
 }
 
 size_t e220_read_packet(uint8_t *out, size_t out_len, uint32_t idle_gap_ms,
@@ -253,6 +320,15 @@ size_t e220_read_packet(uint8_t *out, size_t out_len, uint32_t idle_gap_ms,
         n = uart_read_bytes(E220_UART, out + used, out_len - used, pdMS_TO_TICKS(idle_gap_ms));
         if (n <= 0) break;
         used += (size_t)n;
+    }
+    if (used == out_len) {
+        /* The caller deliberately gives us one byte beyond its protocol limit. If even that
+         * fills, drain to the same idle boundary so the tail cannot masquerade as a second
+         * packet on the next call. */
+        uint8_t discard[32];
+        do {
+            n = uart_read_bytes(E220_UART, discard, sizeof(discard), pdMS_TO_TICKS(idle_gap_ms));
+        } while (n > 0);
     }
     uart_unlock();
     return used;

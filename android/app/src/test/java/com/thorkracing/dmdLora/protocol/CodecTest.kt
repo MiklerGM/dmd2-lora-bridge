@@ -2,6 +2,7 @@ package com.thorkracing.dmdLora.protocol
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -182,5 +183,32 @@ class CodecTest {
         for (g in listOf("a", "bb", "group-1", "TESTGROUP-CLAUDE")) {
             assertTrue(Regions.channelForGroup("EU868", g) in 14..22)
         }
+    }
+
+    @Test fun `derivation follows DMD region descriptions and refuses unknown ones`() {
+        val descriptions = mapOf(
+            "EU 868MHz" to "EU868",
+            "Russia 868MHz" to "RU864",
+            "India 865MHz" to "IN865",
+            "US/Canada 915MHz" to "US915",
+            "Australia 915MHz" to "AU915",
+            "Brazil 915MHz" to "BR915",
+            "Japan 920MHz" to "AS923_JP",
+            "Korea 920MHz" to "KR920",
+        )
+        for ((description, key) in descriptions) {
+            assertEquals(
+                description,
+                Regions.channelForGroup(key, GROUP),
+                Regions.channelForDescription(description, GROUP),
+            )
+        }
+        val eu = Regions.channelForDescription("EU 868MHz", GROUP)
+        val us = Regions.channelForDescription("US/Canada 915MHz", GROUP)
+        assertTrue("the regression needs a group whose EU and US channels differ", eu != us)
+        assertNull(
+            "guessing EU here could transmit illegally",
+            Regions.channelForDescription("unknown", GROUP),
+        )
     }
 }

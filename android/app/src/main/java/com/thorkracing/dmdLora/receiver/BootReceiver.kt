@@ -23,8 +23,8 @@ class BootReceiver : BroadcastReceiver() {
         ) {
             return
         }
-        if (!Prefs.autostart(context)) {
-            EventLog.log("boot: autostart is off, staying put")
+        if (!Prefs.autostart(context) || !Prefs.bridgeEnabled(context)) {
+            EventLog.log("boot: autostart or bridge is off, staying put")
             return
         }
         try {

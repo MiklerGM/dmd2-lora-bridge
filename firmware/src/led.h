@@ -44,5 +44,5 @@ void led_set_module_ok(bool ok);
  */
 void led_activity(void);
 
-/* Bonds were cleared. Both reset paths are otherwise only observable over serial. */
+/* Bonds were cleared successfully through the runtime button or BLE command. */
 void led_bond_cleared(void);

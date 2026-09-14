@@ -17,22 +17,24 @@ Two components, nothing else:
 | Component | Path | What it is |
 |---|---|---|
 | **Companion app** | `android/` | Replaces `com.thorkracing.dmdLora`. Speaks DMD2's broadcast contract on one side, BLE to the bridge on the other. Owns the packet codec. |
-| **ESP32 bridge** | `firmware/` | Dumb BLE↔UART pipe to an EBYTE E220 LoRa module, plus module configuration. No protocol logic. |
+| **ESP32 bridge** | `firmware/` | BLE transport on one side, a LoRa radio backend on the other. Owns the radio entirely — registers, limits, readiness — and no protocol logic. |
 
 Read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) first, then [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Status
 
-**Experimental.** Everything on the phone side is proven on hardware; nothing has yet been on
-the air. `make check` runs the whole test suite, which needs neither a phone nor a radio.
+**Experimental.** The DMD2 IPC and codec paths have been proven on a phone, but the current
+`proto=2` BLE/control-plane rewrite has not yet been revalidated on hardware. Nothing has yet
+been on the air. `make check` runs the whole test suite, which needs neither a phone nor a radio.
 
 | | State |
 |---|---|
 | Packet codec, receive path, injection contract | JVM tests pass, including byte-for-byte reproduction of the reference vectors |
-| E220 register packing | host test passes under plain gcc |
+| E220 register packing, CFG parsing | host tests pass under plain gcc |
 | Stock DMD2 accepts the app | **proven** — DMD2 sends us group data and chat, and shows riders we inject |
 | Works with no network | **proven** — 50 packets in 45 s in airplane mode |
-| BLE link, bonding, reconnect, autostart | **proven** across bridge resets, USB cycles, Bluetooth off/on and a reboot |
+| BLE link, bonding, reconnect, autostart | the previous contract was proven; the current `proto=2` handshake, trust gate and unpair flow need a new hardware pass |
+| Explicit bridge selection | implemented and host-tested where pure; multi-board behaviour is not yet checked on hardware |
 | Two E220s hearing each other | **not tried** — waiting on modules |
 | A real NOR7E hearing us, and us hearing it | **not tried**, and until it is, end-to-end compatibility is not claimed |
 
@@ -46,11 +48,15 @@ and `docs/BUILDING.md` for how each milestone was checked.
 - The app's `applicationId` **must** be `com.thorkracing.dmdLora`, with a receiver at
   `.receiver.Dmd2CommandReceiver` and a service at `.service.LoraService` — DMD2 addresses
   them by explicit `ComponentName`, with no configuration hook.
-- It must declare **and** hold `com.thorkracing.dmdlora.permission.LORA_BRIDGE`.
+- It must declare **and** hold `com.thorkracing.dmdlora.permission.LORA_BRIDGE`; the receiver
+  and service require it, so the supported DMD2 baseline is 4.013 or newer (4.009 did not hold
+  the permission on its outbound calls).
 - Therefore it **cannot coexist** with the genuine DMD-LoRa app, and cannot ship on Play
   under that package name. Sideload only.
-- The radio must be an **EBYTE E220** (LLCC68) family module. Not E22 (SX1262) — EBYTE maps
-  the same air-rate index to different SF/BW per chip family, so an E22 will not hear a NOR7E.
+- The current bridge firmware supports an **EBYTE E220** (LLCC68) family module. An E22 or a
+  bare SX1262 is not a drop-in substitute: EBYTE maps the same air-rate index to different
+  SF/BW per chip family, so it needs its own backend and measured PHY before transmission is
+  enabled. The receive-only SX1262 work remains in `probe/`.
 
 ## Bridge LED
 
@@ -62,7 +68,7 @@ switch: there is nothing to be annoyed by when it all works.
 | What it does | What it means |
 |---|---|
 | Three quick flashes, once | Paired phones were just forgotten — the reset took |
-| **Two flashes every 3 s** | The radio module is not answering. Nothing is reaching the air |
+| **Two flashes every 3 s** | The radio is not answering, or is not holding what it was told. Nothing is reaching the air |
 | One flash every 3 s | Alive, but no phone connected yet |
 | Brief single flash | Bytes moved to or from the module |
 | Dark | Connected, module answering, nothing to say |
@@ -91,9 +97,13 @@ Only the classic ESP32 board is built with an indicator, on GPIO2. See `docs/BUI
   group-mode packet contract was recovered by static analysis.
 - All identifiers, coordinates and packets in the tests are synthetic. No real captures, group
   IDs or user data are in this repo.
-- A NOR7E requests 30 dBm with LBT off. That is *its* configuration, not a licence for ours.
-  Transmit power is a setting in the app (**Settings → TX power**), defaulting to the weakest
-  step the module offers. This build carries `-DMIN_POWER_INDEX=0`, so the firmware no longer
-  caps what the app may ask for — the whole range is reachable at runtime. Note that the weakest
-  step is not automatically legal: 868.0–868.6 MHz in Germany allows 25 mW ERP, about 14 dBm,
-  and no step of an E220-900T30 reaches that without attenuation. See `docs/BUILDING.md`.
+- A NOR7E requests the strongest step with LBT off. That is *its* configuration, not a licence
+  for ours. Transmit power is a setting in the app (**Settings → TX power**), defaulting to the
+  weakest step, and it is DMD's own 0..3 scale rather than dBm — what a level is worth depends
+  on the module fitted, which only the firmware knows. This build carries `-DMIN_POWER_INDEX=0`,
+  so the firmware's floor is lifted and the whole range is reachable at runtime; the status
+  reports `min_power_level=0` so a build with no floor is never mistaken for one that has it.
+  That lift is a lab decision for the E220 proof of concept and does not carry over to any other
+  radio. Note that the weakest step is not automatically legal either: 868.0–868.6 MHz in
+  Germany allows 25 mW ERP, about 14 dBm, and no step of an E220-900T30 reaches that without
+  attenuation. See `docs/BUILDING.md`.

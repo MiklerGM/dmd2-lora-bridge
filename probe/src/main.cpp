@@ -134,11 +134,11 @@ static void listen(const candidate &c) {
                 Serial.printf("   header error, RSSI %.1f dBm - energy here, but not this PHY\n",
                               radio.getRSSI());
             } else {
-                /* Header decoded, so preamble and sync word matched: this candidate is on the
-                 * right PHY and only the payload or the CRC setting differs. The most
-                 * informative result short of success. */
+                /* HEADER_VALID makes this more informative than silence, but a single bad-CRC
+                 * observation is still only a clue. Repeat it and capture a valid payload before
+                 * treating the candidate as confirmed. */
                 crc_err++;
-                Serial.printf("   CRC MISMATCH, %u bytes, RSSI %.1f dBm - PHY looks RIGHT\n",
+                Serial.printf("   CRC mismatch, %u bytes, RSSI %.1f dBm - valid LoRa header; repeat/capture\n",
                               (unsigned)n, radio.getRSSI());
                 dump(buf, n);
             }
@@ -149,7 +149,7 @@ static void listen(const candidate &c) {
             dump(buf, n);
             dmd_sniff_t s = dmd_sniff(buf, n);
             if (s.found) {
-                Serial.printf("   *** DMD PAYLOAD *** v%u ttl%u %s, base64 run of %u",
+                Serial.printf("   *** DMD HEADER CANDIDATE *** v%u ttl%u %s, base64 run of %u",
                               s.version, s.ttl, s.type ? "chat" : "group", (unsigned)s.run_len);
                 if (s.offset != s.run_start)
                     Serial.printf(", payload %u bytes into the run - the module adds framing",

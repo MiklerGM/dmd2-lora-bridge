@@ -17,18 +17,20 @@ make test                                  # the recognizer, no hardware
 
 | Line | Meaning |
 |---|---|
-| `*** DMD PAYLOAD ***` | Done. That candidate is the PHY |
-| `CRC MISMATCH ... PHY looks RIGHT` | **Nearly there.** The header decoded, so preamble and sync word matched and only the payload or the CRC setting is off |
+| `*** DMD HEADER CANDIDATE ***` | A received payload contains a structurally plausible DMD header. Repeat and validate the group hash/protocol CRC before calling the PHY confirmed |
+| `CRC mismatch ... valid LoRa header` | Useful clue: this candidate decoded a LoRa header, but one observation is not proof of DMD traffic or an exact PHY match |
 | `header error ... not this PHY` | Energy on the channel, but the header did not decode — this candidate is wrong |
-| `packet, N bytes` with no `DMD PAYLOAD` | Something else lives on this channel |
+| `packet, N bytes` with no `DMD HEADER CANDIDATE` | Something else lives on this channel |
 | `done: 0 packets` | Nothing heard. Next candidate |
 
-A CRC mismatch is the most informative result short of success, which is why it is reported
-loudly rather than swallowed: silence says nothing, a mismatch says the PHY is almost right.
+A CRC mismatch with `HEADER_VALID` is more informative than silence, so it is reported rather
+than swallowed. It is still only a clue: repeat it and capture a valid payload before concluding
+that the PHY is right.
 
 The two are separated by reading the radio's own latched interrupt flags, because RadioLib
 returns the same code for both a payload CRC error and a header error — and here they mean
-opposite things. Only a header error with no valid header is the bad one.
+different things. A header error with no valid header rejects the candidate; a valid header with
+a bad payload CRC keeps it in the candidate set.
 
 If the hit lands inside the printable run rather than at its start, the offset is the number of
 framing bytes the module wraps around the payload — one of the open questions in PHY-notes.

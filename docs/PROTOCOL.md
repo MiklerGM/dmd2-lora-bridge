@@ -13,8 +13,9 @@ Re-verify after updates.
 ## 1. Android IPC — DMD2 ⇄ companion
 
 Transport is ordinary Android broadcast Intents. Permission
-`com.thorkracing.dmdlora.permission.LORA_BRIDGE` gates the DMD2-bound direction; we must
-declare and hold it.
+`com.thorkracing.dmdlora.permission.LORA_BRIDGE` gates both our DMD-facing receiver/service and
+the DMD2-bound direction; both apps must hold it. This intentionally sets the supported DMD2
+baseline to 4.013: 4.009 did not hold the permission when calling the companion.
 
 ### DMD2 → us (explicit `ComponentName`, so our package name must match)
 
@@ -25,6 +26,12 @@ declare and hold it.
 | `com.thorkracing.dmdlora.SET_FREQUENCY` | `channel` (int), `power` (int), `lbt` (bool), `region_desc` |
 | `com.thorkracing.dmdlora.STOP` | — |
 | `com.thorkracing.dmdlora.START` | delivered via `startForegroundService` to `.service.LoraService` |
+
+`SET_FREQUENCY` is one atomic request: all four extras must be present with the exact types
+above, channel must be `0..80`, power `0..3`, and `region_desc` must be a known DMD2 label.
+A malformed or unknown request revokes the preceding channel and closes both readiness and TX
+until a later complete SET restores the bootstrap. TX stays closed until the matching group
+adopts that request; no field is ever merged with remembered state.
 
 `riders_json` from DMD2 is an array of `{user_id, display_name, lat, lon, speed, status,
 position_age_s, timestamp}`; at most 8 echoed peers plus ourselves.

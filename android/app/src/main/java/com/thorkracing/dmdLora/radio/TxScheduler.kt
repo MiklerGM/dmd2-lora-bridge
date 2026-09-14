@@ -15,9 +15,17 @@ class TxScheduler(private val pacer: TxPacer = TxPacer()) {
         get() = pacer.minIntervalMs
         set(value) { pacer.minIntervalMs = value }
 
-    /** Returns the payload to transmit now, or null if it was held for later. */
+    /**
+     * Returns the payload to transmit now, or retains it behind the short pacing window.
+     * A closed configuration/health gate discards both the current position and an older paced
+     * one: unlike pacing, that outage is unbounded and this payload has no freshness timestamp.
+     */
     @Synchronized
-    fun offer(wire: String, nowMs: Long): String? {
+    fun offer(wire: String, nowMs: Long, transmitAllowed: Boolean): String? {
+        if (!transmitAllowed) {
+            pending = null
+            return null
+        }
         if (pacer.allow(nowMs)) {
             pending = null
             return wire

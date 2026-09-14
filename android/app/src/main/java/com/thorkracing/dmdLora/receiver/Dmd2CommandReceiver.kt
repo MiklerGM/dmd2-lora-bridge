@@ -30,6 +30,8 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
             DmdLora.ACTION_SEND_GROUP_DATA -> onSendGroupData(context, intent)
             DmdLora.ACTION_SEND_CHAT_MESSAGE -> onSendChat(intent)
             DmdLora.ACTION_SET_FREQUENCY -> onSetFrequency(context, intent)
+            // Vendor STOP is transient (stopService only), unlike the companion UI's durable
+            // user choice. Current DMD2 4.013 does not emit it, but keep the recovered contract.
             DmdLora.ACTION_STOP -> LoraService.stop(context)
         }
     }
@@ -39,11 +41,10 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
         val sender = intent.getStringExtra(DmdLora.EX_SENDER_USER_ID).orEmpty()
         val json = intent.getStringExtra(DmdLora.EX_RIDERS_JSON) ?: return
 
-        Session.groupId = groupId
-        Session.groupName = intent.getStringExtra(DmdLora.EX_GROUP_NAME)
-        Session.senderUserId = sender
-        // Knowing the group is enough to know the channel, so do not wait to be told one -
-        // and a different group is a different channel, so this is checked every time.
+        Session.updateRide(groupId, intent.getStringExtra(DmdLora.EX_GROUP_NAME), sender)
+        // Once DMD2 has named the region, the group is enough to derive its channel. Until the
+        // first SET_FREQUENCY after a process start, the region stays unknown and this fails
+        // closed rather than guessing where it is legal to transmit.
         Radio.configureForGroup(context, groupId)
 
         learnOwnName(json, sender)
@@ -82,11 +83,31 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
         EventLog.log("TX chat ${packet.size} B ${Radio.transmitChat(Codec.toWire(packet))}")
     }
 
+    @Suppress("DEPRECATION") // Bundle.get is how API 31 exposes the raw value and therefore type.
     private fun onSetFrequency(context: Context, intent: Intent) {
-        Session.channel = intent.getIntExtra(DmdLora.EX_CHANNEL, Session.channel)
-        Session.power = intent.getIntExtra(DmdLora.EX_POWER, Session.power)
-        Session.lbt = intent.getBooleanExtra(DmdLora.EX_LBT, Session.lbt)
-        intent.getStringExtra(DmdLora.EX_REGION_DESC)?.let { Session.regionDesc = it }
+        // Treat this as one request, not four optional mutations. A partial/malformed explicit
+        // broadcast must not combine a new channel with an old region and open TX on a setting
+        // nobody actually requested. The permission is compatibility plumbing, not strong
+        // caller authentication: it has protectionLevel=normal.
+        val request = runCatching {
+            val extras = intent.extras
+            parseDmdFrequency(
+                extras?.get(DmdLora.EX_CHANNEL),
+                extras?.get(DmdLora.EX_POWER),
+                extras?.get(DmdLora.EX_LBT),
+                extras?.get(DmdLora.EX_REGION_DESC),
+            )
+        }.getOrNull()
+        if (request == null) {
+            Radio.rejectConfig()
+            Bridge.sendStatusUpdate(context, connected = false)
+            EventLog.log("ignored malformed radio config")
+            return
+        }
+        Session.channel = request.channel
+        Session.power = request.power
+        Session.lbt = request.lbt
+        Session.regionDesc = request.region
         EventLog.log(
             "config ch=${Session.channel} (${Bridge.freqLabel(Session.channel)}) " +
                 "power=${Session.power} lbt=${Session.lbt} region=${Session.regionDesc}"

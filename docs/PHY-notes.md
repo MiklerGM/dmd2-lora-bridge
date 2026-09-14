@@ -86,10 +86,13 @@ either direction. Only frequency, SF, BW and sync word have to line up.
 Second candidate if that fails: SF10 / BW250 (the other combination matching the -129 dBm
 typical sensitivity), then sync word 0x34.
 
-**How to know instantly whether a decode is real:** a DMD payload is ASCII base64 and every
-packet starts `0xD2 0x03`, which encodes as **`0g`**. Printable base64 beginning with `0g` is a
-hit; anything else is noise. That also reveals whether the E220 wraps the payload in framing of
-its own — extra bytes would show up around the `0g…` run.
+**How to recognise a candidate:** a DMD payload is ASCII base64 and its decoded header starts
+with magic `0xD2`, version 2 or 3, a TTL and a packet type. The current version therefore starts
+with **`0g`**, but that prefix alone is only a search hint: for example, `0gAA…` has the same
+prefix and decodes to unsupported version 0. The probe decodes and checks the complete 12-byte
+header before reporting a DMD candidate. A confirmed packet still requires the expected group
+hash and a valid protocol CRC after de-obfuscation with that group ID. Bytes before the candidate
+inside the same printable run would be evidence of module framing.
 
 This is not Meshtastic-compatible: Meshtastic uses sync word 0x2B and its own presets and frame
 format. The hardware can be reused, the firmware cannot.

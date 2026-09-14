@@ -36,21 +36,29 @@ class ChatQueueTest {
 
 class BondHealthTest {
 
-    @Test fun `a run of sessions that carried nothing means the key is stale`() {
+    @Test fun `only repeated protected-write rejection means the key is stale`() {
         val b = BondHealth(attempts = 2)
-        // One dead session is not enough: links drop for dull reasons, and clearing a good
-        // pairing puts a dialog in front of a rider who is moving.
-        assertEquals(false, b.sessionEnded(carriedData = false))
-        assertEquals(true, b.sessionEnded(carriedData = false))
+        // Generic failures are not key evidence. Counting two status-133/service failures
+        // would clear a perfectly good bond and leave a background service waiting at a picker.
+        assertEquals(false, b.sessionEnded(authenticationRejected = false))
+        assertEquals(false, b.sessionEnded(authenticationRejected = false))
+
+        // One explicit protected-write rejection is not enough: links fail for dull reasons,
+        // and clearing a good pairing puts a dialog in front of a rider who is moving.
+        assertEquals(false, b.sessionEnded(authenticationRejected = true))
+        assertEquals(true, b.sessionEnded(authenticationRejected = true))
         // Cleared, so the count starts again rather than firing on every later disconnect.
-        assertEquals(false, b.sessionEnded(carriedData = false))
+        assertEquals(false, b.sessionEnded(authenticationRejected = true))
     }
 
-    @Test fun `a session that carried data clears the suspicion`() {
+    @Test fun `proof from this peer or choosing another clears the suspicion`() {
         val b = BondHealth(attempts = 2)
-        assertEquals(false, b.sessionEnded(carriedData = false))
-        assertEquals(false, b.sessionEnded(carriedData = true))
+        assertEquals(false, b.sessionEnded(authenticationRejected = true))
+        b.authenticatedWriteSucceeded()
         assertEquals("the run was broken, so this is the first failure again",
-            false, b.sessionEnded(carriedData = false))
+            false, b.sessionEnded(authenticationRejected = true))
+        b.peerChanged()
+        assertEquals("a new board does not inherit the old board's suspicion",
+            false, b.sessionEnded(authenticationRejected = true))
     }
 }

@@ -37,21 +37,12 @@
             </intent-filter>
         </activity>
 
-        <!--
-            Class path is mandatory: DMD2 targets it by explicit ComponentName.
-
-            Deliberately left without android:permission. Guarding it with LORA_BRIDGE would be
-            the safer default, but DMD2 only started holding that permission in 4.013 - 4.009
-            does not, and would then be unable to reach us at all. The genuine DMD-LoRa app
-            leaves this receiver unprotected for the same reason. The exposure is real: any
-            local app can push fake positions or change our radio channel.
-            ponytail: unprotected for compatibility with DMD2 <= 4.009; add
-            android:permission="com.thorkracing.dmdlora.permission.LORA_BRIDGE" once every
-            rider is on 4.013 or later.
-        -->
+        <!-- Class path and permission are mandatory: current DMD2 targets this exact component
+             and holds LORA_BRIDGE. Compatibility with 4.009 is deliberately not retained. -->
         <receiver
             android:name=".receiver.Dmd2CommandReceiver"
-            android:exported="true">
+            android:exported="true"
+            android:permission="com.thorkracing.dmdlora.permission.LORA_BRIDGE">
             <intent-filter>
                 <action android:name="com.thorkracing.dmdlora.SEND_GROUP_DATA" />
                 <action android:name="com.thorkracing.dmdlora.SEND_CHAT_MESSAGE" />
@@ -73,6 +64,7 @@
         <service
             android:name=".service.LoraService"
             android:exported="true"
-            android:foregroundServiceType="connectedDevice" />
+            android:foregroundServiceType="connectedDevice"
+            android:permission="com.thorkracing.dmdlora.permission.LORA_BRIDGE" />
     </application>
 </manifest>

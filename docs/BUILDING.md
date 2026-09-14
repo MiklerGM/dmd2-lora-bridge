@@ -16,7 +16,7 @@ import nothing from Android, so the whole protocol path runs on the desktop.
 
 ## ESP32 bridge
 
-Two board targets, one source — pick the environment for the board in front of you:
+Three board targets, one source — pick the environment for the board in front of you:
 
 ```sh
 cd firmware
@@ -109,26 +109,53 @@ move every five seconds. Use a throwaway group; never inject into a live ride.
 
 The bridge only accepts commands over an encrypted link, so the phone has to bond with it
 once. Nothing needs to be done to start that: the first time the phone tries to send a
-command the bridge refuses it for want of authentication, Android answers by starting
-pairing, and the system dialog appears. Accept it once and the pair is remembered on both
-sides — the bridge in NVS, the phone in its Bluetooth database.
+command the bridge refuses it for want of encryption, Android answers by starting pairing,
+and the system dialog appears. Accept it once and the pair is remembered on both sides — the
+bridge in NVS, the phone in its Bluetooth database. This is BLE Just Works: it encrypts the
+link and lets the bridge recognise the same phone later, but it does not prove a human identity
+or prevent a nearby phone from claiming a bridge that has never been paired.
 
 The first phone to bond claims that bridge; others are dropped on connect. That is what keeps
 one rider's phone from taking over another rider's bridge on a group ride.
 
-Three ways to undo it, for three different situations:
+Discovery and bonding are separate. On a fresh install the app lists every bridge in range
+and waits for the rider to choose; it never connects to the first advertisement by accident.
+That choice is persisted only after the selected device is bonded, a write to the bridge's
+encrypted command characteristic succeeds, and it returns a valid `proto=2` status. BLE
+notifications themselves are open, so an unsolicited status is not proof that a stored key
+works. A device that disappears or speaks another contract therefore cannot become a permanent
+trap.
+
+Changing which board the app tries and cryptographically unpairing a board are also separate:
 
 | | When | What happens |
 |---|---|---|
-| **Unpair** in the app | phone in hand, link up | sends `FORGET`; both sides clear together |
+| **Change** in the app | selected bridge is offline or wrong | clears only the app's local selection and shows the picker; existing bonds on both devices are left intact |
+| **Unpair** in the app | phone in hand, verified link up | sends `FORGET`; Android clears its side only after the bridge replies `FORGOTTEN` |
 | **Hold BOOT for 3 s** | phone lost or replaced, bridge in hand | bridge clears its keys and drops the link |
-| **Hold BOOT while powering on** | firmware not responding | keys cleared during startup |
 
-Both paths flash the LED three times to confirm they took. Without it the only evidence either
-worked was a line on the serial console — no use with the board already in the bike.
+Do not hold the default BOOT pin during reset or power-on: it is also an ESP32 strapping pin
+and selects the ROM download mode, so the application that clears bonds would never run.
 
-After any of them the bridge accepts the next phone that comes along, because there is no bond
-left for anyone to be a stranger to.
+Every successful bridge-side clear flashes the LED three times. NimBLE clears RAM before it
+persists each bond record, so an ordinary retry could see an empty cache while the old key still
+exists in NVS. The firmware explicitly persists the empty owner set and then reads it back. An
+unverified result returns `ERR forget incomplete`, keeps any still-encrypted recovery connection,
+and refuses every new peer until a later clear succeeds. Both an authenticated `FORGET` and the
+physical button use the same host-thread clear path; if pairing is still in flight, the button
+revokes that session immediately, the connection is terminated, and the store is cleared from
+its disconnect event so neither a late pairing step nor a queued TX can survive the reset.
+Without the LED, this path would otherwise be visible only on the serial console — no use with
+the board in the bike.
+
+After a verified clear the board restarts once BOOT is released. Clearing only the NimBLE store
+does not remove old IRKs from the controller's resolving list; the restart flushes that volatile
+state and reloads the proven-empty NVS store. Advertising may briefly still be visible, but the
+firmware refuses a replacement owner until the restart, so a fast new pairing cannot race it.
+
+After either **unpair** path the bridge accepts the next phone that comes along,
+because there is no bond left for anyone to be a stranger to. **Change** does not release the
+old bridge for another phone; use Unpair or its BOOT button when that is the intended result.
 
 Deliberately a button and not a timeout: a bike spends much of its life parked and unattended,
 so "open up when the trusted phone is out of range" would mean "open up to whoever waits for
@@ -137,8 +164,16 @@ the owner to walk away".
 > If the app logs `system pairing not removed`, clear it by hand in Android's Bluetooth
 > settings — `removeBond()` is not public API and can be refused.
 
-**Verified on hardware, 2026-09-09.** Holding the button recovers in about twenty seconds
-without anyone touching the phone:
+`FORGOTTEN` is a BLE notification, not an acknowledged indication. The bridge keeps the revoked
+connection until the common four-second restart instead of disconnecting on a short guessed
+timer, and Android never deletes its key unless it actually sees the line. Delivery still cannot
+be proven at the firmware API boundary: a lost notification fails safely as a stale phone-side
+bond, not as a falsely reported successful unpair. Clear that bond in Android Bluetooth settings
+if reconnect cannot repair it.
+
+**Verified on hardware, 2026-09-09.** Holding the button recovered in about twenty seconds
+without anyone touching the phone. This log predates `proto=2`; the current bridge sends the
+unambiguous success event `FORGOTTEN`, not the old command-shaped `FORGET` notification:
 
 ```
 phone:  bridge forgotten — rescanning        (obeyed FORGET from the bridge)
@@ -146,12 +181,14 @@ phone:  BLE bridge ready                     attempt 1
 bridge: encryption FAILED - stale key dropped
 phone:  BLE bridge ready                     attempt 2
 bridge: encryption on
-phone:  bridge: ST conn=1 ...                traffic flowing again
+phone:  bridge: ST proto=2 radio=e220 online=1 ... traffic flowing again
 ```
 
-The one failed attempt in the middle is by design: a key can only be known to be stale by
-trying it once. Both sides now discard a key that fails, which is what turns what used to be an
-endless reconnect loop into a self-healing pause.
+The failed attempt in this old log is the phone discovering its local key is stale after the
+physical reset. Current firmware never deletes an owner merely because encryption failed and
+never accepts repeat pairing as proof of ownership; only authenticated `FORGET` or the runtime
+button clears its side. Android may remove its own stale system bond after repeated protected-
+write failures, or asks for manual Bluetooth-settings cleanup if the hidden API is refused.
 
 Pairing also survives a reset, verified by pulling the bridge's reset line:
 
@@ -164,69 +201,89 @@ encryption on        270 ms later, before MTU negotiation - no pairing, no dialo
 Compare with a real pairing, which takes upwards of thirteen seconds and a prompt on the
 phone. Anything slower than a fraction of a second means the stored key was not used.
 
-## Milestone 4.5 — the whole chain with no radio at all
+## Milestone 4.5 — the transport, without DMD2
 
-The bridge can simulate a radio: it loops a transmit straight back as a receive. That exercises
-everything except the RF itself, on a bare ESP32.
+The bridge used to be able to simulate a radio, looping a transmit straight back as a receive,
+so the whole chain could be exercised on a bare ESP32. That went when the status was rewritten:
+"is there a radio" is now three separate facts the firmware reports honestly — `online`, `tx`
+and `configured` — and a fourth axis that quietly stands in for a radio is exactly the thing
+they exist to make impossible. With boards on the bench, the real radio is the cheaper test.
 
-Simulation has to be asked for. It used to switch itself on whenever no module answered, which
-made a broken radio and a bench board indistinguishable — the bridge went on answering `OK` to
-every command and the phone showed a healthy green link while nothing reached the air.
-
-1. Flash the firmware to any ESP32 (**no E220 needed**). With no module the log says
-   `no module acknowledged - conn=0, retrying`, and the phone shows the radio as
-   **`connected · no module`** with nothing transmitting.
-2. On the phone, start the service. It scans for the advertised name **LoRaBridge-for-DMD2**,
-   so it will not latch onto unrelated devices that share the Nordic UART UUID.
-   Expect `BLE bridge ready`.
-3. Open **Tools** and press **Simulate radio**. The status turns to
-   **`connected · simulating`** and the log says the air stays quiet.
-4. Have DMD2 in an active group with sharing on, so the app knows the group id.
-5. Press **Loopback**.
-
-**Pass:** a rider **`Rider 71E0`** appears in DMD2. That marker travelled
-phone → BLE → ESP32 → BLE → phone → codec → DMD2, so the transport, framing, codec and
-injection are all proven together; only the radio is left.
-
-Transport-only check, no DMD2 involved:
+What remains is a transport check that needs no DMD2 and no module:
 
 ```
-PING 200      ->  PONG AAAA…   (200 chars, forces fragmentation)
-ECHO 0 | 1    ->  turn simulation off/on by hand
-STATUS        ->  ST conn=1 ch=18 … echo=1 fw=…
+PING 200   ->  PONG AAAA…   (200 chars, forces fragmentation)
+STATUS     ->  ST proto=2 radio=e220 mode=bridge online=0 tx=1 configured=0 …
 ```
 
 A 200-character reply is far past the 23-byte default MTU, so if `PONG` comes back whole the
-fragmentation and reassembly are working.
+fragmentation and reassembly are working. With no module wired up the log says
+`no radio acknowledged - online=0, retrying` and the phone shows **`connected · no radio`**
+with nothing transmitting — which is the point: a bench board and a broken one look the same
+only if the firmware is willing to lie about which it is.
+
+To prove the codec and the injection path with no radio at all, use **Tools → Inject**: it
+hands a fabricated rider straight to DMD2 and never touches the bridge.
 
 ## Transmit power
 
-The app defaults to the weakest step the module offers and asks before going above it:
-**Settings → TX power**, which cycles 3 → 2 → 1 → 0 and colours itself as it climbs. The
-firmware can keep its own cap underneath that, because the BLE command surface is
-unauthenticated and anything in range can send a `CFG`. **This build sets
-`-DMIN_POWER_INDEX=0` in every environment, so that cap is off** and any CFG in Bluetooth
-range can select 30 dBm. Build with a higher `-DMIN_POWER_INDEX` to put the cap back —
-`3` restricts the bridge to the weakest step whatever the phone asks for. If the bridge holds
-power weaker than the phone asked for, the phone accepts it and logs the difference rather
-than retrying for ever.
+The app defaults to the weakest step and asks before going above it: **Settings → TX power**,
+which cycles 3 → 2 → 1 → 0 and colours itself as it climbs. The level is DMD's own scale — 0
+strongest, 3 weakest — and **not** dBm and **not** a register index. The firmware keeps its own
+floor underneath it because it is the last authority before the transmitter. BLE commands are
+encrypted after bonding, but the first nearby phone may claim an unpaired bridge through Just
+Works. The bridge reports its floor, and the phone confirms the exact effective level
+`max(requested, min_power_level)`; a different value is stale or misapplied configuration, not
+an acceptable approximation.
 
-**The weakest step is not automatically legal.** The index is only a step in the module's own
-table — 30/27/24/21 dBm on an E220-900T30, 22/17/13/10 on a T22 — and what may go on the air
-is set by the band and the country. On 868.0–868.6 MHz Germany allows 25 mW ERP, about 14 dBm
-(BNetzA Vfg 91/2025), which **no step of a T30 reaches**: that combination needs a lower-power
-variant, or measured attenuation, before it is transmitted for real. The DMD tablet's own
-request of index 0 with LBT off is its configuration, not a licence for ours.
+The E220 firmware accepts channels `0..80`, the module's full hardware range. That is not a
+regional or legal whitelist: DMD2 chooses the ride's channel, and the rider must use the right
+band, antenna and power for the country. In particular, accepting a channel in firmware says
+nothing about whether transmitting there is permitted.
+
+An E220 `CFG` uses the persistent `C0` command, so the phone caps retries at three for one
+unchanged request/status state and spaces **all** writes by at least 35 seconds, even when the
+requested tuple, bridge status, or BLE session changes — the firmware completes
+the hardware apply before acknowledging the BLE write, and its bounded AUX/verify path can take
+almost 25 seconds. It keeps issuing read-only `STATUS` polls every 30 seconds; a status becomes
+stale and closes readiness after 45 seconds without a reply, but silence alone does not reopen
+the C0 attempt budget. Reconnect, a changed request or a real non-null radio-state transition
+refills the three attempts but does not bypass the global spacing. This recovers lost replies and
+hot-plugged modules without turning liveness polling into flash wear.
+
+**This build sets `-DMIN_POWER_INDEX=0` in every environment, so that floor is lifted** and the
+bonded phone can select the strongest step. That is a lab decision for a proof of
+concept, and the firmware says so out loud: the status reports `min_power_level=0`, which is
+how a build with no floor is told apart from one that still has it. Build with a higher
+`-DMIN_POWER_INDEX` to put it back — `3` restricts the bridge to the weakest step whatever the
+phone asks for. **The lift does not carry over to a new backend.** An SX1262 with a KCT8103L in
+front of it has a different and much less forgiving power story, and it starts with a floor and
+a measurement, not with this flag copied across.
+
+**What a level is worth in dBm is the firmware's to say, and only if it was told.** The E220
+index means 30/27/24/21 dBm on an E220-900T30 and 22/17/13/10 on a T22, and nothing in the
+module identifies which is fitted. Build with `-DE220_VARIANT_T30` or `-DE220_VARIANT_T22` and
+the bridge reports `tx_dbm=`; build without and it reports none, and the app shows the transmit
+power as unknown. A guessed number is worse than a blank one, because it invites someone to
+trust it. The app no longer carries either table.
+
+**The weakest step is not automatically legal.** What may go on the air is set by the band and
+the country. On 868.0–868.6 MHz Germany allows 25 mW ERP, about 14 dBm (BNetzA Vfg 91/2025),
+which **no step of a T30 reaches**: that combination needs a lower-power variant, or measured
+attenuation, before it is transmitted for real. The DMD tablet's own request of index 0 with
+LBT off is its configuration, not a licence for ours.
 
 ## Milestone 5 — two bridges on the bench
 
 Configure both to the group profile and confirm one decodes the other:
 
 ```
-CFG ch=18 rate=2 power=3 packet=0 trans=1 key=0 lbt=0 addr=0
+CFG channel=18 power_level=3 lbt=0
 ```
 
-Keep power at index 3 (the weakest step) and the antennas apart; at bench range a
+The rest of the group profile — address, air rate, sub-packet size, transparent mode, module
+key — is fixed by the protocol and lives inside the firmware, where it cannot be got wrong from
+the phone. Keep power at level 3 (the weakest step) and the antennas apart; at bench range a
 strong transmitter can overload the receiver. The spare E22 is a useful negative control — it
 must **not** hear the E220s, because EBYTE maps the same air-rate index to different SF/BW on
 the two chip families.

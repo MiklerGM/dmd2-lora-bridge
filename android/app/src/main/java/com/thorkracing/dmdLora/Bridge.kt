@@ -20,7 +20,9 @@ object Bridge {
     fun sendStatusUpdate(context: Context, connected: Boolean) {
         val i = Intent(DmdLora.ACTION_STATUS_UPDATE).apply {
             putExtra(DmdLora.EX_CONNECTED, connected)
-            putExtra(DmdLora.EX_ENABLED, true)
+            // DMD2 uses enabled=false to remember an intentional user stop. Reporting true
+            // here made it revive this service after the UI's Stop button within one timeout.
+            putExtra(DmdLora.EX_ENABLED, Prefs.bridgeEnabled(context))
             putExtra(DmdLora.EX_CHANNEL, Session.channel)
             putExtra(DmdLora.EX_POWER, Session.power)
             putExtra(DmdLora.EX_LBT, Session.lbt)
@@ -28,7 +30,9 @@ object Bridge {
             putExtra(DmdLora.EX_FIRMWARE, "bridge-0.1")
             // Open mode would make DMD2 disable its own group logic. Never claim it.
             putExtra(DmdLora.EX_OPEN_MODE, false)
-            putExtra("packets_sent", Session.packetsEncoded.get())
+            // There is no end-to-end TX acknowledgement in proto=2. packetsEncoded also
+            // includes payloads held before BLE, so exporting it as packets_sent would lie;
+            // this optional counter is omitted until the bridge can acknowledge completion.
             putExtra("packets_received", Session.groupDataReceived.get())
         }
         context.sendBroadcast(i)

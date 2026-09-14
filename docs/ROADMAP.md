@@ -158,12 +158,13 @@ Only once M6 passes:
   ```
   RX intent SEND_CHAT_MESSAGE  [message=Hey, offline test]
   TX chat 45 B queued
-  TX chat released
+  TX chat queued to bridge
   ```
 
   45 bytes is the arithmetic working out — 12 header, 1 name length, 13 for the name, 17 for
   the text, 2 CRC — which is also the proof that the sender's name really is on the wire. The
-  queued/released pair a second apart shows chat going through its own queue rather than the
+  The first line records admission to the timestamped chat queue; the second, one second later,
+  records admission to the otherwise-empty BLE transport. That shows chat is not sharing the
   latest-position slot that would have overwritten it.
 - **Match the bridge by device name, not the service UUID alone.** Observed on a real phone:
   the scan filters only on the Nordic UART Service UUID, which many unrelated DIY/IoT devices
@@ -179,6 +180,12 @@ Only once M6 passes:
 tests where the logic is pure, but none of it has been re-run against a phone, a bridge or a
 radio yet. The rows in M7 above that say *verified* were watched happening on hardware; these
 are not those.
+
+> **Historical review log.** The bullets below describe the contract at the named commits and
+> deliberately preserve what each review found. They are not the current BLE specification:
+> simulation, `conn=` and accepting any weaker power have since been removed. The normative
+> `proto=2` contract and current ownership rules are in `docs/ARCHITECTURE.md`; use that file
+> when implementing or testing new work.
 
 An outside read of `1491311` turned up six things, all of which came down to the same habit:
 a status that is *computed* somewhere else being *believed* here without being checked.
