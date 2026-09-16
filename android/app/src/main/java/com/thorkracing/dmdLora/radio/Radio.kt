@@ -283,6 +283,11 @@ object Radio {
             !s.online -> "radio not answering"
             !s.tx -> "this firmware build may not transmit"
             request.rejected -> "DMD2 radio config was malformed"
+            // Distinct from having no channel: the region is what is missing, nothing derives
+            // without it, and DMD2 announces a frequency on its own events rather than
+            // periodically. Saying "no channel yet" sent the rider looking at the group.
+            request.desired == null && Session.regionDesc.isEmpty() ->
+                "DMD2 has not sent a frequency yet — reshare in DMD2"
             request.desired == null -> "no channel yet"
             !request.ownedByGroup -> "waiting for DMD2 to name the group for this config"
             else -> "waiting for config"

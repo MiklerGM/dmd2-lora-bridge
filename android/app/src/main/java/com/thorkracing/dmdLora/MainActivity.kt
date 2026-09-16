@@ -366,6 +366,11 @@ class MainActivity : Activity() {
             st.mode != BridgeMode.BRIDGE -> "${st.mode.name.lowercase()} mode — not a bridge"
             !st.online -> "no radio"
             !st.tx -> "${st.radio}, transmit disabled in this build"
+            // The usual stall after an app restart, and it is not the group that is missing:
+            // DMD2 sends group data every second while never having announced a frequency.
+            // Without a region nothing is derived, on purpose, so name the thing to go and do.
+            Radio.desiredRequest == null && Session.regionDesc.isEmpty() ->
+                "${st.radio}, no frequency from DMD2 — reshare there"
             Radio.desiredRequest == null -> "${st.radio}, waiting for group"
             !Radio.configOwnedByGroup -> "${st.radio}, waiting for group after config"
             !st.configured -> "${st.radio}, waiting for config"
