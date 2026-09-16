@@ -34,6 +34,48 @@ EBYTE default is SF9/BW125, so that is the leading guess — but it is a guess, 
 and preamble are baked into the module firmware (and the DMD/topicon build may have changed
 them).
 
+### Tried, 2026-09-16: the inference did not hold, and 72 combinations are ruled out
+
+A configured E220 transmitting real DMD traffic was swept against a Heltec V3.2 (SX1262) probe.
+A **second E220 sat beside the probe as a control**, so "the transmitter went quiet" and "the
+probe heard nothing" are separable — which mattered, because the first attempt was void: the
+phone slept, and only 3 packets were on the air in 190 s.
+
+| Sweep | Candidates | Control | Probe |
+|---|---|---|---|
+| SF9/BW125 + SF10/BW250, sync 0x12/0x34 | 4 | 132 packets, 12–14 in every 20 s window | **0** |
+| Every LLCC68 SF/BW × sync 0x12/0x34 × IQ normal/inverted | **72** | 421 packets, 40–44 in every 65 s slice | **0** |
+
+Zero packets, zero CRC mismatches and — the informative part — **zero header errors**. A header
+error needs preamble and sync to correlate first, so its absence says the receiver never reached
+sync lock at all. That exonerates the header mode (explicit vs implicit): a header-mode mismatch
+would have locked and *then* failed. It leaves SF, BW, sync word and IQ polarity, all of which
+the 72-candidate sweep covered.
+
+Two alternative explanations were excluded experimentally rather than by argument:
+
+- **Receiver overload.** At two metres the probe read −0.0 and −37 dBm instantaneous RSSI —
+  saturation, which decodes nothing whatever the PHY. Moving the transmitter behind a glass door
+  brought the worst reading to −61 dBm, well inside the SX1262's linear range. The nulls did not
+  change.
+- **Wrong frequency.** Instantaneous RSSI is measured after the channel filter, and it rose
+  during transmissions while tuned to 868.125 MHz — so the energy really is in that passband.
+  BW500 candidates additionally cover a ±250 kHz error.
+
+**The one thing still missing is a positive control.** This probe has never decoded a LoRa
+packet from anything. FEM on, a clean `begin()` and a drifting noise floor prove the radio is
+powered and listening, not that the demodulator reports what it hears — so a bug in the receive
+path is still formally indistinguishable from 72 honest misses. A `-DCONTROL_SWEEP=1` build
+hunts ambient Meshtastic (sync 0x2B) and LoRaWAN (868.1/868.3/868.5) for exactly this reason;
+run under open sky in a coastal town it found nothing in 52 candidates, which is as easily
+explained by there being no traffic as by a broken decoder.
+
+**Treat the 72 as bounded, not concluded, until something is decoded.** The cheapest way to get
+there is a second Heltec: one transmits on parameters we choose, the other receives. The E22
+would do the same and also reveal the SX1262-family rate mapping, but needs its own register
+driver. After that, the remaining suspect is a vendor-private sync word — 256 values, which is
+where an SDR stops being the fallback and becomes the right instrument.
+
 ## Consequences for the build
 
 1. **Use a genuine EBYTE E220.** Because the exact SF/BW/sync are not derivable from public

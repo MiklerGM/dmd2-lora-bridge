@@ -65,24 +65,35 @@ static const float FREQ_MHZ = 868.125f;
 #endif
 
 /*
- * Ordered by the reasoning in PHY-notes.md: SF9/BW125 is the leading guess because it matches
- * both the module's -129 dBm typical sensitivity and the widely reported EBYTE default; 0x12 is
- * the usual LoRa private sync word. Coding rate is deliberately not a dimension - in explicit
- * header mode the receiver recovers it from the packet, so a mismatch blocks nothing.
+ * Exhaustive rather than a shortlist, because the shortlist was tried and failed.
+ *
+ * PHY-notes.md inferred SF9/BW125 or SF10/BW250 from the -129 dBm typical sensitivity. Both,
+ * with both sync words, were swept against ~117 real E220 transmissions on 2026-09-16 while a
+ * second E220 sitting beside this board decoded every one of them. Zero packets, and - the
+ * informative part - zero header errors, so the receiver never even reached preamble/sync lock.
+ * That rules out the header mode as the culprit and leaves SF, BW, sync and IQ polarity.
+ *
+ * So the grid is now every combination the transmitter can physically produce. LLCC68 is not a
+ * full SX1262: its maximum spreading factor depends on the bandwidth, which is what bounds this
+ * to 18 SF/BW pairs rather than the whole matrix.
+ *
+ * Coding rate is still not a dimension - in explicit header mode the receiver recovers it from
+ * the packet. IQ polarity is, because an inversion mismatch produces exactly the silence above.
  */
-struct candidate {
+struct phy_span {
     float bw;
-    uint8_t sf;
-    uint8_t sync;
-    const char *name;
+    uint8_t sf_min, sf_max;
 };
-static const candidate GRID[] = {
-    {125.0f, 9, 0x12, "SF9  BW125 sync0x12"},
-    {250.0f, 10, 0x12, "SF10 BW250 sync0x12"},
-    {125.0f, 9, 0x34, "SF9  BW125 sync0x34"},
-    {250.0f, 10, 0x34, "SF10 BW250 sync0x34"},
+static const phy_span SPANS[] = {
+    {125.0f, 5, 9},
+    {250.0f, 5, 10},
+    {500.0f, 5, 11},
 };
-static const size_t GRID_N = sizeof(GRID) / sizeof(GRID[0]);
+static const size_t SPANS_N = sizeof(SPANS) / sizeof(SPANS[0]);
+
+/* 0x12 is the LoRa private sync word and 0x34 the public one. A vendor-private third value
+ * would not be found by this sweep; that is the first thing to widen if 72 comes back empty. */
+static const uint8_t SYNCS[] = {0x12, 0x34};
 
 static SPIClass spi(HSPI);
 static SX1262 radio = new Module(LORA_NSS, LORA_DIO1, LORA_RST, LORA_BUSY, spi);
@@ -98,15 +109,24 @@ static void dump(const uint8_t *buf, size_t n) {
     Serial.println();
 }
 
-static void listen(const candidate &c) {
-    Serial.printf("\n== %s on %.3f MHz, %d s ==\n", c.name, FREQ_MHZ, DWELL_MS / 1000);
+static void listen(float freq, float bw, uint8_t sf, uint8_t sync, bool invert_iq) {
+    Serial.printf("\n== SF%-2u BW%-3.0f sync0x%02X IQ%s on %.3f MHz, %d s ==\n",
+                  sf, bw, sync, invert_iq ? "inv" : "nor", freq, DWELL_MS / 1000);
 
-    int st = radio.begin(FREQ_MHZ, c.bw, c.sf, 5 /* CR 4/5, recovered from the header anyway */,
-                         c.sync, 10 /* dBm, receive only */, 8 /* preamble */);
+    int st = radio.begin(freq, bw, sf, 5 /* CR 4/5, recovered from the header anyway */,
+                         sync, 10 /* dBm, receive only */, 8 /* preamble */);
     if (st != RADIOLIB_ERR_NONE) {
         Serial.printf("   begin failed: %d - wrong pins or no radio\n", st);
         return;
     }
+    /* After begin(), which resets the modem config. A mismatch here never reaches header
+     * decode - the chirps simply do not correlate - so it must be swept, not assumed. */
+    st = radio.invertIQ(invert_iq);
+    if (st != RADIOLIB_ERR_NONE) {
+        Serial.printf("   invertIQ failed: %d\n", st);
+        return;
+    }
+
     radio.setPacketReceivedAction(on_irq);
     radio.startReceive();
 
@@ -191,6 +211,51 @@ void setup() {
 #endif
 }
 
+#if CONTROL_SWEEP
+/*
+ * Positive control, and the reason it exists: this probe has never decoded a LoRa packet from
+ * anything. FEM on, begin() clean and a drifting noise floor prove the radio is powered and
+ * listening - not that the demodulator reports what it hears. Until something is decoded, a bug
+ * in the receive path is indistinguishable from 72 honest misses, and the E220 sweep cannot be
+ * written down as a result.
+ *
+ * Ambient LoRaWAN is the cheapest known-good transmitter available: EU868 uplinks sit on
+ * 868.1/868.3/868.5 MHz at BW125 with the public sync word and normal IQ. Anywhere with
+ * habitation nearby there is usually something on them.
+ *
+ * Switch the E220 bridge OFF while this runs. Channel 18 is 868.125 MHz, which falls inside the
+ * 868.1 BW125 passband, so leaving it on jams the very channel being listened to.
+ */
 void loop() {
-    for (size_t i = 0; i < GRID_N; i++) listen(GRID[i]);
+    unsigned n = 0;
+
+    /*
+     * Meshtastic first, because it is the likelier hit: its nodes beacon position, telemetry
+     * and nodeinfo on their own schedule, while a LoRaWAN gateway mostly listens and only the
+     * end devices - which no map shows - actually transmit. Sync word 0x2B is the value
+     * PHY-notes.md already records as the one that makes us NOT Meshtastic-compatible.
+     *
+     * LongFast is the near-universal default preset. The exact EU centre frequency is from
+     * memory and worth checking against the Meshtastic region table before trusting a miss.
+     */
+    for (uint8_t sf = 7; sf <= 12; sf++) { listen(869.525f, 250.0f, sf, 0x2B, false); n++; }
+
+    /* LoRaWAN EU868 uplinks: public sync word, normal IQ, BW125. */
+    static const float LORAWAN[] = {868.1f, 868.3f, 868.5f};
+    for (size_t c = 0; c < sizeof(LORAWAN) / sizeof(LORAWAN[0]); c++)
+        for (uint8_t sf = 7; sf <= 12; sf++)
+            { listen(LORAWAN[c], 125.0f, sf, 0x34, false); n++; }
+
+    Serial.printf("\n=== control sweep complete: %u candidates ===\n", n);
 }
+#else
+void loop() {
+    unsigned n = 0;
+    for (size_t p = 0; p < SPANS_N; p++)
+        for (uint8_t sf = SPANS[p].sf_min; sf <= SPANS[p].sf_max; sf++)
+            for (size_t s = 0; s < sizeof(SYNCS); s++)
+                for (int iq = 0; iq < 2; iq++)
+                    { listen(FREQ_MHZ, SPANS[p].bw, sf, SYNCS[s], iq != 0); n++; }
+    Serial.printf("\n=== sweep complete: %u candidates ===\n", n);
+}
+#endif

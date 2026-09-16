@@ -159,8 +159,38 @@ Configure both E220s to the DMD profile: `ADDR=0, RATE=2 (2.4k), PACKET=0 (200B)
 KEY=0, CHANNEL=18 (868.125 MHz)`, power set to a locally legal value.
 
 **Accept:** phone A encodes a rider set, phone B decodes it back correctly over the air.
-This validates codec + config + PHY in one shot, and settles the last open question about
-24-bit field byte order. Use the spare E22 as a negative control — it must **not** hear them.
+Use the spare E22 as a negative control — it must **not** hear them.
+
+> The original wording also claimed this settles the 24-bit field byte order. It does not.
+> Both ends run *our* codec, so the encoding is self-consistent whatever the order; only a
+> device that is not ours can judge it. That question belongs to M6.
+
+**Result [PARTIAL], 2026-09-16:** two E220s hear each other. The air link is proven; the second
+half of the acceptance — a second phone decoding the packet back into a rider — was not run,
+because only one phone was on hand.
+
+Board A drove a real DMD2 4.017 group ride; board B sat next to the laptop with no phone at all,
+which works because the firmware logs a received packet to the UART before it checks whether
+BLE is connected. Board A then moved behind a glass door onto a balcony, with the phone still
+reaching it over BLE.
+
+```
+A  tx 38 bytes: 0gMCAL8H511R...      B  rx 38 bytes: 0gMCAL8H511R...
+A  tx 38 bytes: 0gMCAL8H515R...      B  rx 38 bytes: 0gMCAL8H515R...
+A  tx 38 bytes: 0gMCAL8H521R...      B  (not received)
+A  tx 38 bytes: 0gMCAL8H529R...      B  rx 38 bytes: 0gMCAL8H529R...
+```
+
+- **13 sent, 11 received, 1 lost, 1 outside the capture window.** Every packet that arrived
+  matched a transmitted one; nothing was corrupted and nothing spurious arrived.
+- **The pairing is not coincidence.** Across all eleven matched pairs the offset between the two
+  boards' independent clocks was 1542520–1542530 ms — constant to ±10 ms.
+- 38 wire characters is exactly the 28-byte packet the phone logged, and `0g` is `D2 03`.
+- A later run through the glass door: **132 packets, 12–14 in every one of ten 20 s windows.**
+
+Do not read 11/12 as a range figure. The antennas were metres apart at level 3, which is the
+bench-overload case `BUILDING.md` warns about; the loss could as easily be a saturated receiver
+as a weak link.
 
 ---
 
