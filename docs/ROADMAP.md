@@ -94,6 +94,65 @@ module arrive back at the phone. Module reports its firmware code and the applie
 
 ---
 
+## M4.5 — A real E220, and the whole chain into its UART — **PROVEN on hardware**
+
+First run with an actual module attached, rather than echo mode standing in for one.
+
+**Setup, 2026-09-16:** ESP32-WROOM (CH340C) and an E220 joined with 2.54 mm jumpers, powered
+from a laptop USB port. Level 3 throughout, which is what makes a laptop port enough.
+Phone: Galaxy S24, **DMD2 4.017** (versionCode 400116).
+
+The module answered on the first attempt, so the wiring, the register packing and the readback
+comparison are all confirmed at once:
+
+```
+e220: uart up at 9600 8N1 (tx=17 rx=16 m0=21 m1=22 aux=23)
+e220: apply ch=18 rate=2 power=3 lbt=0 -> ok (11 bytes back)
+bridge: bridge up: proto=2 radio=e220 mode=bridge ch=18 power_level=3 online=1
+```
+
+### The regression this run caught
+
+Adding `android:permission="…LORA_BRIDGE"` to `Dmd2CommandReceiver` and `LoraService` made the
+bridge **unreachable**: it paired, reported `online=1 tx=1 configured=1` and never received one
+packet, because the system silently drops broadcasts to a component whose permission the sender
+does not hold. `dumpsys package com.thorkracing.dmd2launcher` settles it — **DMD2 4.017 requests
+no LoRa-bridge permission of any kind**, only `advsos.permission.THEFT_CONTROL` and its own
+dynamic-receiver permission. The guard was removed; see the manifest comment. Check with
+`dumpsys`, not by assumption, before ever re-adding it.
+
+### The handshake, end to end
+
+```
+21:08:04.514  RX intent …SET_FREQUENCY  [region_desc=EU 868MHz, lbt=false, power=0, channel=18]
+21:08:04.516  config ch=18 (868,125 MHz) power=0 lbt=false region=EU 868MHz
+21:08:04.516  power level 0 requested, using 3 (your setting)
+21:08:05.377  group named; keeping the channel DMD2 gave us
+21:08:05.381  TX 1 rider(s) 28B · queued to bridge · 0gMCAL8H5o…
+21:08:06.284  TX 1 rider(s) 28B · held 597ms · 0gMCAL8H5o…
+```
+
+Four things worth recording:
+
+- **The handshake does not deadlock.** `connected=true` went to DMD2 while the radio was still
+  on its boot channel; the configuration was confirmed seconds later. Splitting `dmdUsable` from
+  `txAllowed` is what makes that possible, and it now has a hardware witness.
+- **DMD2 asked for power level 0** — the strongest step — and the rider's limit held it at 3.
+- **The ADOPTED path ran**: DMD2 announces a frequency *before* naming the group, and
+  `ConfigOwner` correctly stamped those settings onto the group whose hash matched.
+- **No `CFG` was sent at all.** The firmware's boot default already matched the request exactly,
+  so `configConfirmed` was true on arrival — zero flash writes for a whole session.
+
+TX then ran for minutes with `online=1 tx=1 configured=1` never flinching. A failed `e220_write`
+would have cleared `configured` and closed the gate, so the module is taking every packet and
+returning AUX to idle.
+
+**Not proven, and not to be claimed:** nothing here is an RF measurement. `e220_write` succeeding
+means the module accepted the bytes and went idle again, which is not the same as energy leaving
+the antenna, and there was no second radio in the room to hear it. M5 is unchanged.
+
+---
+
 ## M5 — Two of our own radios talk  *(bench, no NOR7E)*
 
 Configure both E220s to the DMD profile: `ADDR=0, RATE=2 (2.4k), PACKET=0 (200B), TRANS=0,

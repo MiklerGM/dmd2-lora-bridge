@@ -37,12 +37,28 @@
             </intent-filter>
         </activity>
 
-        <!-- Class path and permission are mandatory: current DMD2 targets this exact component
-             and holds LORA_BRIDGE. Compatibility with 4.009 is deliberately not retained. -->
+        <!--
+            Class path is mandatory: DMD2 targets it by explicit ComponentName.
+
+            Deliberately left without android:permission, and that is measured rather than
+            assumed. Guarding it with LORA_BRIDGE is the safer default, but DMD2 does not hold
+            that permission: 4.017 (versionCode 400116, read with dumpsys on hardware
+            2026-09-16) requests no LoRa-bridge permission of any kind - its only
+            Thork-namespace entries are advsos THEFT_CONTROL and its own dynamic-receiver
+            permission. With the guard in place the system silently drops every SET_FREQUENCY
+            and SEND_GROUP_DATA, so the bridge pairs, reports a perfectly healthy radio and
+            never receives one packet.
+
+            The exposure is real and unchanged: any local app can push fake positions or move
+            our radio. That is why a malformed SET_FREQUENCY revokes the region outright rather
+            than being merged into the running one - see Dmd2CommandReceiver.
+            ponytail: unprotected because DMD2 cannot reach us otherwise; re-add
+            android:permission only after checking with dumpsys that the DMD2 build actually
+            in use requests it.
+        -->
         <receiver
             android:name=".receiver.Dmd2CommandReceiver"
-            android:exported="true"
-            android:permission="com.thorkracing.dmdlora.permission.LORA_BRIDGE">
+            android:exported="true">
             <intent-filter>
                 <action android:name="com.thorkracing.dmdlora.SEND_GROUP_DATA" />
                 <action android:name="com.thorkracing.dmdlora.SEND_CHAT_MESSAGE" />
@@ -60,11 +76,11 @@
             </intent-filter>
         </receiver>
 
-        <!-- Likewise mandatory: DMD2 calls startForegroundService on this exact component. -->
+        <!-- Likewise mandatory, and unprotected for the same measured reason as the receiver
+             above: DMD2 calls startForegroundService on this exact component. -->
         <service
             android:name=".service.LoraService"
             android:exported="true"
-            android:foregroundServiceType="connectedDevice"
-            android:permission="com.thorkracing.dmdlora.permission.LORA_BRIDGE" />
+            android:foregroundServiceType="connectedDevice" />
     </application>
 </manifest>
