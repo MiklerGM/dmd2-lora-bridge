@@ -101,6 +101,50 @@ static SX1262 radio = new Module(LORA_NSS, LORA_DIO1, LORA_RST, LORA_BUSY, spi);
 static volatile bool s_irq = false;
 static void IRAM_ATTR on_irq() { s_irq = true; }
 
+/*
+ * Everything the chip can latch, not just what drives DIO1.
+ *
+ * The probe acts only on the DIO1 interrupt, so a demodulator that is working perfectly while
+ * the interrupt path is not - wrong pin, an IRQ the mask never enabled - is indistinguishable
+ * from a PHY that does not match. RSSI cannot tell those apart either: it is measured before
+ * and independently of demodulation, which is why a healthy-looking signal level proved the
+ * analogue chain and nothing above it.
+ *
+ * PREAMBLE_DETECTED is the one that settles it. It fires when the correlator locks onto a
+ * chirp train, before any header or CRC, so it answers "does this demodulator see anything at
+ * all" without needing a packet to survive all the way to readData.
+ *
+ * The chip latches only what the IRQ mask enables, so the mask has to be widened or the flag is
+ * never set to be read. startReceive's third argument keeps DIO1 driving RX_DONE alone - pulling
+ * the pin on every preamble would fire the packet callback with nothing to read and turn the
+ * dwell loop into a spin.
+ *
+ * Two flag vocabularies meet here, which is easy to get wrong: startReceive takes RadioLib's
+ * portable bit *positions*, while getIrqFlags returns the SX126x IrqStatus register raw.
+ */
+#define IRQ_LATCH_EVERYTHING ( \
+    (1UL << RADIOLIB_IRQ_PREAMBLE_DETECTED) | (1UL << RADIOLIB_IRQ_SYNC_WORD_VALID) | \
+    (1UL << RADIOLIB_IRQ_HEADER_VALID) | (1UL << RADIOLIB_IRQ_HEADER_ERR) | \
+    (1UL << RADIOLIB_IRQ_RX_DONE) | (1UL << RADIOLIB_IRQ_CRC_ERR) | \
+    (1UL << RADIOLIB_IRQ_TIMEOUT))
+
+static void arm_receive() {
+    radio.startReceive(RADIOLIB_SX126X_RX_TIMEOUT_INF, IRQ_LATCH_EVERYTHING,
+                       RADIOLIB_IRQ_RX_DEFAULT_MASK, 0);
+}
+
+static void print_irq(uint16_t f) {
+    if (!f) { Serial.print("none"); return; }
+    if (f & RADIOLIB_SX126X_IRQ_PREAMBLE_DETECTED) Serial.print("PREAMBLE ");
+    if (f & RADIOLIB_SX126X_IRQ_SYNC_WORD_VALID)   Serial.print("SYNC ");
+    if (f & RADIOLIB_SX126X_IRQ_HEADER_VALID)      Serial.print("HDR_OK ");
+    if (f & RADIOLIB_SX126X_IRQ_HEADER_ERR)        Serial.print("HDR_ERR ");
+    if (f & RADIOLIB_SX126X_IRQ_RX_DONE)           Serial.print("RX_DONE ");
+    if (f & RADIOLIB_SX126X_IRQ_CRC_ERR)           Serial.print("CRC_ERR ");
+    if (f & RADIOLIB_SX126X_IRQ_TIMEOUT)           Serial.print("TIMEOUT ");
+    Serial.printf("(0x%04X)", f);
+}
+
 static void dump(const uint8_t *buf, size_t n) {
     Serial.print("    hex   ");
     for (size_t i = 0; i < n; i++) Serial.printf("%02X ", buf[i]);
@@ -109,14 +153,46 @@ static void dump(const uint8_t *buf, size_t n) {
     Serial.println();
 }
 
-static void listen(float freq, float bw, uint8_t sf, uint8_t sync, bool invert_iq) {
-    Serial.printf("\n== SF%-2u BW%-3.0f sync0x%02X IQ%s on %.3f MHz, %d s ==\n",
-                  sf, bw, sync, invert_iq ? "inv" : "nor", freq, DWELL_MS / 1000);
+/*
+ * implicit_len 0 means explicit header. Anything else switches to implicit and fixes the
+ * payload length, which the receiver must then know in advance - 38 is what the beacon puts on
+ * the air. If the module wraps the payload in framing of its own the real length is larger,
+ * but reading the first 38 bytes still lets dmd_sniff find the marker at whatever offset it
+ * lands, so a wrong guess here degrades rather than blinds.
+ */
+static void listen(float freq, float bw, uint8_t sf, uint8_t sync, bool invert_iq,
+                   uint8_t implicit_len = 0, bool crc_on = true, uint8_t cr = 5,
+                   bool force_ldro = false) {
+    Serial.printf("\n== SF%-2u BW%-3.0f sync0x%02X IQ%s hdr%s crc%s on %.3f MHz, %d s ==\n",
+                  sf, bw, sync, invert_iq ? "inv" : "nor",
+                  implicit_len ? "imp" : "exp", crc_on ? "on" : "off", freq, DWELL_MS / 1000);
 
-    int st = radio.begin(freq, bw, sf, 5 /* CR 4/5, recovered from the header anyway */,
-                         sync, 10 /* dBm, receive only */, 8 /* preamble */);
+    /* Recovered from the header in explicit mode, so it only matters when implicit_len is set
+     * - and then it matters absolutely. */
+    int st = radio.begin(freq, bw, sf, cr, sync, 10 /* dBm, receive only */, 8 /* preamble */);
     if (st != RADIOLIB_ERR_NONE) {
         Serial.printf("   begin failed: %d - wrong pins or no radio\n", st);
+        return;
+    }
+    /* Both reset by begin(), so both go after it. A header-mode mismatch is exactly what
+     * produces a stream of header errors on an otherwise correct PHY: the receiver decodes a
+     * header out of payload bytes. CRC has to be swept for the same reason - expecting one the
+     * transmitter never sent fails the packet after the header decodes cleanly. */
+    st = implicit_len ? radio.implicitHeader(implicit_len) : radio.explicitHeader();
+    if (st != RADIOLIB_ERR_NONE) {
+        Serial.printf("   header mode failed: %d\n", st);
+        return;
+    }
+    st = radio.setCRC(crc_on ? 2 : 0);
+    if (st != RADIOLIB_ERR_NONE) {
+        Serial.printf("   setCRC failed: %d\n", st);
+        return;
+    }
+    /* Also reset by begin(). autoLDRO() follows Semtech's 16.38 ms symbol rule; forcing it on
+     * covers implementations that use the "SF11 or SF12" shortcut instead. */
+    st = force_ldro ? radio.forceLDRO(true) : radio.autoLDRO();
+    if (st != RADIOLIB_ERR_NONE) {
+        Serial.printf("   LDRO failed: %d\n", st);
         return;
     }
     /* After begin(), which resets the modem config. A mismatch here never reaches header
@@ -128,12 +204,42 @@ static void listen(float freq, float bw, uint8_t sf, uint8_t sync, bool invert_i
     }
 
     radio.setPacketReceivedAction(on_irq);
-    radio.startReceive();
+    s_irq = false;
+    radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
+    arm_receive();
 
     uint32_t end = millis() + DWELL_MS;
     uint32_t heard = 0, crc_err = 0;
+    uint16_t seen = 0;          /* every flag the chip latched during this dwell */
+    uint32_t preambles = 0, hdr_errs = 0;
+    bool dio1_fired = false;    /* whether the interrupt path ever delivered one */
     while ((int32_t)(end - millis()) > 0) {
+        /* Polled, not waited on. This is the whole point: a latched flag with no interrupt
+         * means the demodulator worked and the path to this code did not. */
+        uint16_t now = radio.getIrqFlags();
+        seen |= now;
+
+        /*
+         * Counted, not OR-ed, and this is what makes the sweep a measurement.
+         *
+         * The SX126x preamble detector is promiscuous: it triggers on chirp-like energy rather
+         * than on a matching slope, so a single transmitter sets it at almost every SF. One
+         * latched bit therefore says only "something is on this channel". A count separates
+         * them - against a beacon of known rate, the right SF/BW should report a detection per
+         * transmission while a wrong one reports the occasional false trigger.
+         *
+         * Clearing only these bits leaves the rest latched, and clearing IrqStatus does not
+         * disturb the receiver state machine.
+         */
+        uint16_t consume = now & (RADIOLIB_SX126X_IRQ_PREAMBLE_DETECTED |
+                                  RADIOLIB_SX126X_IRQ_HEADER_ERR);
+        if (consume) {
+            if (now & RADIOLIB_SX126X_IRQ_PREAMBLE_DETECTED) preambles++;
+            if (now & RADIOLIB_SX126X_IRQ_HEADER_ERR) hdr_errs++;
+            radio.clearIrqFlags(consume);
+        }
         if (!s_irq) { delay(5); continue; }
+        dio1_fired = true;
         s_irq = false;
 
         uint8_t buf[256];
@@ -158,10 +264,15 @@ static void listen(float freq, float bw, uint8_t sf, uint8_t sync, bool invert_i
                  * observation is still only a clue. Repeat it and capture a valid payload before
                  * treating the candidate as confirmed. */
                 crc_err++;
-                Serial.printf("   CRC mismatch, %u bytes, RSSI %.1f dBm - valid LoRa header; repeat/capture\n",
+                Serial.printf("   CRC mismatch, %u bytes, RSSI %.1f dBm - payload failed CRC; in implicit\n                 mode there is no header, so this is not evidence of one\n",
                               (unsigned)n, radio.getRSSI());
                 dump(buf, n);
             }
+        } else if (rs == RADIOLIB_ERR_NONE && n == 0) {
+            /* A zero-length read is not a packet: there is nothing to check a CRC against and
+             * nothing to recognise, so counting it as one manufactures hits. A 1024-candidate
+             * sweep produced 23 of these and every one looked like a validated reception. */
+            Serial.println("   empty RX_DONE, 0 bytes - not a packet");
         } else if (rs == RADIOLIB_ERR_NONE) {
             heard++;
             Serial.printf("   packet, %u bytes, RSSI %.1f dBm, SNR %.1f dB\n",
@@ -179,13 +290,21 @@ static void listen(float freq, float bw, uint8_t sf, uint8_t sync, bool invert_i
         } else {
             Serial.printf("   read error %d\n", rs);
         }
-        radio.startReceive();
+        arm_receive();
     }
 
     /* getRSSI() with no argument is the RSSI of the last packet - stale or meaningless on a
      * quiet candidate. The instantaneous reading is the one that describes the channel. */
     Serial.printf("   done: %u packets, %u CRC mismatches, noise floor %.1f dBm\n",
                   (unsigned)heard, (unsigned)crc_err, radio.getRSSI(false));
+
+    /* The line this build exists for. "irq none" on every candidate means the correlator never
+     * locked and the sweep is honest; anything latched here with dio1=no means the demodulator
+     * was working and the interrupt path was swallowing it. */
+    Serial.printf("   preambles %-4lu header-errors %-4lu   irq ",
+                  (unsigned long)preambles, (unsigned long)hdr_errs);
+    print_irq(seen);
+    Serial.printf(", dio1=%s\n", dio1_fired ? "yes" : "no");
 }
 
 void setup() {
@@ -211,7 +330,123 @@ void setup() {
 #endif
 }
 
-#if CONTROL_SWEEP
+#if NIBBLE5
+/*
+ * Confirming a pattern, not searching. In the 256-value sweep at SF11/BW500, fourteen windows
+ * produced header errors and twelve of them were sync words ending in nibble 5 - across every
+ * high nibble. RadioLib puts the low nibble of the argument into the SECOND sync symbol and the
+ * high nibble into the first, so the reading is that the second symbol must be 5 while the
+ * first is not being discriminated.
+ *
+ * Counts were 1-3 per window, which is noise on its own; twelve out of fourteen sharing a
+ * nibble is not. So: the sixteen values with that nibble, at three times the dwell, looking for
+ * a header error rate that stands out or - the real prize - HEADER_VALID.
+ */
+void loop() {
+    for (unsigned hi = 0; hi < 16; hi++) {
+        listen(FREQ_MHZ, 500.0f, 11, (uint8_t)((hi << 4) | 0x05), false, 0, true, 5, true);
+    }
+    Serial.println("\n=== nibble-5 pass complete ===");
+}
+#elif SYNC_SF11
+/*
+ * Sync word at the SF/BW that finally matches.
+ *
+ * SF11/BW500 reports 59-79 preamble detections per 20 s against a 1 Hz beacon - three or four
+ * per packet, which is what a real slope match looks like - and ZERO header errors. That pair
+ * is the sync-mismatch signature exactly: the correlator locks on the preamble, the sync
+ * symbols fail, and the packet engine returns to preamble search without ever attempting a
+ * header. The earlier 256-value sweep was run at SF7/BW125, which is the slope alias, so it
+ * tested nothing.
+ *
+ * LDRO is not swept here. The LoRa header block is always sent at reduced rate regardless, so
+ * once sync is right the header decodes either way - HEADER_VALID or a header error is the
+ * signal to watch for, and LDRO only matters afterwards, for the payload.
+ */
+void loop() {
+    for (unsigned sync = 0; sync < 256; sync++) {
+        listen(FREQ_MHZ, 500.0f, 11, (uint8_t)sync, false, 0, true, 5, false);
+    }
+    Serial.println("\n=== sync sweep at SF11/BW500 complete ===");
+}
+#elif CONFIRM_SF11
+/*
+ * The candidate the sweep metric was actively hiding.
+ *
+ * Chirp rate is BW^2/2^SF, and SF7/BW125, SF9/BW250 and SF11/BW500 all sit at 122.1 kHz/ms. An
+ * SF11/BW500 chirp crossing a BW125 passband has the same slope as a real SF7/BW125 chirp, so
+ * the correlator locks, re-arms and locks again about every ten symbols across a 226 ms burst -
+ * roughly twenty false detections per packet. That is where "432 preamble detections at
+ * SF7/BW125" came from. The true match detects its preamble ONCE per packet, so it scored ~20
+ * and was filed under noise.
+ *
+ * SF11/BW500 at CR 4/5 is 2148 bps, which is what EBYTE labels "2.4k" - and the FCC test report
+ * for this family measures a 20 dB bandwidth of 548 kHz at the default configuration, where
+ * BW125 would read about 130 kHz.
+ *
+ * LDRO is swept because the two conventions disagree exactly here: Semtech enables it above a
+ * 16.38 ms symbol (SF11/BW500 is 4.096 ms, so off), while the common shortcut is "on for SF11
+ * and SF12". RadioLib follows Semtech, so all 1024 earlier candidates ran it off. A mismatch
+ * drops the two LSBs of every payload symbol while leaving preamble, sync and header intact -
+ * which is precisely "locks, decodes a header, then consistent garbage".
+ */
+void loop() {
+    for (uint8_t sync : {0x12, 0x34}) {
+        for (int ldro = 0; ldro < 2; ldro++) {
+            Serial.printf("\n--- SF11/BW500 CR4/5 explicit CRC-on sync0x%02X LDRO %s ---",
+                          sync, ldro ? "forced on" : "auto (off)");
+            listen(FREQ_MHZ, 500.0f, 11, sync, false, 0, true, 5, ldro != 0);
+        }
+    }
+    Serial.println("\n=== SF11/BW500 confirmation pass complete ===");
+}
+#elif CR_SWEEP
+/*
+ * The one gap the 1024-candidate sweep left open.
+ *
+ * In explicit header mode the receiver reads the coding rate out of the header, so it never
+ * needed sweeping. In implicit mode there is no header and the CR must be set correctly or
+ * nothing decodes - and every implicit run so far used 4/5. The implicit half of that sweep was
+ * therefore testing one CR out of four, and its CRC-off rows could not tell a CR mismatch from
+ * anything else because nothing was validating the result.
+ *
+ * CRC stays on here for exactly that reason: it is what separates a decode from 38 bytes of
+ * noise. Sync is only two values, because implicit-mode decodes appeared at some sixty
+ * different sync words, which says the SX126x enforces it loosely rather than strictly.
+ */
+void loop() {
+    for (uint8_t cr = 5; cr <= 8; cr++) {
+        for (uint8_t sync : {0x12, 0x34}) {
+            Serial.printf("\n--- coding rate 4/%u ---", cr);
+            listen(FREQ_MHZ, 125.0f, 7, sync, false, 38, true, cr);
+        }
+    }
+    Serial.println("\n=== CR sweep complete: 4 coding rates x 2 sync words ===");
+}
+#elif NARROW_SF7
+/*
+ * SF7/BW125 with normal IQ, measured rather than guessed: against a 1 Hz beacon it reported 432
+ * and 420 preamble detections at the two sync words, where the next candidate managed 123 and
+ * everything else 32 or fewer - and it was the only configuration to reach header decode at all.
+ * Not a level artefact either: SF9/BW250 saw the transmitter 20-35 dB stronger and still counted
+ * a third as many.
+ *
+ * Preamble detection happens before the sync word is checked, which is why both sync words
+ * scored alike and why sync is still unknown. So it is swept here in full, together with the
+ * two things that can fail *after* a correct PHY locks: header mode and CRC.
+ *
+ * 0x12 arrives 18 candidates in, so the conventional answer shows up in the first few minutes.
+ */
+void loop() {
+    for (unsigned sync = 0; sync < 256; sync++) {
+        for (int mode = 0; mode < 4; mode++) {
+            listen(FREQ_MHZ, 125.0f, 7, (uint8_t)sync, false,
+                   (mode & 1) ? 38 : 0, (mode & 2) != 0);
+        }
+    }
+    Serial.println("\n=== narrow sweep complete: 256 sync words x 4 header/CRC modes ===");
+}
+#elif CONTROL_SWEEP
 /*
  * Positive control, and the reason it exists: this probe has never decoded a LoRa packet from
  * anything. FEM on, begin() clean and a drifting noise floor prove the radio is powered and

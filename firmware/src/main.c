@@ -394,6 +394,46 @@ static void tx_task(void *arg) {
     }
 }
 
+#ifdef BEACON_TX_MS
+/*
+ * Diagnostic beacon. Not a product mode, not the `beacon` of docs/ARCHITECTURE.md - that one
+ * has GNSS, a real encoder and a provisioning profile. This is scaffolding for hunting the PHY,
+ * and it exists because the phone is a poor transmitter to hunt with: it sleeps, it needs BLE
+ * range, it needs DMD2 in the foreground, and its pacing gives only ~5 packets in an 8 s dwell.
+ *
+ * A fixed payload at a rate we choose turns the probe's dwell from a coin flip into a
+ * measurement: at a known transmission count, the correct SF/BW should report a preamble
+ * detection per transmission while a wrong one reports the occasional false trigger.
+ *
+ * -DBEACON_TX_MS=1000 also exceeds the 1% duty cycle 868.0-868.6 MHz allows - a 38-byte packet
+ * is roughly 250 ms of air. So does the stock 1.5 s DMD pacing, which is the protocol's choice
+ * rather than ours; this is a bench tool and the interval is a build flag so it can be raised.
+ */
+static const char BEACON_PAYLOAD[] = "0gICABAREhMUFRYXGBkaGxwdHh8gISIjJCW+7w";
+
+static void beacon_task(void *arg) {
+    (void)arg;
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(BEACON_TX_MS));
+        /* The same admission test handle_tx applies, for the same reason: a packet queued for a
+         * radio that is not configured is a packet that goes out on unknown settings. */
+        radio_state_t snap = state_snapshot();
+        if (!snap.online || !snap.configured) continue;
+
+        size_t len = strlen(BEACON_PAYLOAD);
+        char *copy = malloc(len + 1);
+        if (!copy) continue;
+        memcpy(copy, BEACON_PAYLOAD, len + 1);
+        tx_item_t item = {
+            .payload = copy,
+            .generation = snap.generation,
+            .owner_generation = (uint32_t)atomic_load(&s_owner_generation),
+        };
+        if (xQueueSend(s_tx_queue, &item, 0) != pdTRUE) free(copy);
+    }
+}
+#endif
+
 static void pair_button_task(void *arg) {
     (void)arg;
     const TickType_t poll = pdMS_TO_TICKS(100);
@@ -564,6 +604,14 @@ void app_main(void) {
         .pull_up_en = GPIO_PULLUP_ENABLE,
     };
     gpio_config(&pair_pin);
+#ifdef BEACON_TX_MS
+    ESP_LOGW(TAG, "DIAGNOSTIC BEACON: transmitting every %d ms with no phone attached",
+             BEACON_TX_MS);
+    if (xTaskCreate(beacon_task, "beacon", 3072, NULL, 5, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "cannot create beacon task");
+        abort();
+    }
+#endif
     BaseType_t pair_created = xTaskCreate(pair_button_task, "pair_btn", 2560, NULL, 3, NULL);
     BaseType_t tx_created = xTaskCreate(tx_task, "lora_tx", 4096, NULL, 6, NULL);
     BaseType_t rx_created = xTaskCreate(rx_task, "lora_rx", 4096, NULL, 6, NULL);

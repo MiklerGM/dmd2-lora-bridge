@@ -194,6 +194,36 @@ as a weak link.
 
 ---
 
+## M5.5 — What the E220 actually transmits — **MEASURED on hardware**
+
+Not a milestone we planned. It became necessary once the SX1262 probe could not hear an E220
+that a second E220 heard perfectly, and it is what makes an SX1262 backend possible at all.
+
+**Result, 2026-09-17.** EBYTE air rate index 2 is **SF11 / BW500 / sync 0x55 / explicit header /
+CRC on / LDRO forced on**, at 868.125 MHz. An SX1262 set to exactly that decoded 18 of 20 beacon
+transmissions with the payload CRC passing; all fifteen other sync words in the same sweep
+decoded nothing at all. Full write-up, evidence and sources in `docs/PHY-notes.md`.
+
+Two of those are not findable by reasoning:
+
+- **sync 0x55**, which is neither the private 0x12 nor the public 0x34 and is documented nowhere;
+- **LDRO forced on**, which RadioLib's `autoLDRO()` computes *off* for SF11/BW500 — the header
+  then decodes cleanly and every payload byte is corrupted.
+
+What cost the day was a measurement artefact worth remembering: SF7/BW125, SF9/BW250 and
+SF11/BW500 share one chirp slope, so counting preamble detections scored the aliases 432 and 123
+against the true configuration's 71. We read the peak as the answer and filed the answer under
+noise. A preamble-count peak names a *family of three*, and bandwidth has to come from elsewhere
+— here, from FCC filings that measure 548 kHz directly.
+
+**Still open:** a 38-byte payload arrives as 46 bytes that do not contain it, with the CRC
+passing. Whatever the difference is — EBYTE framing, or the write-only CRYPT transform — it sits
+above the PHY, and it is the remaining obstacle to talking to a NOR7E.
+
+**Accept:** unchanged. This closes the PHY question, not the interop one.
+
+---
+
 ## M6 — Live interop with a real NOR7E  *(the actual goal)*
 
 Join a real group ride with one cooperating NOR7E owner. Internet off after joining.

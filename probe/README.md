@@ -3,6 +3,43 @@
 Receive-only hunt for the SF/BW/sync an E220 actually uses. **Not the bridge, and not a radio
 backend for it** — see the reasoning in [`../docs/PHY-notes.md`](../docs/PHY-notes.md).
 
+> **The hunt succeeded on 2026-09-17.** Air rate index 2 is **SF11 / BW500 / sync 0x55 /
+> explicit header / CRC on / LDRO forced on**, at 868.125 MHz. An SX1262 set to exactly that
+> decoded 18 of 20 beacon transmissions with the payload CRC passing. Full evidence, and the
+> chirp-slope aliasing that sent the search to SF7/BW125 for most of a day, are in
+> [`../docs/PHY-notes.md`](../docs/PHY-notes.md).
+>
+> What the probe is still for: the payload arrives as 46 bytes that are not the 38 that were
+> sent, so EBYTE's framing (or its CRYPT transform) sits above the PHY and is not yet decoded.
+
+## Sweep modes
+
+Each is a build flag; without one the default grid runs. They are diagnostic scaffolding and
+change as the hunt moves, which is why this is a separate project from `firmware/`.
+
+| Flag | What it sweeps |
+|---|---|
+| *(none)* | every LLCC68 SF/BW x both sync words x both IQ polarities — 72 candidates |
+| `-DCONFIRM_SF11=1` | the answer, with LDRO both ways — 4 candidates |
+| `-DNIBBLE5=1` | the sixteen sync words ending in nibble 5, at SF11/BW500 |
+| `-DSYNC_SF11=1` | all 256 sync words at SF11/BW500 |
+| `-DCR_SWEEP=1` | coding rate 4/5..4/8, which only matters in implicit-header mode |
+| `-DCONTROL_SWEEP=1` | ambient Meshtastic and LoRaWAN, as a positive control for the receiver |
+
+`-DDWELL_MS=` sets seconds per candidate. Against a 1 Hz beacon, 5-6 s is enough to decide and
+20 s gives comfortable statistics.
+
+## Reading a result honestly
+
+Three traps this probe has already fallen into, all now instrumented against:
+
+- **Preamble counts name a chirp slope, not a configuration.** SF7/BW125, SF9/BW250 and
+  SF11/BW500 share one slope, and the narrowest receiver scores highest on the widest signal.
+- **`implicit` + `CRC off` validates nothing** and will happily emit 38 bytes of noise after any
+  trigger, at almost any sync word. Only judge a decode with the header and CRC in play.
+- **A zero-length `RX_DONE` is not a packet.** A 1024-candidate sweep produced 23 of them and
+  every one looked like a validated reception.
+
 EBYTE hides the LoRa PHY behind an "air data rate" index, so the parameters a raw SX1262 needs
 in order to hear an E220 are not derivable from public documentation. They are guesses until
 something is heard off the air. This walks the short list of plausible combinations and reports
