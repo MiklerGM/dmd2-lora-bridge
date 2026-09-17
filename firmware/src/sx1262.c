@@ -287,7 +287,11 @@ static bool buffer_read(uint8_t offset, uint8_t *out, size_t n) {
 
 static void fem_power(bool on) {
 #if PIN_FEM_VCTRL >= 0
+    /* The supply has to be up before any control pin is driven, and VFEM_Ctrl only enables an
+     * LDO whose output then ramps through 10 uF. Driving CSD in the same breath violates the
+     * documented power-on sequence on every boot. */
     gpio_set_level((gpio_num_t)PIN_FEM_VCTRL, on);
+    if (on) delay_us(10000);
     gpio_set_level((gpio_num_t)PIN_FEM_CSD, on);
 #else
     (void)on;
@@ -385,12 +389,20 @@ static bool configure(const radio_request_t *req) {
     /* DIO2 drives the antenna switch on this board. Without this the switch stays on the receive
      * path, so transmit raises TxDone and puts nothing on the air - which is exactly how this
      * backend behaved for its first 130 transmissions. */
-    STEP("dio2 rf switch", cmd(CMD_SET_DIO2_RF_SWITCH, &rfsw, 1));
+
     STEP("calibrate", cmd(CMD_CALIBRATE, &calib, 1));
     delay_us(5000);
     /* Image rejection is calibrated per band and is not covered by the calibrate-all above.
      * 0x6B/0x6F is the 863-870 MHz pair from the datasheet's table. */
     STEP("calibrate image", cmd(CMD_CALIBRATE_IMAGE, image, 2));
+    /*
+     * After the calibrations, not before, which is where the working reference puts it and where
+     * this driver did not. On a V4.3 this pin is not a convenience: DIO2 drives the front end's
+     * CPS, and CPS is what selects the amplifier over the bypass path. The board fits it no pull
+     * resistor, so if this write is lost every transmission leaves through the bypass, about
+     * 28 dB down - and only transmission suffers, because CPS is a don't-care while receiving.
+     */
+    STEP("dio2 rf switch", cmd(CMD_SET_DIO2_RF_SWITCH, &rfsw, 1));
     STEP("packet type", cmd(CMD_SET_PACKET_TYPE, &pkt, 1));
     STEP("frequency", set_frequency(req->channel));
     STEP("modulation", set_modulation());
@@ -451,6 +463,25 @@ void radio_init(void) {
                         .mode = GPIO_MODE_INPUT};
     gpio_config(&in);
 
+#if PIN_FEM_VCTRL >= 0
+    /*
+     * Which board is this? V4.3 pulls CSD up to the front end's supply through 10k; V4.2 does
+     * not. It matters because the two revisions wire the front end differently - on V4.3 DIO2
+     * drives CPS and GPIO5 drives CTX, while on V4.2 DIO2 drives CTX and CPS hangs on GPIO46,
+     * which nothing here touches. A floating CPS would enable the amplifier at random from one
+     * packet to the next, which is the shape of the transmit defect being chased.
+     */
+    {
+        gpio_config_t probe = {.pin_bit_mask = (1ULL << PIN_FEM_CSD),
+                               .mode = GPIO_MODE_INPUT};
+        gpio_config(&probe);
+        delay_us(1000);
+        int csd = gpio_get_level((gpio_num_t)PIN_FEM_CSD);
+        ESP_LOGI(TAG, "front end: CSD idles %s -> %s", csd ? "high" : "low",
+                 csd ? "V4.3, KCT8103L (CPS on DIO2)" : "V4.2, GC1109 (CPS on GPIO46, undriven)");
+        gpio_config(&out);
+    }
+#endif
     fem_power(true);
     fem_transmit(false);
 

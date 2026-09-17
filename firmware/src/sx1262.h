@@ -81,7 +81,13 @@
 #define PIN_FEM_CSD 2     /* PA_CSD - chip shutdown, high to enable */
 #endif
 #ifndef PIN_FEM_CTX
-#define PIN_FEM_CTX 5     /* PA_CTX - high selects the PA, low the LNA */
+/*
+ * PA_CTX. Not "high selects the PA" - that reading was wrong and is why CPS went unexamined for
+ * a day. Per the front end's truth table, with CSD high: CTX low is receive through the LNA,
+ * CTX high is transmit, and it is CPS that then chooses the amplifier (1) over the bypass (0).
+ * On a V4.3 CPS is wired to the radio's DIO2 with no pull resistor of its own.
+ */
+#define PIN_FEM_CTX 5
 #endif
 
 /* Heltec drives the TCXO from DIO3. 1.8 V, not RadioLib's 1.6 V default: a reference running
