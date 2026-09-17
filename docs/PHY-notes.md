@@ -11,7 +11,7 @@ table differs (30/27/24/21 dBm instead of 22/17/13/10).
 |---|---|---|
 | REG0 air-rate bits 2-0 | `010` (AT+RATE=2) | air data rate **2.4k**, the module default |
 | REG1 sub-packet bits 7-6 | `00` (AT+PACKET=0) | **200 bytes**, the default |
-| Address | `0x0000` (AT+ADDR=0) | `0x0000`/`0xFFFF` = **broadcast / monitor** — receives every packet on the channel regardless of address |
+| Address | `0x0000` (AT+ADDR=0) | the manual exempts **only `0xFFFF`** from address filtering; `0x0000` is an ordinary address that happens to match, because every module on this bench uses it |
 | REG3 transmission bit 6 | `0` (AT+TRANS=0) | transparent (broadcast), not fixed-point addressing |
 | Channel | `0x12` = 18 | frequency = 850.125 + channel = **868.125 MHz** |
 
@@ -123,9 +123,10 @@ assumption rather than a measurement.
 
 ### Corrections to our own register notes, from the manual
 
-- `REG3` bit 4 is **LBT enable, and we have it set**. The beacon is therefore not a clean 1 Hz:
-  it listens before each transmission and backs off, up to 2 s. Any dwell-based sweep gets fewer
-  packets than budgeted.
+- `REG3` bit 4 is **LBT enable, and this build leaves it clear** — the request defaults to
+  `lbt=0`, the built frame carries `REG3 = 0x00`, and the hardware reports `lbt=0` on every
+  apply. An earlier version of this note claimed the opposite and reasoned from it that the
+  beacon was not a clean 1 Hz. It is.
 - `REG1 = 0x24` sets documented **reserved bit 2**; `0x20` is the clean value. Bit 5 (ambient
   RSSI register) is on and harmless.
 - The -129 dBm sensitivity table below is **copied from Semtech** and describes the LLCC68's
@@ -215,8 +216,10 @@ where an SDR stops being the fallback and becomes the right instrument.
 Ordered:
 
 - **2 × EBYTE E220** — the reference path for M5 and the first NOR7E interoperability attempt.
-- **1 × EBYTE E22** — a negative control: it must not receive the E220 fixed-mode link merely
-  because both products contain an SX126x radio.
+- **1 × EBYTE E22** — ordered as a negative control, on the assumption that it must not receive
+  the E220 link merely because both products contain an SX126x radio. **The assumption was
+  wrong**: on air-rate index 2 it hears an E220 and an E220 hears it. It has been far more
+  useful as a second, independent receiver, and as the SX1262 that proves the chip can do this.
 - **1 × Heltec WiFi LoRa 32 V4-compatible ESP32-S3/SX1262 full kit** — a raw SPI radio
   test platform, supplied with an OLED and a separate GNSS module.
 - **A separate set of 868 MHz antennas** — so every radio in the bench and field tests uses an

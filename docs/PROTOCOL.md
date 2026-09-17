@@ -117,8 +117,11 @@ A two-rider packet is 42 bytes → 56 base64 characters.
 ## 3. Radio configuration
 
 Module: **EBYTE E220** family (LLCC68), 868/915 band — identified as `E220-900T30S` in a NOR7E.
-Not E22/SX1262: EBYTE maps the same air-rate index to different SF/BW per chip family, so an
-E22 cannot hear an E220.
+
+> An earlier note here claimed an E22 could not hear an E220, on the theory that EBYTE maps the
+> same air-rate index to different SF/BW per chip family. **Measured on 2026-09-17, that is
+> wrong**: an E22-900T22D on air-rate index 2 decodes an E220, and an E220 decodes it. At this
+> index the two families share a PHY.
 
 The stock app applies this profile for group mode:
 

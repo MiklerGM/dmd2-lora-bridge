@@ -284,6 +284,21 @@ CFG channel=18 power_level=3 lbt=0
 The rest of the group profile — address, air rate, sub-packet size, transparent mode, module
 key — is fixed by the protocol and lives inside the firmware, where it cannot be got wrong from
 the phone. Keep power at level 3 (the weakest step) and the antennas apart; at bench range a
-strong transmitter can overload the receiver. The spare E22 is a useful negative control — it
-must **not** hear the E220s, because EBYTE maps the same air-rate index to different SF/BW on
-the two chip families.
+strong transmitter can overload the receiver. The spare E22 was expected to be a negative
+control, on the theory that EBYTE maps the same air-rate index to different SF/BW on the two chip
+families. Measured, it is not: on index 2 it hears an E220 perfectly well, and it builds with
+`-DE22_MODULE=1` as a second receiver.
+
+## Bench-only build flags
+
+None of these belong in a shipped image; every one is compiled out unless named.
+
+| Flag | What it does |
+|---|---|
+| `-DE22_MODULE=1` | Builds the E220 driver for an **E22** instead: nine registers rather than eight, because NETID sits at 0x02 and pushes the rest up, and configuration mode is `M0=0, M1=1` rather than `M0=1, M1=1`. Wiring and pinout are the same. |
+| `-DE22_MODE_HUNT=1` | Walks all four M0/M1 combinations at boot, asks each for its register block and logs the reply. This is how the E22's configuration mode was established rather than guessed — the manual to hand was for a different package. |
+| `-DE220_AMBIENT_RSSI=<ms>` | Polls the module for the channel's noise floor every `<ms>`, and logs it as dBm. The only instrument here that can tell "no signal" from "far too much signal", which is a distinction this bench has already got wrong once. It costs packets: each poll occupies the UART, so about once a second, and never faster when counting receptions. |
+| `-DBEACON_TX_MS=<ms>` | Transmits a fixed payload on a timer with no phone, no BLE and no DMD2. `-DBEACON_PAYLOAD_ID=<0-4>` selects what it sends, so the layer above the PHY can be read by varying one thing at a time. |
+| `-DSX1262_TX_ALLOWED=1` | Lets the SX1262 backend transmit at all. Off by default: receive is proven, transmit is not, and nobody has put the front end's output on a meter. |
+| `-DPOWER_SWEEP=1` | Rotates four labelled variants and spells each into the payload, so one run at one position yields a whole curve instead of one point. The label is the experiment's only identifier — do not let a second sweep ride on the same letter, which has happened and quietly confounded a whole run. |
+| `-DSX_SPI_TRACE=1` | Logs every SX1262 SPI transaction in the same shape RadioLib's own debug output uses, so the two can be diffed byte for byte. |

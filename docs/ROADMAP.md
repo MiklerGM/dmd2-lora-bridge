@@ -8,6 +8,22 @@ Evidence tags: **[static]** derived from decompiled code · **[bench]** passed o
 
 ---
 
+## Where this stands, 2026-09-17
+
+**Working:** the E220 backend carries DMD2 group traffic, with a stock Android phone joining over
+BLE. Its air interface was measured, not guessed — 868.125 MHz, SF11/BW500, sync 0x55, and an
+EBYTE frame with the payload XOR'd by a fixed 0x12.
+
+The SX1262 backend **receives perfectly (~100 %) and transmits badly (10-30 %)**, against 92-96 %
+for an E220 sending the same frames. Two independent drivers on that board — this one and a
+RadioLib build — fail identically, so it is not a coding mistake in either.
+
+EBYTE's **E22** — the same SX1262 behind their own MCU — was decoded by an E220 at **76.5 %**
+where this driver managed ~10 %, in one run. So the chip is fine and the two families are
+compatible; the fault is in this driver's setup or the Heltec's transmit chain.
+
+---
+
 ## M1 — Does DMD2 accept us at all?  *(no hardware, no radio)* — **PROVEN on a device**
 
 The whole project rests on one untested assumption. Test it before spending anything.
@@ -159,7 +175,9 @@ Configure both E220s to the DMD profile: `ADDR=0, RATE=2 (2.4k), PACKET=0 (200B)
 KEY=0, CHANNEL=18 (868.125 MHz)`, power set to a locally legal value.
 
 **Accept:** phone A encodes a rider set, phone B decodes it back correctly over the air.
-Use the spare E22 as a negative control — it must **not** hear them.
+
+> The original wording used the spare E22 as a negative control that must *not* hear them.
+> It does hear them — see PHY-notes — so it is a second receiver, not a control.
 
 > The original wording also claimed this settles the 24-bit field byte order. It does not.
 > Both ends run *our* codec, so the encoding is self-consistent whatever the order; only a
