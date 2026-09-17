@@ -319,3 +319,53 @@ Moved apart, the same firmware decodes.
 The instrument costs packets if it is run too eagerly: each poll occupies the UART, and the
 first version also flushed the input buffer, which drove reception to zero and briefly looked
 like a second bug. Poll about once a second, and never flush.
+
+## SX1262 transmit into an E220: measured, still unexplained
+
+An SX1262 receives an E220 perfectly and transmits to one badly. Both directions carry the same
+PHY and the same frame; only the direction changes.
+
+| link | share decoded |
+|---|---|
+| E220 → SX1262 | ~100 % |
+| E220 → E220 | 92-96 % |
+| SX1262 → E220, this driver | 10-32 % |
+| SX1262 → E220, RadioLib on the same board | ~26 % |
+
+**Two independent drivers fail identically**, so this is not a coding mistake in either. Their SPI
+command streams were captured and diffed byte for byte.
+
+### Ruled out by measurement, not by argument
+
+Each was a sweep of four variants interleaved at 2 s and labelled by payload letter, so every
+variant met the same conditions and drift cancelled.
+
+- **Transmit power.** Flat across ~40 dB of *received* level, −77 dBm to −33 dBm. Only the very
+  bottom of the range falls off. No budget-limited link behaves this way.
+- **The front end.** Powering the KCT8103L down and leaning on the chip's own output made things
+  worse, not better (2.8 % and 20.7 % against 31.7 % with it on). Its receive path is proven good
+  by the ~100 % reverse direction.
+- **PA duty-cycle/hpMax pair.** Semtech's validated (4,7) at 22 dBm is no better than the
+  off-table (2,1) at 2 dBm, p = 0.46.
+- **TCXO settling.** Holding STDBY_XOSC for 10/40/100 ms before transmit does not help. The 5 ms
+  startup is real and measurable - it shows as exactly 5 ms more time on air - but it is not this.
+- **Preamble length.** 8/16/32/64 symbols, flat. The E220's own preamble was measured indirectly
+  through the RSSI instrument's view of its on-air span: it is *shorter* than ours, not longer.
+- **A varying field in the EBYTE header.** Bytes 2-6 are constant in the E220's own transmissions
+  too, so duplicate suppression would punish it equally.
+
+### One real fix, found here
+
+`SetPaConfig` resets the over-current limit, and both drivers rewrite it to `0x18` - the SX1261's
+60 mA. The SX1262's high-power PA wants `0x38`, 140 mA. A two-factor run at two drive levels put
+the effect at **+11 points, p = 0.01**, consistent in both arms: roughly double the packets
+decoded. It is wrong in RadioLib too.
+
+It is not the answer. At 140 mA the link still sits at ~24 % against an E220's ~96 %.
+
+### What is missing to go further
+
+An E220 reports one bit per packet: decoded or not. Every hypothesis left is about analogue signal
+quality, and one bit cannot separate them. The instrument that can is the probe's view - preamble
+detections, header-valid, CRC errors, RSSI and SNR per attempt - and it needs **a second bare
+SX1262**, because the only one here is the transmitter under test.
