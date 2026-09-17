@@ -50,6 +50,7 @@
 #define REG_TX_MODULATION 0x0889
 #define REG_TX_CLAMP      0x08D8
 #define REG_IQ_CONFIG     0x0736
+#define REG_FREQ_ERROR    0x076B
 #define CMD_SET_RXTX_FALLBACK 0x93
 
 #define IRQ_TX_DONE      (1u << 0)
@@ -647,6 +648,31 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
                 ESP_LOGW(TAG, "rx: %u bytes but not an EBYTE frame", (unsigned)n);
             }
         }
+#ifdef SX_FREQ_ERROR
+        /*
+         * What the modem had to pull the incoming carrier by to lock onto it - so, measured
+         * against a transmitter we trust, the error of this board's own reference.
+         *
+         * Receiving cleanly proves nothing about our frequency: a LoRa receiver tracks the signal
+         * and tolerates a quarter of the bandwidth, 125 kHz here. Transmitting is where an error
+         * has to be inside the *other* end's window, and nothing says an E220's window is as wide
+         * as the theory allows. That would be transmit-only, per-packet, indifferent to power,
+         * identical across two drivers sharing one board, and absent on a module with its own
+         * reference - which is the whole shape of what we are chasing.
+         */
+        {
+            uint8_t fe[3] = {0};
+            if (reg_read(REG_FREQ_ERROR, fe, 3)) {
+                uint32_t raw = ((uint32_t)fe[0] << 16) | ((uint32_t)fe[1] << 8) | fe[2];
+                raw &= 0x0FFFFF;
+                int32_t sign = 1;
+                if (raw & 0x80000) { raw = (~raw + 1) & 0xFFFFF; sign = -1; }
+                /* 1.55 * raw / (1600 / bw_khz), bw = 500 kHz -> 0.484 Hz per count */
+                int32_t hz = sign * (int32_t)((raw * 155u) / 320u);
+                ESP_LOGI(TAG, "freq error %+ld Hz (raw %lu)", (long)hz, (unsigned long)raw);
+            }
+        }
+#endif
         cmd(CMD_CLEAR_IRQ_STATUS, clear, 2);
         break;
     }
