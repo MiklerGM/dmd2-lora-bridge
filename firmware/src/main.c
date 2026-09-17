@@ -444,15 +444,34 @@ static void beacon_task(void *arg) {
     (void)arg;
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(BEACON_TX_MS));
+#ifdef POWER_SWEEP
+        /* Rotate the transmit power and spell the level into the payload, so one trip to one
+         * spot yields the whole curve instead of one point per trip. */
+        static uint8_t sweep_level;
+        sweep_level = (uint8_t)((sweep_level + 1) & 0x03);
+        state_lock();
+        radio_request_t sweep = s_state.req;
+        sweep.power_level = sweep_level;
+        apply_locked(&sweep);
+        state_unlock();
+#endif
         /* The same admission test handle_tx applies, for the same reason: a packet queued for a
          * radio that is not configured is a packet that goes out on unknown settings. */
         bridge_state_t snap = state_snapshot();
         if (!snap.online || !snap.configured) continue;
 
+#ifdef POWER_SWEEP
+        size_t len = 38;
+        char *copy = malloc(len + 1);
+        if (!copy) continue;
+        memset(copy, 'A' + sweep_level, len);
+        copy[len] = '\0';
+#else
         size_t len = strlen(BEACON_PAYLOAD);
         char *copy = malloc(len + 1);
         if (!copy) continue;
         memcpy(copy, BEACON_PAYLOAD, len + 1);
+#endif
         tx_item_t item = {
             .payload = copy,
             .generation = snap.generation,

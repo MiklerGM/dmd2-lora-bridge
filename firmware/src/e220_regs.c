@@ -55,6 +55,9 @@ void e220_build_frame(const e220_config_t *cfg, uint8_t *out) {
 
     reg[3] = (uint8_t)((reg[3] & 0x3F) | ((cfg->packet_size & 0x03) << REG1_PACKET_SHIFT));
     reg[3] = (uint8_t)((reg[3] & (uint8_t)~REG1_POWER_MASK) | (cfg->power & REG1_POWER_MASK));
+#ifdef E220_AMBIENT_RSSI
+    reg[3] |= 0x20;   /* bench: enable the ambient-noise RSSI registers */
+#endif
 
     reg[4] = cfg->channel;
 

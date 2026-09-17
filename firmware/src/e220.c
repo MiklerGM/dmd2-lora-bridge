@@ -5,6 +5,7 @@
 #include "driver/gpio.h"
 #include "driver/uart.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -312,6 +313,34 @@ size_t e220_read_packet(uint8_t *out, size_t out_len, uint32_t idle_gap_ms,
      * transmission. Bounding the first wait is what lets configuration get the port. */
     int n = uart_read_bytes(E220_UART, out, 1, pdMS_TO_TICKS(first_wait_ms));
     if (n <= 0) {
+#ifdef E220_AMBIENT_RSSI
+        /*
+         * Bench instrument, and the only one that answers "is anything on the air at all".
+         * With REG1 bit 5 set the module replies to C0 C1 C2 C3 <addr> <len> with the channel's
+         * current noise floor even in normal mode, so energy can be seen without a packet ever
+         * decoding - which is the question when a transmitter reports success and nothing hears
+         * it. dBm = -(256 - value), per the E220 manual.
+         *
+         * Rate-limited, and with no input flush: this branch is only reached when the read above
+         * found an empty buffer, so there is nothing to discard, and an unthrottled poll spends
+         * enough of every cycle talking to the module to cost real packets. Both of those were
+         * learned the hard way - the first version of this instrument reported the noise floor
+         * beautifully and drove reception to zero.
+         */
+        static int64_t next_poll;
+        int64_t now = esp_timer_get_time();
+        if (now >= next_poll) {
+        next_poll = now + E220_AMBIENT_RSSI * 1000;
+        static const uint8_t req[6] = {0xC0, 0xC1, 0xC2, 0xC3, 0x00, 0x01};
+        uint8_t resp[4] = {0};
+        if (uart_write_bytes(E220_UART, (const char *)req, sizeof(req)) == (int)sizeof(req) &&
+            uart_wait_tx_done(E220_UART, pdMS_TO_TICKS(200)) == ESP_OK) {
+            int got = uart_read_bytes(E220_UART, resp, sizeof(resp), pdMS_TO_TICKS(200));
+            if (got == (int)sizeof(resp) && resp[0] == 0xC1)
+                ESP_LOGI(TAG, "noise %d dBm", -(256 - (int)resp[3]));
+        }
+        }
+#endif
         uart_unlock();
         return 0;
     }

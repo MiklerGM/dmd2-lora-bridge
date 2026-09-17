@@ -284,3 +284,38 @@ The probe's job is also not the bridge's shape: walk a small grid, classify fail
 arrives. It shares nothing with forwarding packets. Once the PHY is measured, a backend becomes
 writable against facts, and `e220_write` / `e220_read_packet` are already the transport-neutral
 seam it would attach to.
+
+## The bench itself was the bug, 2026-09-17
+
+Two boards half a metre apart do not measure a radio link. They measure a receiver in
+saturation, and they answer every question with "no".
+
+An SX1262 backend was declared broken on that bench: correct time on air to the microsecond,
+a byte-perfect transmit buffer, `TxDone` on every attempt, `GetDeviceErrors` clean, every
+command byte-identical to the RadioLib build sitting next to it — and 0 receptions out of more
+than 300. A whole day went into bisecting a transmit path that worked.
+
+**What gave it away** is an instrument worth keeping: the E220 will report the channel's noise
+floor on demand. Set REG1 bit 5, then `C0 C1 C2 C3 <addr> <len>` returns register 0, the current
+ambient RSSI, as `dBm = -(256 - value)` — and it answers in normal mode, without decoding
+anything. Build the receiver with `-DE220_AMBIENT_RSSI=<poll interval ms>`.
+
+It said the channel went from −90 dBm to **−16 dBm** during each transmission. The signal was
+not missing; it was roughly fifty decibels too loud. The reference transmitter measured the
+same, which is why *it* only managed 3 receptions in 22 and why that was read all day as "the
+bench is marginal" instead of "the bench is broken".
+
+Moved apart, the same firmware decodes.
+
+**Two rules follow.**
+
+- Every negative result from a saturated bench is void, including the ones that looked like
+  careful bisection. "Still zero" was the receiver's answer to everything, so nothing tested
+  that way was actually tested.
+- Before trusting any link measurement, read the received level. A working link at these
+  ranges sits near −70 dBm with the floor around −90. Anything above about −40 dBm means the
+  receiver is being shouted at and its verdict is worthless.
+
+The instrument costs packets if it is run too eagerly: each poll occupies the UART, and the
+first version also flushed the input buffer, which drove reception to zero and briefly looked
+like a second bug. Poll about once a second, and never flush.

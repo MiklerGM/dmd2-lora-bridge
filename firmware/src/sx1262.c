@@ -3,6 +3,7 @@
 
 #include "radio.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "driver/gpio.h"
@@ -46,6 +47,10 @@
 #define REG_LORA_SYNC_MSB 0x0740
 #define REG_LORA_SYNC_LSB 0x0741
 #define REG_OCP           0x08E7
+#define REG_TX_MODULATION 0x0889
+#define REG_TX_CLAMP      0x08D8
+#define REG_IQ_CONFIG     0x0736
+#define CMD_SET_RXTX_FALLBACK 0x93
 
 #define IRQ_TX_DONE      (1u << 0)
 #define IRQ_RX_DONE      (1u << 1)
@@ -75,10 +80,31 @@
 #define EBYTE_HEADER_LEN 8
 #define EBYTE_XOR        0x12
 
-/* Deliberately conservative and not derived from a measurement, because there is no measurement:
- * the front end adds unknown gain. These are chip-output dBm, lowest sensible values, and they
- * are why this backend exports no RADIO_TX_DBM. */
-static const int8_t POWER_DBM[4] = {10, 6, 2, -2};
+/* Deliberately conservative and not derived from a measurement of this board, because there is
+ * none: the front end adds unknown gain. This is why the backend exports no RADIO_TX_DBM.
+ *
+ * Not a linear dBm knob either. Writing the wanted dBm straight into SetTxParams and leaving
+ * SetPaConfig at the +22 dBm pair does not produce that power - RadioLib carries a measured
+ * table (radiolib-org/power-tests) precisely because the naive mapping is wrong, and on this
+ * bench the naive version reached an E220 zero times out of 27 where the table reached it. */
+#ifdef POWER_SWEEP
+/* Bench sweep: a deliberately wide span, because the question it answers is whether the front
+ * end is in compression - which shows up as the weak settings decoding better than the strong
+ * ones, and cannot be seen at all across the 8 dB the shipping table covers. */
+static const struct { uint8_t duty, hp_max; int8_t pa_val; } POWER_PA[4] = {
+    {1, 2, 22},   /* ~10 dBm */
+    {1, 1, 22},   /* ~4 dBm  */
+    {4, 1, 6},    /* ~-2 dBm */
+    {2, 2, -5},   /* ~-9 dBm */
+};
+#else
+static const struct { uint8_t duty, hp_max; int8_t pa_val; } POWER_PA[4] = {
+    {1, 2, 22},   /* ~10 dBm */
+    {3, 1, 21},   /* ~6 dBm */
+    {1, 1, 22},   /* ~4 dBm */
+    {2, 1, 14},   /* ~2 dBm */
+};
+#endif
 
 /* ---- bus ----------------------------------------------------------------- */
 
@@ -122,7 +148,33 @@ static bool wait_busy(uint32_t timeout_ms) {
 static bool xfer(const uint8_t *tx, uint8_t *rx, size_t len) {
     if (!wait_busy(100)) return false;
     spi_transaction_t t = {.length = len * 8, .tx_buffer = tx, .rx_buffer = rx};
-    return spi_device_polling_transmit(s_spi, &t) == ESP_OK;
+    bool ok = spi_device_polling_transmit(s_spi, &t) == ESP_OK;
+    /*
+     * BUSY has to be low again before the next command, and it rises a moment *after* NSS does -
+     * so sampling it only on the way in samples the gap, and the chip silently discards whatever
+     * is sent next. Two polling transfers here are microseconds apart, well inside that window.
+     *
+     * This is why a register read taken third in a burst returned 0x20: not register content but
+     * a perfectly formed status byte, STBY_RC with no command status. Reads and writes that
+     * followed a heavy command landed, the ones that followed another register access raced, and
+     * a dropped reg_write is indistinguishable from an applied one at every level this driver
+     * can see - which is how the transmit errata came to be configured by lottery.
+     */
+    if (ok) {
+        delay_us(1);
+        ok = wait_busy(100);
+    }
+#ifdef SX_SPI_TRACE
+    /* Bench only: the same view RadioLib's RLB_SPI debug gives, so the two can be diffed. */
+    if (tx[0] != CMD_GET_IRQ_STATUS && tx[0] != 0xC0) {
+        char line[200];
+        size_t k = 0, show = len > 28 ? 28 : len;
+        for (size_t i = 0; i < show && k + 4 < sizeof(line); i++)
+            k += (size_t)snprintf(line + k, sizeof(line) - k, "%02X ", tx[i]);
+        ESP_LOGI(TAG, "SPI %s%s", line, len > show ? "..." : "");
+    }
+#endif
+    return ok;
 }
 
 static bool cmd(uint8_t opcode, const uint8_t *args, size_t n) {
@@ -152,6 +204,58 @@ static bool reg_write(uint16_t addr, const uint8_t *data, size_t n) {
     return xfer(buf, NULL, n + 3);
 }
 
+static bool reg_read(uint16_t addr, uint8_t *out, size_t n) {
+    uint8_t tx[8] = {0}, rx[8] = {0};
+    if (n + 4 > sizeof(tx)) return false;
+    tx[0] = CMD_READ_REGISTER;
+    tx[1] = (uint8_t)(addr >> 8);
+    tx[2] = (uint8_t)addr;
+    if (!xfer(tx, rx, n + 4)) return false;
+    memcpy(out, &rx[4], n);   /* opcode, address high, address low, one status byte */
+    return true;
+}
+
+/*
+ * SX1262 errata 15.1, "Modulation Quality with 500 kHz LoRa Bandwidth". At BW500 bit 2 of the
+ * TxModulation register must be CLEARED before transmitting; at every other bandwidth it must
+ * be set. Skipping it does not fail anything locally - the chip reports TxDone exactly as
+ * usual - it just degrades the modulation enough that nothing on the other end decodes. That is
+ * precisely what it did here: 49 transmissions reported ok, an E220 half a metre away heard
+ * none of them, and the same pair worked when RadioLib (which applies this) drove the radio.
+ */
+static bool fix_modulation_quality(void) {
+    /* Constant, not a read-modify-write: BW500 is the only bandwidth this backend uses, 0x00 is
+     * what the working reference puts on the wire, and a read that quietly returns a status byte
+     * would otherwise write that status byte straight into a modem register. */
+    uint8_t v = 0x00;
+    return reg_write(REG_TX_MODULATION, &v, 1);
+}
+
+/*
+ * Errata 15.2: the PA clamp is too eager, and into a mismatched antenna it can swallow the
+ * output entirely. Receive never notices, which is what makes it hard to find: the chip reports
+ * a clean TxDone over a transmission of exactly the right length that nothing ever hears.
+ */
+static bool fix_pa_clamping(void) {
+    /* The value RadioLib leaves here on this exact board, taken from its SPI trace rather than
+     * from a read-modify-write: reading this register on this driver returns 0x20 where
+     * RadioLib reads 0xC0, and the working reference is the one worth copying. */
+    uint8_t v = 0xDE;
+    return reg_write(REG_TX_CLAMP, &v, 1);
+}
+
+/* Errata 15.4, standard (non-inverted) IQ. Same source: the reference writes 0x0D here. */
+static bool fix_iq_polarity(void) {
+    uint8_t v = 0x0D;
+    return reg_write(REG_IQ_CONFIG, &v, 1);
+}
+
+/* 60 mA, which is what the reference runs the PA at. */
+static bool set_ocp(void) {
+    uint8_t v = 0x18;
+    return reg_write(REG_OCP, &v, 1);
+}
+
 static bool buffer_write(const uint8_t *data, size_t n) {
     uint8_t buf[2 + 256];
     if (n > 255) return false;
@@ -162,7 +266,7 @@ static bool buffer_write(const uint8_t *data, size_t n) {
 }
 
 static bool buffer_read(uint8_t offset, uint8_t *out, size_t n) {
-    uint8_t tx[3 + 256] = {0}, rx[3 + 256] = {0};
+    uint8_t tx[3 + 256] = {0}, rx[260] = {0};   /* DMA rounds the receive up to 4 */
     if (n > 255) return false;
     tx[0] = CMD_READ_BUFFER;
     tx[1] = offset;
@@ -224,10 +328,11 @@ static bool set_packet_params(uint8_t payload_len) {
 }
 
 static bool set_power(uint8_t level) {
-    /* SX1262 high-power PA, then the output level. The OCP default suits this configuration. */
-    uint8_t pa[4] = {0x04, 0x07, 0x00, 0x01};
+    /* SX1262 PA, then the drive level. The OCP default suits this configuration. */
+    const uint8_t i = level & 0x03;
+    uint8_t pa[4] = {POWER_PA[i].duty, POWER_PA[i].hp_max, 0x00 /* SX1262 */, 0x01};
     if (!cmd(CMD_SET_PA_CONFIG, pa, 4)) return false;
-    uint8_t tx[2] = {(uint8_t)POWER_DBM[level & 0x03], 0x04 /* 200 us ramp */};
+    uint8_t tx[2] = {(uint8_t)POWER_PA[i].pa_val, 0x04 /* 200 us ramp */};
     return cmd(CMD_SET_TX_PARAMS, tx, 2);
 }
 
@@ -238,7 +343,10 @@ static bool configure(const radio_request_t *req) {
     uint8_t pkt = PACKET_TYPE_LORA;
     uint8_t sync[2] = {PHY_SYNC_MSB, PHY_SYNC_LSB};
     uint8_t base[2] = {0x00, 0x00};
+    uint8_t rfsw = 0x01;
+    uint8_t fallback = 0x20;   /* fall back to STDBY_RC, not the reset default of FS */
     uint8_t calib = 0x7F;
+    uint8_t image[2] = {0xD7, 0xDB};   /* 863-870 MHz (datasheet table 9-2) */
     uint8_t irq[8] = {0xFF, 0xFF, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00};
 
     /* Named steps, because "apply failed" on a bus that answers is otherwise a guess. */
@@ -247,17 +355,37 @@ static bool configure(const radio_request_t *req) {
     STEP("standby", set_standby());
     STEP("regulator", cmd(CMD_SET_REGULATOR_MODE, &reg, 1));
     STEP("tcxo", cmd(CMD_SET_DIO3_TCXO, tcxo, 4));
+    /* DIO2 drives the antenna switch on this board. Without this the switch stays on the receive
+     * path, so transmit raises TxDone and puts nothing on the air - which is exactly how this
+     * backend behaved for its first 130 transmissions. */
+    STEP("dio2 rf switch", cmd(CMD_SET_DIO2_RF_SWITCH, &rfsw, 1));
     STEP("calibrate", cmd(CMD_CALIBRATE, &calib, 1));
     delay_us(5000);
+    /* Image rejection is calibrated per band and is not covered by the calibrate-all above.
+     * 0x6B/0x6F is the 863-870 MHz pair from the datasheet's table. */
+    STEP("calibrate image", cmd(CMD_CALIBRATE_IMAGE, image, 2));
     STEP("packet type", cmd(CMD_SET_PACKET_TYPE, &pkt, 1));
     STEP("frequency", set_frequency(req->channel));
     STEP("modulation", set_modulation());
+    STEP("errata 15.1", fix_modulation_quality());
+    STEP("errata 15.2", fix_pa_clamping());
+    STEP("errata 15.4", fix_iq_polarity());
+    STEP("fallback mode", cmd(CMD_SET_RXTX_FALLBACK, &fallback, 1));
     STEP("packet params", set_packet_params(255));
     STEP("sync word", reg_write(REG_LORA_SYNC_MSB, sync, 2));
     STEP("buffer base", cmd(CMD_SET_BUFFER_BASE, base, 2));
     STEP("power", set_power(req->power_level));
+    STEP("ocp", set_ocp());
     /* Everything latched, only RxDone and TxDone on DIO1. */
     STEP("irq params", cmd(CMD_SET_DIO_IRQ_PARAMS, irq, 8));
+    {
+        uint8_t sy[2] = {0, 0}, md = 0, cl = 0, oc = 0;
+        reg_read(REG_LORA_SYNC_MSB, sy, 2);
+        reg_read(REG_TX_MODULATION, &md, 1);
+        reg_read(REG_TX_CLAMP, &cl, 1);
+        reg_read(REG_OCP, &oc, 1);
+        ESP_LOGI(TAG, "regs sync=%02x%02x txmod=%02x clamp=%02x ocp=%02x", sy[0], sy[1], md, cl, oc);
+    }
 #undef STEP
     return true;
 }
@@ -341,7 +469,7 @@ radio_state_t radio_verify(const radio_request_t *req) {
     uint8_t sync[2] = {0, 0};
     uint8_t tx[6] = {CMD_READ_REGISTER, (uint8_t)(REG_LORA_SYNC_MSB >> 8),
                      (uint8_t)REG_LORA_SYNC_MSB, 0x00, 0x00, 0x00};
-    uint8_t rx[6] = {0};
+    uint8_t rx[8] = {0};   /* 6 used; DMA rounds a receive up to a 4-byte boundary */
     bool answered = xfer(tx, rx, 6);
     sync[0] = rx[4];
     sync[1] = rx[5];
@@ -379,11 +507,24 @@ bool radio_send(const uint8_t *data, size_t len) {
     size_t total = EBYTE_HEADER_LEN + len;
 
     uint8_t clear[2] = {0xFF, 0xFF};
+    uint8_t txbase[2] = {0x00, 0x00};
     uint8_t go[3] = {0x00, 0x00, 0x00};   /* no timeout */
     bool ok = set_standby() && set_packet_params((uint8_t)total) &&
+              cmd(CMD_SET_BUFFER_BASE, txbase, 2) &&
               buffer_write(frame, total) && cmd(CMD_CLEAR_IRQ_STATUS, clear, 2);
     if (ok) {
+        uint8_t noerr[2] = {0x00, 0x00};
+        cmd(0x07 /* ClearDeviceErrors */, noerr, 2);
+        /*
+         * Errata 15.1 belongs here, not in configure(): SetPacketParams above puts bit 2 of
+         * REG_TX_MODULATION back, and at BW500 transmitting with it set produces a signal of
+         * exactly the right length and timing that no receiver can demodulate. Applying it once
+         * at startup looks identical in a register dump taken at startup and is useless by the
+         * time a packet goes out.
+         */
+        fix_modulation_quality();
         fem_transmit(true);
+        int64_t t_start = esp_timer_get_time();
         ok = cmd(CMD_SET_TX, go, 3);
         /* At SF11/BW500 a 46-byte frame is about a quarter of a second on the air. */
         int64_t deadline = esp_timer_get_time() + 3000 * 1000;
@@ -397,6 +538,11 @@ bool radio_send(const uint8_t *data, size_t len) {
             delay_us(2000);
         }
         fem_transmit(false);
+        uint8_t st = 0, err[2] = {0, 0};
+        cmd_read(0xC0 /* GetStatus */, &st, 1);
+        cmd_read(0x17 /* GetDeviceErrors */, err, 2);
+        ESP_LOGI(TAG, "send: %u bytes, air %lld us, status 0x%02x, errors 0x%04x", (unsigned)total,
+                 esp_timer_get_time() - t_start, st, (unsigned)((err[0] << 8) | err[1]));
     }
     if (!ok) ESP_LOGW(TAG, "send: %u bytes did not complete", (unsigned)total);
     /* Back to listening whatever happened: a radio parked in standby hears nothing and says
