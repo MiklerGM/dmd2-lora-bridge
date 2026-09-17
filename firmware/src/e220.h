@@ -43,8 +43,11 @@
 #define RADIO_CHANNEL_MIN 0
 #define RADIO_CHANNEL_MAX 80
 
-/* What the bridge comes up on before the phone has said anything. */
+/* What the bridge comes up on before the phone has said anything. Overridable so a diagnostic
+ * build can sit on another channel without a phone to tell it. */
+#ifndef RADIO_DEFAULT_CHANNEL
 #define RADIO_DEFAULT_CHANNEL 18
+#endif
 #define RADIO_DEFAULT_POWER_LEVEL 3
 
 _Static_assert(RADIO_CHANNEL_MIN >= 0 && RADIO_CHANNEL_MIN <= RADIO_CHANNEL_MAX &&

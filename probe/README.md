@@ -9,8 +9,9 @@ backend for it** — see the reasoning in [`../docs/PHY-notes.md`](../docs/PHY-n
 > chirp-slope aliasing that sent the search to SF7/BW125 for most of a day, are in
 > [`../docs/PHY-notes.md`](../docs/PHY-notes.md).
 >
-> What the probe is still for: the payload arrives as 46 bytes that are not the 38 that were
-> sent, so EBYTE's framing (or its CRYPT transform) sits above the PHY and is not yet decoded.
+> The frame above it went the same way: `2C <channel> A0 01 00 00 00 <len>` then the payload
+> **XOR 0x12** — a fixed byte, not the channel, which the first captures made it look like
+> because they were all on channel 18 (= 0x12).
 
 ## Sweep modes
 
@@ -40,11 +41,6 @@ Three traps this probe has already fallen into, all now instrumented against:
 - **A zero-length `RX_DONE` is not a packet.** A 1024-candidate sweep produced 23 of them and
   every one looked like a validated reception.
 
-EBYTE hides the LoRa PHY behind an "air data rate" index, so the parameters a raw SX1262 needs
-in order to hear an E220 are not derivable from public documentation. They are guesses until
-something is heard off the air. This walks the short list of plausible combinations and reports
-what arrives on each.
-
 ```sh
 pio run -t upload && pio device monitor    # needs the board
 make test                                  # the recognizer, no hardware
@@ -54,31 +50,24 @@ make test                                  # the recognizer, no hardware
 
 | Line | Meaning |
 |---|---|
-| `*** DMD HEADER CANDIDATE ***` | A received payload contains a structurally plausible DMD header. Repeat and validate the group hash/protocol CRC before calling the PHY confirmed |
-| `CRC mismatch ... valid LoRa header` | Useful clue: this candidate decoded a LoRa header, but one observation is not proof of DMD traffic or an exact PHY match |
-| `header error ... not this PHY` | Energy on the channel, but the header did not decode — this candidate is wrong |
-| `packet, N bytes` with no `DMD HEADER CANDIDATE` | Something else lives on this channel |
-| `done: 0 packets` | Nothing heard. Next candidate |
+| `preambles N` | how often the correlator locked. Counted, not OR-ed, because the detector is promiscuous: against a beacon of known rate, a real match scores near the transmission count and an alias scores wildly higher or lower |
+| `irq PREAMBLE HDR_OK RX_DONE` with no `CRC_ERR` | a decoded packet. This is what the answer looks like |
+| `irq ... HDR_OK ... CRC_ERR` | header decoded, payload did not. At the right SF/BW this is the LDRO signature |
+| `irq PREAMBLE` alone | locked on a chirp train and never reached a header — a wrong sync word looks exactly like this |
+| `irq none` | nothing correlated at all |
+| `*** DMD HEADER CANDIDATE ***` | the payload decodes to a plausible DMD header. Still needs the group hash and protocol CRC before anything is claimed |
 
-A CRC mismatch with `HEADER_VALID` is more informative than silence, so it is reported rather
-than swallowed. It is still only a clue: repeat it and capture a valid payload before concluding
-that the PHY is right.
-
-The two are separated by reading the radio's own latched interrupt flags, because RadioLib
-returns the same code for both a payload CRC error and a header error — and here they mean
-different things. A header error with no valid header rejects the candidate; a valid header with
-a bad payload CRC keeps it in the candidate set.
-
-If the hit lands inside the printable run rather than at its start, the offset is the number of
-framing bytes the module wraps around the payload — one of the open questions in PHY-notes.
+The flags are read by polling `getIrqFlags()` rather than waiting on DIO1, which only fires on
+`RX_DONE`. Header errors were latching and being silently discarded until that changed — and
+"zero header errors" was then reasoned from, wrongly, for a day.
 
 ## What it cannot do
 
-Validate itself. With nothing transmitting on 868.125 MHz it can prove the board, the radio and
-the pin map, and show the noise floor — nothing more. **The first real run needs a configured
-E220 or a NOR7E on the air.** Until then a silent probe and a broken probe look the same.
-
-Transmission is not attempted and is not the next step: hearing first, and only then answering.
+Validate itself against nothing. With no transmitter on the channel it can prove the board, the
+radio, the pin map and the noise floor, and no more — a silent probe and a deaf one look the
+same. Use the diagnostic beacon in `firmware/` (`-DBEACON_TX_MS=1000`) as the transmitter: it
+needs no phone, no BLE and no DMD2, and its payload is selectable with `-DBEACON_PAYLOAD_ID=`
+so the layer above the PHY can be read by varying one thing at a time.
 
 ## The front end will be off
 

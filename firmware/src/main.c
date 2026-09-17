@@ -409,7 +409,37 @@ static void tx_task(void *arg) {
  * is roughly 250 ms of air. So does the stock 1.5 s DMD pacing, which is the protocol's choice
  * rather than ours; this is a bench tool and the interval is a build flag so it can be raised.
  */
+/*
+ * Selectable so the payload can be varied between runs without touching anything else. What
+ * the module puts on the air is 46 bytes when 38 go in, and the difference lives above the
+ * PHY - so the way to read it is to change the input and watch which output bytes move.
+ *
+ * 1 and 2 are the discriminator: same length, every byte constant, different constant. If only
+ * a contiguous run of the received bytes changes, the rest is EBYTE framing and its size falls
+ * straight out. If all 46 change, a transform is mixing the whole payload and the CRYPT
+ * registers - which are write-only and therefore unprovable by readback - become the suspect.
+ * 3 and 4 give the length relationship, and 4 is long enough to cross a sub-packet boundary if
+ * one exists.
+ */
+#ifndef BEACON_PAYLOAD_ID
+#define BEACON_PAYLOAD_ID 0
+#endif
+#if BEACON_PAYLOAD_ID == 0
 static const char BEACON_PAYLOAD[] = "0gICABAREhMUFRYXGBkaGxwdHh8gISIjJCW+7w";
+#elif BEACON_PAYLOAD_ID == 1
+static const char BEACON_PAYLOAD[] = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+#elif BEACON_PAYLOAD_ID == 2
+static const char BEACON_PAYLOAD[] = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+#elif BEACON_PAYLOAD_ID == 3
+static const char BEACON_PAYLOAD[] = "AAAAAAAAAA";
+#elif BEACON_PAYLOAD_ID == 4
+static const char BEACON_PAYLOAD[] =
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+#else
+#error "BEACON_PAYLOAD_ID must be 0..4"
+#endif
+_Static_assert(sizeof(BEACON_PAYLOAD) - 1 <= PACKET_MAX, "beacon payload too long");
 
 static void beacon_task(void *arg) {
     (void)arg;
@@ -605,8 +635,8 @@ void app_main(void) {
     };
     gpio_config(&pair_pin);
 #ifdef BEACON_TX_MS
-    ESP_LOGW(TAG, "DIAGNOSTIC BEACON: transmitting every %d ms with no phone attached",
-             BEACON_TX_MS);
+    ESP_LOGW(TAG, "DIAGNOSTIC BEACON: payload id %d, %u bytes, every %d ms, no phone",
+             BEACON_PAYLOAD_ID, (unsigned)(sizeof(BEACON_PAYLOAD) - 1), BEACON_TX_MS);
     if (xTaskCreate(beacon_task, "beacon", 3072, NULL, 5, NULL) != pdPASS) {
         ESP_LOGE(TAG, "cannot create beacon task");
         abort();

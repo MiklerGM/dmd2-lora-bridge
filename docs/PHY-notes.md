@@ -84,26 +84,42 @@ FCC filings, which measure the thing directly rather than inferring it:
 Slope 122.07 kHz/ms plus BW 500 kHz gives SF11 arithmetically. Independently, SF11/BW500 at
 CR 4/5 is 2148 bps — the only one of the three that anyone would label "2.4k".
 
-### Still open: the payload is not the payload
+### The layer above the PHY, also solved
 
-The PHY is solved but the bytes are not ours. A 38-byte beacon payload arrives as **46 bytes**
-that do not contain it:
+The PHY carries an EBYTE frame, not the payload directly. A 38-byte payload arrives as 46 bytes:
 
 ```
-sent      0gICABAREhMUFRYXGBkaGxwdHh8gISIjJCW+7w        (38 bytes ASCII)
-received  ,..<...&"u[QSPS@Wz_GT@KJUPysUjevZz*u[A[xXQE9%e  (46 bytes)
+2C  CH  A0  01  00  00  00  LEN  |  payload XOR 0x12
 ```
 
-A passing CRC means the radio received exactly the bytes the module's MCU handed it, so the
-remaining eight bytes and the scrambling live **above** the PHY. Two candidates, both testable
-by changing the beacon payload and watching how the 46 bytes move:
+| Byte | Meaning | How it is known |
+|---|---|---|
+| 0 | `0x2C` | constant across every capture |
+| 1 | **channel number** | tracked 0x12 -> 0x13 when the beacon moved from channel 18 to 19 |
+| 2-3 | `A0 01` | constant across every capture |
+| 4-6 | `00 00 00` | **unverified** - plausibly the address, but ours was only ever 0x0000 |
+| 7 | **payload length** | 0x0A / 0x26 / 0x64 for payloads of 10 / 38 / 100 bytes |
+| 8.. | payload **XOR 0x12** | see below |
 
-- **EBYTE framing.** The manual documents address filtering on receive, which means ADDH/ADDL
-  travel on the air; sub-packet fragmentation implies a length indicator too.
-- **The CRYPT transform.** Registers 06H/07H are described as "a calculation factor to transform
-  and encrypt the air wireless signal". They are **write-only — a read always returns 0**, so
-  `e220_verify()` can never prove the key is zero. Writing 0x0000 explicitly is the only way to
-  rule it out.
+Method: hold everything else still and vary one thing. Two payloads of the same length made of
+different constant bytes separate framing from payload; two payloads of different lengths give
+the overhead. `'A'` (0x41) arrives as 0x53 and `'B'` (0x42) as 0x50 — both exactly XOR 0x12, with
+no dependence on position. Confirmed against the original base64 payload, which predicts
+`"u[QSPS…` and produced exactly that.
+
+**The obfuscation byte is a fixed 0x12, NOT the channel.** This is worth stating because the
+coincidence is a trap: the first captures were all on channel 18, which is 0x12 in hex, so the
+key and the channel byte were identical and the obvious reading was "the key is derived from the
+channel". Moving the beacon to channel 19 moved the header byte to 0x13 and **left the XOR at
+0x12**. Had we not checked, the rule written down here would have been wrong everywhere except
+channel 18.
+
+That is everything an SX1262 backend needs: prepend the eight bytes, XOR the payload on the way
+out, strip and XOR back on the way in.
+
+**Still unverified:** what `0x2C`, `0xA0` and `0x01` mean, and whether bytes 4-6 really are the
+address. Irrelevant for DMD interoperability, where the address is 0 as well, but it is an
+assumption rather than a measurement.
 
 ### Corrections to our own register notes, from the manual
 

@@ -216,9 +216,19 @@ against the true configuration's 71. We read the peak as the answer and filed th
 noise. A preamble-count peak names a *family of three*, and bandwidth has to come from elsewhere
 — here, from FCC filings that measure 548 kHz directly.
 
-**Still open:** a 38-byte payload arrives as 46 bytes that do not contain it, with the CRC
-passing. Whatever the difference is — EBYTE framing, or the write-only CRYPT transform — it sits
-above the PHY, and it is the remaining obstacle to talking to a NOR7E.
+**The layer above it, same day.** The PHY carries an EBYTE frame:
+`2C <channel> A0 01 00 00 00 <len>` followed by the payload **XOR 0x12**. Read off by varying one
+thing at a time — two payloads of equal length and different constant bytes to separate framing
+from payload, two lengths to get the overhead.
+
+The obfuscation byte is a **fixed 0x12 and not the channel**, which is the trap this measurement
+was worth running for: every earlier capture was on channel 18, which is 0x12 in hex, so the key
+and the channel byte were the same number. Moving to channel 19 moved the header byte and left
+the XOR alone. The rule we were about to write down would have been wrong on every channel but
+one.
+
+Together with the PHY this is a complete specification for an SX1262 backend — nothing about
+the air interface is guessed any more.
 
 **Accept:** unchanged. This closes the PHY question, not the interop one.
 

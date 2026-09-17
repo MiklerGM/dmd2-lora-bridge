@@ -56,8 +56,13 @@
 #define FEM_CTX_PIN 5     /* PA_CTX - high selects TX, low selects the LNA */
 #endif
 
-/* Channel 18 of the DMD profile. The one number we are certain of. */
-static const float FREQ_MHZ = 868.125f;
+/* Channel 18 of the DMD profile: 850.125 + channel. Overridable so the probe can follow a
+ * beacon that has been moved, which is how the obfuscation key gets tested against the channel
+ * number it is suspected of being derived from. */
+#ifndef DMD_CHANNEL
+#define DMD_CHANNEL 18
+#endif
+static const float FREQ_MHZ = 850.125f + (float)DMD_CHANNEL;
 
 /* Long enough to catch a position broadcast, short enough to walk the grid while watching. */
 #ifndef DWELL_MS
@@ -330,7 +335,17 @@ void setup() {
 #endif
 }
 
-#if NIBBLE5
+#if LISTEN_SOLVED
+/*
+ * Park on the answer and dump everything that arrives. Not a sweep - the PHY is settled, and
+ * what is being read now is the layer above it: 38 bytes go into the module and 46 come out of
+ * the air, with the CRC passing, so the difference is EBYTE's own framing or its CRYPT
+ * transform. Vary the beacon payload between runs and compare the hex.
+ */
+void loop() {
+    listen(FREQ_MHZ, 500.0f, 11, 0x55, false, 0, true, 5, true);
+}
+#elif NIBBLE5
 /*
  * Confirming a pattern, not searching. In the 256-value sweep at SF11/BW500, fourteen windows
  * produced header errors and twelve of them were sync words ending in nibble 5 - across every
