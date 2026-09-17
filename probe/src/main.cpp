@@ -391,7 +391,17 @@ void loop() {
     frame[3] = 0x01;
     frame[4] = frame[5] = frame[6] = 0x00;
     frame[7] = (uint8_t)len;
+#ifdef POWER_SWEEP
+    /* The same four steps the firmware backend sweeps, spelled into the payload the same way, so
+     * the two transmitters can be compared point by point instead of plateau to single point. */
+    static const int8_t sweep_dbm[4] = {10, 4, -2, -9};
+    static uint8_t lvl = 0;
+    lvl = (uint8_t)((lvl + 1) & 3);
+    radio.setOutputPower(sweep_dbm[lvl]);
+    for (size_t i = 0; i < len; i++) frame[8 + i] = (uint8_t)('A' + lvl) ^ EBYTE_XOR;
+#else
     for (size_t i = 0; i < len; i++) frame[8 + i] = (uint8_t)TX_MARKER[i] ^ EBYTE_XOR;
+#endif
 
     fem_transmit(true);
     int st = radio.transmit(frame, sizeof(frame));

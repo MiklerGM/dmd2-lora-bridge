@@ -250,9 +250,16 @@ static bool fix_iq_polarity(void) {
     return reg_write(REG_IQ_CONFIG, &v, 1);
 }
 
-/* 60 mA, which is what the reference runs the PA at. */
+/*
+ * 140 mA. SetPaConfig resets this register, so it has to be written after it - and the value the
+ * reference writes, 0x18, is the SX1261's 60 mA. On an SX1262 the high-power PA runs into that
+ * limit: measured over a 600 s two-factor run at two drive levels, lifting it to the SX1262's own
+ * 0x38 roughly doubled the share of packets an E220 decoded, +11 points, p = 0.01, consistent in
+ * both arms. It is not the whole story - the link still sits far below an E220 transmitting the
+ * same frames - but it is a real one, and it is wrong in RadioLib too.
+ */
 static bool set_ocp(void) {
-    uint8_t v = 0x18;
+    uint8_t v = 0x38;
     return reg_write(REG_OCP, &v, 1);
 }
 
@@ -316,9 +323,28 @@ static bool set_modulation(void) {
     return cmd(CMD_SET_MODULATION, a, 4);
 }
 
+#ifdef PREAMBLE_SWEEP
+/*
+ * Bench: the E220's own preamble length was never measured - the probe received it with 8
+ * symbols configured, but that setting governs transmission, and a receiver decodes a longer
+ * preamble than it expects. If the module's receiver sniffs the channel rather than listening
+ * continuously, too short a preamble is caught only when it happens to be awake, which reads as
+ * a fixed low success rate that more power cannot move. That is exactly the 20% plateau this
+ * backend hits across 10 dB. Steps ride on power_level so the beacon's payload already labels
+ * them.
+ */
+static const uint16_t SWEEP_PREAMBLE[4] = {8, 16, 32, 64};
+static uint16_t s_preamble = PHY_PREAMBLE;
+#endif
+
 static bool set_packet_params(uint8_t payload_len) {
+#ifdef PREAMBLE_SWEEP
+    const uint16_t pre = s_preamble;
+#else
+    const uint16_t pre = PHY_PREAMBLE;
+#endif
     uint8_t a[6] = {
-        (uint8_t)(PHY_PREAMBLE >> 8), (uint8_t)PHY_PREAMBLE,
+        (uint8_t)(pre >> 8), (uint8_t)pre,
         0x00,          /* explicit header */
         payload_len,
         0x01,          /* CRC on */
@@ -374,7 +400,12 @@ static bool configure(const radio_request_t *req) {
     STEP("packet params", set_packet_params(255));
     STEP("sync word", reg_write(REG_LORA_SYNC_MSB, sync, 2));
     STEP("buffer base", cmd(CMD_SET_BUFFER_BASE, base, 2));
+#ifdef PREAMBLE_SWEEP
+    s_preamble = SWEEP_PREAMBLE[req->power_level & 0x03];
+    STEP("power", set_power(1));   /* fixed ~4 dBm: the sweep varies preamble, not power */
+#else
     STEP("power", set_power(req->power_level));
+#endif
     STEP("ocp", set_ocp());
     /* Everything latched, only RxDone and TxDone on DIO1. */
     STEP("irq params", cmd(CMD_SET_DIO_IRQ_PARAMS, irq, 8));
@@ -506,6 +537,12 @@ bool radio_send(const uint8_t *data, size_t len) {
     for (size_t i = 0; i < len; i++) frame[EBYTE_HEADER_LEN + i] = data[i] ^ EBYTE_XOR;
     size_t total = EBYTE_HEADER_LEN + len;
 
+#ifdef PREAMBLE_SWEEP
+    /* Take the step from the payload itself rather than from the applied power level: the beacon
+     * queues, the transmit task drains, and a one-item lag between them silently shifts every
+     * label by one step. Reading it here makes the label and the setting the same fact. */
+    if (len && data[0] >= 'A' && data[0] <= 'D') s_preamble = SWEEP_PREAMBLE[data[0] - 'A'];
+#endif
     uint8_t clear[2] = {0xFF, 0xFF};
     uint8_t txbase[2] = {0x00, 0x00};
     uint8_t go[3] = {0x00, 0x00, 0x00};   /* no timeout */
@@ -515,6 +552,26 @@ bool radio_send(const uint8_t *data, size_t len) {
     if (ok) {
         uint8_t noerr[2] = {0x00, 0x00};
         cmd(0x07 /* ClearDeviceErrors */, noerr, 2);
+#ifdef TCXO_SETTLE_TEST
+        /*
+         * STDBY_RC powers the TCXO down, so every SetTx restarts it and waits only the 5 ms in
+         * SetDIO3AsTcxoCtrl. The chip calls it ready when the oscillator runs, not when it is on
+         * frequency - which is why XOSC_START_ERR stays clean while the carrier is still walking.
+         * At SF11/BW500 a drift over ~60 kHz/s smears the correlation peak out of its bin, and a
+         * TCXO in its first milliseconds moves far faster than that. Receive never sees it: there
+         * the chip sits in RX for seconds with the oscillator already up.
+         *
+         * Raise the oscillator early and let it settle. The step comes from the payload letter,
+         * so the label and the setting cannot drift apart.
+         */
+        static const uint16_t SETTLE_MS[4] = {0, 10, 40, 100};
+        uint16_t settle = (len && data[0] >= 'A' && data[0] <= 'D') ? SETTLE_MS[data[0] - 'A'] : 0;
+        if (settle) {
+            uint8_t xosc = 0x01;   /* STDBY_XOSC */
+            cmd(CMD_SET_STANDBY, &xosc, 1);
+            delay_us((uint32_t)settle * 1000u);
+        }
+#endif
         /*
          * Errata 15.1 belongs here, not in configure(): SetPacketParams above puts bit 2 of
          * REG_TX_MODULATION back, and at BW500 transmitting with it set produces a signal of
