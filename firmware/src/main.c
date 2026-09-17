@@ -30,7 +30,7 @@
 #include "ble_nus.h"
 #include "cfg_parse.h"
 #include "driver/gpio.h"
-#include "e220.h"
+#include "radio.h"
 #include "led.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -124,16 +124,16 @@ typedef struct {
     bool online;         /* the backend is there and answering */
     bool configured;     /* req is applied to the hardware and read back */
     uint32_t generation; /* changes before every configuration attempt */
-} radio_state_t;
+} bridge_state_t;
 
-static radio_state_t s_state;
+static bridge_state_t s_state;
 
 static void state_lock(void) { xSemaphoreTake(s_state_lock, portMAX_DELAY); }
 static void state_unlock(void) { xSemaphoreGive(s_state_lock); }
 
-static radio_state_t state_snapshot(void) {
+static bridge_state_t state_snapshot(void) {
     state_lock();
-    radio_state_t copy = s_state;
+    bridge_state_t copy = s_state;
     state_unlock();
     return copy;
 }
@@ -154,14 +154,13 @@ static uint8_t floor_power(uint8_t level) {
  * reported. Incrementing first invalidates every queued packet even when the attempt fails:
  * after a write with a mismatched or absent reply, the physical channel is unknown.
  */
-static e220_state_t apply_locked(const radio_request_t *want) {
+static radio_state_t apply_locked(const radio_request_t *want) {
     s_state.generation++;
-    e220_config_t hw = e220_config_for(want);
-    e220_state_t result = e220_apply(&hw);
-    if (result != E220_BUSY) {
-        s_state.online = (result != E220_NO_ANSWER);
-        s_state.configured = (result == E220_OK);
-        if (result == E220_OK) s_state.req = *want;
+    radio_state_t result = radio_apply(want);
+    if (result != RADIO_BUSY) {
+        s_state.online = (result != RADIO_NO_ANSWER);
+        s_state.configured = (result == RADIO_OK);
+        if (result == RADIO_OK) s_state.req = *want;
         led_set_module_ok(s_state.online && s_state.configured);
     }
     return result;
@@ -184,7 +183,7 @@ static int clamp_at(int at, size_t cap) {
  * with every state mutation. Otherwise an old healthy snapshot can be queued after a newer
  * failed one and reopen Android's TX gate. */
 static void send_status_locked(void) {
-    radio_state_t s = s_state;
+    bridge_state_t s = s_state;
     char out[224];
     int at = snprintf(out, sizeof(out),
                       "ST proto=%d radio=%s mode=%s online=%u tx=%u configured=%u "
@@ -203,8 +202,8 @@ static void send_status_locked(void) {
                       sizeof(out));
     }
 #endif
-    /* Last, and space-free by construction: e220_read_firmware strips spaces so a module
-     * cannot inject tokens into a line the phone parses. */
+    /* Last, and space-free by contract: radio_identity() must strip spaces so a radio
+     * cannot inject tokens into a line the phone parses by token. */
     snprintf(out + at, sizeof(out) - (size_t)at, " fw=%s", s_fw[0] ? s_fw : "?");
     ble_nus_send_line(out);
 }
@@ -234,12 +233,12 @@ static void handle_cfg(const char *args) {
     }
 
     state_lock();
-    e220_state_t result = apply_locked(&want);
+    radio_state_t result = apply_locked(&want);
     switch (result) {
-        case E220_OK: ble_nus_send_line("OK"); break;
-        case E220_MISMATCH: ble_nus_send_line("ERR radio configuration mismatch"); break;
-        case E220_NO_ANSWER: ble_nus_send_line("ERR radio did not answer"); break;
-        case E220_BUSY: ble_nus_send_line("ERR radio busy"); break;
+        case RADIO_OK: ble_nus_send_line("OK"); break;
+        case RADIO_MISMATCH: ble_nus_send_line("ERR radio configuration mismatch"); break;
+        case RADIO_NO_ANSWER: ble_nus_send_line("ERR radio did not answer"); break;
+        case RADIO_BUSY: ble_nus_send_line("ERR radio busy"); break;
     }
     /* Either way: the status carries online= and configured=, so a refusal is visible rather
      * than just a line the phone logs and forgets. */
@@ -261,7 +260,7 @@ static void handle_tx(const char *b64, size_t len) {
         ble_nus_send_line("ERR tx not enabled in this build");
         return;
     }
-    radio_state_t snap = state_snapshot();
+    bridge_state_t snap = state_snapshot();
     if (!snap.online || !snap.configured) {
         /* Queueing for a radio that is not there only delays the packet until it is too stale
          * to be worth sending, and hides the fault behind a queue. */
@@ -356,7 +355,7 @@ static void tx_task(void *arg) {
             /* No terminator: the module closes the packet on the UART idle gap, so a stray
              * newline here would travel as part of the payload and corrupt it for everyone. */
             if (current) {
-                sent = e220_write((const uint8_t *)item.payload, len);
+                sent = radio_send((const uint8_t *)item.payload, len);
                 if (!sent) {
                     /* The bytes or the idle transition were not confirmed. Leave online as the
                      * last observed fact, but close both TX and RX until CFG/verify recovers.
@@ -387,8 +386,8 @@ static void tx_task(void *arg) {
                 send_status();
             }
             free(item.payload);
-            /* e220_write already blocked until the module returned to idle (AUX high), so no
-             * fixed settling delay is needed here; pacing is the phone's job. */
+            /* radio_send() does not return until the radio is idle again, so no fixed settling
+             * delay is needed here; pacing is the phone's job. */
             taskYIELD();
         }
     }
@@ -447,7 +446,7 @@ static void beacon_task(void *arg) {
         vTaskDelay(pdMS_TO_TICKS(BEACON_TX_MS));
         /* The same admission test handle_tx applies, for the same reason: a packet queued for a
          * radio that is not configured is a packet that goes out on unknown settings. */
-        radio_state_t snap = state_snapshot();
+        bridge_state_t snap = state_snapshot();
         if (!snap.online || !snap.configured) continue;
 
         size_t len = strlen(BEACON_PAYLOAD);
@@ -520,16 +519,15 @@ static void rx_task(void *arg) {
          * Timed against the clock rather than counted in loop passes: those run far faster
          * than the poll interval whenever packets are actually arriving.
          */
-        radio_state_t snap = state_snapshot();
+        bridge_state_t snap = state_snapshot();
         TickType_t due = pdMS_TO_TICKS(snap.online ? RADIO_PROBE_MS : RADIO_RETRY_MS);
         if (xTaskGetTickCount() - last_probe >= due) {
             last_probe = xTaskGetTickCount();
             bool changed = false;
             state_lock();
-            e220_config_t hw = e220_config_for(&s_state.req);
-            e220_state_t st = e220_verify(&hw);
-            /* Busy means the port was in use, which says nothing about the module. */
-            if (st != E220_BUSY) {
+            radio_state_t st = radio_verify(&s_state.req);
+            /* Busy means the bus was in use, which says nothing about the radio. */
+            if (st != RADIO_BUSY) {
                 /*
                  * Two separate facts, which the old single health flag could not tell apart. A
                  * module that answers but holds different registers is present and misconfig-
@@ -537,8 +535,8 @@ static void rx_task(void *arg) {
                  * because it has been wrong for a while would put a green status on a radio
                  * transmitting somewhere else, which is the whole failure this exists to catch.
                  */
-                bool online = (st != E220_NO_ANSWER);
-                bool configured = (st == E220_OK);
+                bool online = (st != RADIO_NO_ANSWER);
+                bool configured = (st == RADIO_OK);
                 changed = (online != s_state.online) || (configured != s_state.configured);
                 /* The first transition away from a confirmed radio invalidates packets that
                  * were accepted before the fault. A later successful probe may reopen TX, but
@@ -571,7 +569,7 @@ static void rx_task(void *arg) {
         /* One byte past the protocol limit distinguishes a real 200-byte packet from an
          * oversized packet whose first 200 bytes merely look valid. The driver drains any
          * remaining bytes to the idle boundary before returning. */
-        size_t n = e220_read_packet(buf, sizeof(buf), IDLE_GAP_MS, RX_POLL_MS);
+        size_t n = radio_receive(buf, sizeof(buf), IDLE_GAP_MS, RX_POLL_MS);
         if (n == 0) continue;
         if (!wire_payload_valid(buf, n)) {
             ESP_LOGW(TAG, "rx dropped: invalid wire payload (%u bytes)", (unsigned)n);
@@ -610,20 +608,20 @@ void app_main(void) {
     s_tx_queue = xQueueCreate(8, sizeof(tx_item_t));
     configASSERT(s_tx_queue != NULL);
 
-    /* Before the radio, so a board that hangs in e220_init still shows it is alive. */
+    /* Before the radio, so a board that hangs in radio_init still shows it is alive. */
     led_init();
 
-    e220_init();
-    e220_read_firmware(s_fw, sizeof(s_fw));
+    radio_init();
+    radio_identity(s_fw, sizeof(s_fw));
 
     state_lock();
     radio_request_t boot = s_state.req;
-    e220_state_t initial = apply_locked(&boot);
+    radio_state_t initial = apply_locked(&boot);
     state_unlock();
-    if (initial != E220_OK) {
+    if (initial != RADIO_OK) {
         ESP_LOGW(TAG, "initial radio configuration failed: %s",
-                 initial == E220_MISMATCH ? "register mismatch"
-                 : initial == E220_BUSY ? "UART busy" : "no answer");
+                 initial == RADIO_MISMATCH ? "register mismatch"
+                 : initial == RADIO_BUSY ? "bus busy" : "no answer");
     }
 
     ble_nus_init(on_ble_line, on_ble_revoke, on_ble_bonds_cleared);
@@ -653,7 +651,7 @@ void app_main(void) {
         abort();
     }
 
-    radio_state_t started = state_snapshot();
+    bridge_state_t started = state_snapshot();
     ESP_LOGI(TAG, "bridge up: proto=%d radio=%s mode=%s ch=%u power_level=%u online=%d",
              BRIDGE_PROTO, RADIO_NAME, BRIDGE_MODE, started.req.channel,
              started.req.power_level, (int)started.online);

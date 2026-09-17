@@ -335,7 +335,73 @@ void setup() {
 #endif
 }
 
-#if LISTEN_SOLVED
+#if TRANSMIT
+/*
+ * The other direction, and the only oracle in this project with no false positives.
+ *
+ * Everything so far has been us interpreting bytes we received. This inverts it: build the frame
+ * the E220 is believed to expect, put it on the air, and let a real E220 in transparent mode
+ * judge. It either prints the marker on its UART or it does not. There is nothing to interpret.
+ *
+ * Frame, measured in docs/PHY-notes.md:
+ *     2C  CH  A0  01  00  00  00  LEN  |  payload XOR 0x12
+ *
+ * The FEM is the trap here. The probe pins PA_CTX low for receive, and leaving it there
+ * transmits into the LNA - the same "deaf probe" failure, in the transmit direction, with every
+ * attempt coming back silent. It has to be driven high for TX and back down afterwards.
+ *
+ * Power stays low deliberately: the receiving E220 is on the same bench, and an overloaded
+ * receiver fails exactly like a wrong frame.
+ */
+#ifndef TX_MARKER
+#define TX_MARKER "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+#endif
+#ifndef TX_DBM
+#define TX_DBM 2
+#endif
+#define EBYTE_XOR 0x12
+
+static void fem_transmit(bool on) {
+#if FEM_VCTRL_PIN >= 0
+    digitalWrite(FEM_CTX_PIN, on ? HIGH : LOW);
+    delay(2);
+#else
+    (void)on;
+#endif
+}
+
+void loop() {
+    static bool ready = false;
+    if (!ready) {
+        int st = radio.begin(FREQ_MHZ, 500.0f, 11, 5, 0x55, TX_DBM, 8);
+        if (st != RADIOLIB_ERR_NONE) { Serial.printf("begin failed: %d\n", st); delay(2000); return; }
+        radio.explicitHeader();
+        radio.setCRC(2);
+        radio.forceLDRO(true);
+        Serial.printf("\nTX on %.3f MHz SF11 BW500 sync0x55 LDRO on, %d dBm\n", FREQ_MHZ, TX_DBM);
+        Serial.printf("marker: \"%s\" (%u bytes)\n", TX_MARKER, (unsigned)(sizeof(TX_MARKER) - 1));
+        ready = true;
+    }
+
+    const size_t len = sizeof(TX_MARKER) - 1;
+    uint8_t frame[8 + len];
+    frame[0] = 0x2C;
+    frame[1] = (uint8_t)DMD_CHANNEL;
+    frame[2] = 0xA0;
+    frame[3] = 0x01;
+    frame[4] = frame[5] = frame[6] = 0x00;
+    frame[7] = (uint8_t)len;
+    for (size_t i = 0; i < len; i++) frame[8 + i] = (uint8_t)TX_MARKER[i] ^ EBYTE_XOR;
+
+    fem_transmit(true);
+    int st = radio.transmit(frame, sizeof(frame));
+    fem_transmit(false);
+
+    Serial.printf("tx %u bytes -> %s\n", (unsigned)sizeof(frame),
+                  st == RADIOLIB_ERR_NONE ? "ok" : "FAILED");
+    delay(2000);
+}
+#elif LISTEN_SOLVED
 /*
  * Park on the answer and dump everything that arrives. Not a sweep - the PHY is settled, and
  * what is being read now is the layer above it: 38 bytes go into the module and 46 come out of
