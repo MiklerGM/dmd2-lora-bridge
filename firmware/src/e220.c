@@ -1,5 +1,7 @@
 #include "e220.h"
 
+#include <stdio.h>
+
 #include <string.h>
 
 #include "driver/gpio.h"
@@ -82,7 +84,12 @@ static bool e220_set_mode(int m0, int m1, const char *name) {
 }
 
 static bool e220_mode_normal(void) { return e220_set_mode(0, 0, "normal"); }
+#ifdef E22_MODULE
+/* The E22's mode table is not the E220's: configuration is mode 2, M0 = 0 and M1 = 1. */
+static bool e220_mode_config(void) { return e220_set_mode(0, 1, "configuration"); }
+#else
 static bool e220_mode_config(void) { return e220_set_mode(1, 1, "configuration"); }
+#endif
 
 void e220_init(void) {
     s_uart_lock = xSemaphoreCreateMutex();
@@ -112,6 +119,33 @@ void e220_init(void) {
     ESP_ERROR_CHECK(uart_param_config(E220_UART, &cfg));
     ESP_ERROR_CHECK(uart_set_pin(E220_UART, PIN_TX, PIN_RX,
                                  UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+#ifdef E22_MODE_HUNT
+    /*
+     * Bench: EBYTE's mode table is not the same across this family, and the manual to hand is for
+     * a different package than the part on the bench. Rather than trust either, walk all four
+     * M0/M1 combinations, ask each for its register block, and print whatever comes back. The
+     * combination that answers with a well-formed C1 frame is configuration mode on this part.
+     */
+    for (int m1 = 0; m1 <= 1; m1++) {
+        for (int m0 = 0; m0 <= 1; m0++) {
+            char name[16];
+            snprintf(name, sizeof(name), "M0=%d M1=%d", m0, m1);
+            e220_set_mode(m0, m1, name);
+            vTaskDelay(pdMS_TO_TICKS(100));
+            uint8_t req[3] = {0xC1, 0x00, E220_REG_COUNT};
+            uint8_t resp[24] = {0};
+            uart_flush_input(E220_UART);
+            uart_write_bytes(E220_UART, (const char *)req, sizeof(req));
+            uart_wait_tx_done(E220_UART, pdMS_TO_TICKS(500));
+            int n = uart_read_bytes(E220_UART, resp, sizeof(resp), pdMS_TO_TICKS(600));
+            char hex[80]; int k = 0;
+            for (int i = 0; i < n && i < 20 && k + 3 < (int)sizeof(hex); i++)
+                k += snprintf(hex + k, sizeof(hex) - k, "%02X ", resp[i]);
+            if (n <= 0) snprintf(hex, sizeof(hex), "(нет ответа)");
+            ESP_LOGI(TAG, "hunt %s -> %d bytes: %s", name, n, hex);
+        }
+    }
+#endif
     if (!e220_mode_normal()) ESP_LOGW(TAG, "normal mode not confirmed during init");
     ESP_LOGI(TAG, "uart up at 9600 8N1 (tx=%d rx=%d m0=%d m1=%d aux=%d)",
              PIN_E220_TX, PIN_E220_RX, PIN_E220_M0, PIN_E220_M1, PIN_E220_AUX);

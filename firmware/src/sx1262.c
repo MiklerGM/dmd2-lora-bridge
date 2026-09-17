@@ -252,11 +252,11 @@ static bool fix_iq_polarity(void) {
 
 /*
  * 140 mA. SetPaConfig resets this register, so it has to be written after it - and the value the
- * reference writes, 0x18, is the SX1261's 60 mA. On an SX1262 the high-power PA runs into that
- * limit: measured over a 600 s two-factor run at two drive levels, lifting it to the SX1262's own
- * 0x38 roughly doubled the share of packets an E220 decoded, +11 points, p = 0.01, consistent in
- * both arms. It is not the whole story - the link still sits far below an E220 transmitting the
- * same frames - but it is a real one, and it is wrong in RadioLib too.
+ * reference writes, 0x18, is the SX1261's 60 mA, where the SX1262's high-power PA is specified at
+ * 0x38. That is a datasheet argument and it is the only one: a first run put the change at +11
+ * points, and a second run of the same design put it at -7. Combined, 36/288 against 45/288,
+ * p = 0.28. The effect does not exist at any size this bench can see, and the first result was
+ * read as a finding when it was noise. Correct by the part number, not by measurement.
  */
 static bool set_ocp(void) {
     uint8_t v = 0x38;

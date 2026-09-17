@@ -354,14 +354,39 @@ variant met the same conditions and drift cancelled.
 - **A varying field in the EBYTE header.** Bytes 2-6 are constant in the E220's own transmissions
   too, so duplicate suppression would punish it equally.
 
-### One real fix, found here
+### A wrong register, but not a fix
 
 `SetPaConfig` resets the over-current limit, and both drivers rewrite it to `0x18` - the SX1261's
-60 mA. The SX1262's high-power PA wants `0x38`, 140 mA. A two-factor run at two drive levels put
-the effect at **+11 points, p = 0.01**, consistent in both arms: roughly double the packets
-decoded. It is wrong in RadioLib too.
+60 mA, where the SX1262's high-power PA is specified at `0x38`. Wrong in RadioLib too, and worth
+correcting on the part number alone.
 
-It is not the answer. At 140 mA the link still sits at ~24 % against an E220's ~96 %.
+**It changes nothing measurable, and the first measurement saying otherwise was noise.** One run
+put it at +11 points, p = 0.01; the same design run again put it at -7. Together, 36/288 against
+45/288, p = 0.28.
+
+Worth keeping as a caution: both runs interleaved their four variants every 2 s, so drift between
+runs is not the explanation. At ~72 attempts per cell and a ~15 % success rate, this link swings
+further than a binomial model predicts - fading and interference move on timescales far longer
+than the interleave. **Do not call an effect of this size real on one run, however clean the
+design looks.**
+
+### The chip is not the problem
+
+An **E22-900T22D** - EBYTE's own module, an SX1262 behind their MCU - was put on the bench beside
+the Heltec and both transmitted to the same E220 receiver in one run:
+
+| transmitter | decoded |
+|---|---|
+| E22, an SX1262 configured by EBYTE | **153/200, 76.5 %** |
+| this driver, same PHY, same frame | 5-9/72, ~10 % |
+
++66.8 points, z = 12.3, p < 0.0001. A bare SX1262 talks to an E220 perfectly well. Whatever is
+wrong is in this driver's configuration or in the Heltec's transmit chain, and it is not an
+incompatibility between the two chip families.
+
+The E22 also settles a question about the bench itself: it decodes the E220 at 64 % and this
+driver at 25 %, the same lopsidedness the E220 receiver shows. Two receivers of different chip
+families agree, so the defect is in what is transmitted, not in one receiver's fussiness.
 
 ### What is missing to go further
 

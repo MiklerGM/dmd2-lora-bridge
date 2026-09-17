@@ -18,7 +18,17 @@ typedef struct {
     uint16_t key;
 } e220_config_t;
 
+/*
+ * The E22 is the same family with one register inserted: NETID at 0x02, which pushes REG0..REG3
+ * and the key up by one. Bit layouts inside those registers match, the write command matches,
+ * and Frequency = 850.125 + CH * 1 MHz matches - so only the count, the offset and the mode pins
+ * differ. Selected with -DE22_MODULE.
+ */
+#ifdef E22_MODULE
+#define E220_REG_COUNT 9
+#else
 #define E220_REG_COUNT 8
+#endif
 #define E220_FRAME_LEN (3 + E220_REG_COUNT)
 #define E220_REPLY_LEN (3 + E220_REG_COUNT)
 
@@ -46,7 +56,11 @@ void e220_build_read_frame(uint8_t *out);
  * encryption key, which this family accepts but never reads back - it answers zero - so
  * comparing them would report a mismatch on every read of a module that is perfectly fine.
  */
+#ifdef E22_MODULE
+#define E220_REG_READBACK 7
+#else
 #define E220_REG_READBACK 6
+#endif
 
 /*
  * Which bits of those registers this driver actually decides, and which therefore mean
