@@ -1,3 +1,6 @@
+/* Compiled only into the build that selects this backend; see radio.h. */
+#ifdef RADIO_BACKEND_E220
+
 #include "radio.h"
 
 #include "e220.h"
@@ -37,3 +40,5 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
 }
 
 size_t radio_identity(char *out, size_t out_len) { return e220_read_firmware(out, out_len); }
+
+#endif /* RADIO_BACKEND_E220 */
