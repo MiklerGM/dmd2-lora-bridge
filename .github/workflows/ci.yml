@@ -24,7 +24,14 @@ jobs:
           java-version: '17'
       # The runner image ships an SDK, but not necessarily platform 35. This accepts the
       # licences so Gradle may fetch whatever is missing instead of failing on it.
+      #
+      # packages: '' because the action otherwise runs `sdkmanager tools`, and Google has removed
+      # `tools` from the SDK repository - so the default made this step fail with "Failed to find
+      # package 'tools'" on a green tree, with no commit of ours involved. Licences are all this
+      # step was ever wanted for; Gradle fetches the rest itself.
       - uses: android-actions/setup-android@v3
+        with:
+          packages: ''
       - uses: gradle/actions/setup-gradle@v4
       - run: make check-android
       - uses: actions/upload-artifact@v4
@@ -87,6 +94,8 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        with:
+          packages: ''    # see the note in the android job
       - uses: gradle/actions/setup-gradle@v4
       - uses: actions/setup-python@v5
         with:
