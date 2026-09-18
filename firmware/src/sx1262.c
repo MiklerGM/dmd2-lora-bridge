@@ -769,6 +769,13 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
     return produced;
 }
 
+/* This backend cannot know. The front end's gain has never been put on a meter, and the chip's
+ * own setting says nothing about what leaves the antenna. */
+bool radio_tx_dbm(int8_t out[4]) {
+    (void)out;
+    return false;
+}
+
 size_t radio_identity(char *out, size_t out_len) {
     /* The chip has no firmware string to report. Naming the PHY is more use in a status line
      * than a blank, and it is space-free as the contract requires. */

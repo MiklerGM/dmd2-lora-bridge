@@ -34,7 +34,10 @@ typedef enum {
  *   RADIO_CHANNEL_MIN/MAX   what the hardware covers
  *   RADIO_DEFAULT_CHANNEL   what it comes up on before the phone says anything
  *   RADIO_DEFAULT_POWER_LEVEL
- *   RADIO_TX_DBM            optional; omitted when the build cannot know what a level is worth
+ *
+ * What a power level is worth in dBm is asked for at runtime instead, through radio_tx_dbm():
+ * an EBYTE module names its own rated power, so that stopped being something the build has to
+ * be told.
  */
 #if defined(RADIO_BACKEND_E220)
 #include "e220.h"
@@ -67,3 +70,11 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
 /* A printable identity string for the status line, or 0 if the radio offers none. Must contain
  * no spaces: it is the value of fw= in a space-separated line the phone parses by token. */
 size_t radio_identity(char *out, size_t out_len);
+
+/*
+ * Fills out[0..3] with what power levels 0..3 are worth in dBm, and returns whether the backend
+ * could know. False is a real answer and the caller must respect it: a backend behind a front
+ * end of unmeasured gain cannot say, and reporting a plausible number would be worse than
+ * reporting nothing, because someone would believe it.
+ */
+bool radio_tx_dbm(int8_t out[4]);

@@ -71,15 +71,12 @@ _Static_assert(RADIO_DEFAULT_POWER_LEVEL >= 0 && RADIO_DEFAULT_POWER_LEVEL <= 3,
  * told reports no tx_dbm at all. An unknown transmit power has to look unknown on the phone:
  * a guessed number is worse than a blank, because it invites someone to trust it.
  */
-#if defined(E220_VARIANT_T30)
-#define RADIO_TX_DBM { 30, 27, 24, 21 }
-#elif defined(E220_VARIANT_T22)
-#define RADIO_TX_DBM { 22, 17, 13, 10 }
-#endif
-
 #endif /* !RADIO_BACKEND_E22 */
 
 void e220_init(void);
+
+/* Fills out with the dBm of power levels 0..3, if the module said what it is. */
+bool e220_tx_dbm(int8_t out[4]);
 
 typedef enum {
     E220_OK,          /* answered, and holding the registers asked about */

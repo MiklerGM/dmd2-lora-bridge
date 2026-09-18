@@ -17,6 +17,9 @@
 /* Pins come from the build environment: the WROOM and the C3 have different GPIO maps,
  * and the C3 has no GPIO 16/17/22/23 at all. See platformio.ini. */
 #define E220_UART UART_NUM_1
+
+/* The part's rated transmit power in dBm, read from its product-information block. */
+static int8_t s_rated_dbm = -1;
 #ifndef PIN_E220_TX
 #define PIN_E220_TX 17
 #endif
@@ -146,6 +149,31 @@ void e220_init(void) {
         }
     }
 #endif
+    /*
+     * Ask the module what it is. Registers 0x80-0x86 are a read-only product-information block:
+     * documented for the E22, undocumented for the E220, and answered by both. The fourth of the
+     * seven bytes is the part's rated power in plain dBm - 0x1E on a 30 dBm module, and that is
+     * what turns "which variant is fitted" from a build flag into a question with an answer.
+     *
+     * Costs one config-mode round trip at boot. A module that does not answer leaves this unset,
+     * and the status line then reports no transmit power at all rather than a guess.
+     */
+    e220_mode_config();
+    {
+        uint8_t req[3] = {0xC1, 0x80, 0x07};
+        uint8_t resp[3 + 7] = {0};
+        uart_flush_input(E220_UART);
+        uart_write_bytes(E220_UART, (const char *)req, sizeof(req));
+        uart_wait_tx_done(E220_UART, pdMS_TO_TICKS(500));
+        int n = uart_read_bytes(E220_UART, resp, sizeof(resp), pdMS_TO_TICKS(600));
+        if (n == (int)sizeof(resp) && resp[0] == 0xC1) {
+            s_rated_dbm = (int8_t)resp[6];
+            ESP_LOGI(TAG, "module reports %d dBm (PID %02X %02X %02X %02X %02X %02X %02X)",
+                     s_rated_dbm, resp[3], resp[4], resp[5], resp[6], resp[7], resp[8], resp[9]);
+        } else {
+            ESP_LOGW(TAG, "module did not answer the product-information read (%d bytes)", n);
+        }
+    }
     if (!e220_mode_normal()) ESP_LOGW(TAG, "normal mode not confirmed during init");
     ESP_LOGI(TAG, "uart up at 9600 8N1 (tx=%d rx=%d m0=%d m1=%d aux=%d)",
              PIN_E220_TX, PIN_E220_RX, PIN_E220_M0, PIN_E220_M1, PIN_E220_AUX);
@@ -273,6 +301,27 @@ e220_state_t e220_verify(const e220_config_t *cfg) {
         return E220_MISMATCH;
     }
     return E220_OK;
+}
+
+/*
+ * What each power level is worth, from the part itself. Both families index REG1 bits 1-0 the
+ * same way and EBYTE publishes one table per rated power, so the rated power is the whole
+ * answer. A module that never said, or said something not in this table, gets no claim made
+ * about it - an unknown transmit power has to look unknown, because a guessed number invites
+ * trust it has not earned.
+ */
+bool e220_tx_dbm(int8_t out[4]) {
+    static const int8_t t30[4] = {30, 27, 24, 21};
+    static const int8_t t22[4] = {22, 17, 13, 10};
+    const int8_t *t = s_rated_dbm == 30 ? t30 : (s_rated_dbm == 22 ? t22 : NULL);
+#if defined(E220_VARIANT_T30) || defined(E22_VARIANT_M30)
+    if (!t) t = t30;   /* the build was told, and the module did not answer */
+#elif defined(E220_VARIANT_T22) || defined(E22_VARIANT_T22)
+    if (!t) t = t22;
+#endif
+    if (!t) return false;
+    memcpy(out, t, 4);
+    return true;
 }
 
 size_t e220_read_firmware(char *out, size_t out_len) {

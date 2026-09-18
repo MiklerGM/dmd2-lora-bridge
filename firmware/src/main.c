@@ -192,16 +192,14 @@ static void send_status_locked(void) {
                       (unsigned)RADIO_TX_ENABLED, (unsigned)(s.online && s.configured),
                       s.req.channel, s.req.power_level, (unsigned)s.req.lbt, MIN_POWER_INDEX);
     at = clamp_at(at, sizeof(out));
-#ifdef RADIO_TX_DBM
-    /* Only a build that was told which module is fitted says anything about dBm. One that was
+    /* Only a radio that knows what its levels are worth says anything about dBm. One that does
      * not stays silent, and the phone shows the transmit power as unknown. */
-    static const int dbm[] = RADIO_TX_DBM;
-    if (s.req.power_level < sizeof(dbm) / sizeof(dbm[0])) {
+    int8_t dbm[4];
+    if (radio_tx_dbm(dbm) && s.req.power_level < 4) {
         at = clamp_at(at + snprintf(out + at, sizeof(out) - (size_t)at, " tx_dbm=%d",
                                     dbm[s.req.power_level]),
                       sizeof(out));
     }
-#endif
     /* Last, and space-free by contract: radio_identity() must strip spaces so a radio
      * cannot inject tokens into a line the phone parses by token. */
     snprintf(out + at, sizeof(out) - (size_t)at, " fw=%s", s_fw[0] ? s_fw : "?");

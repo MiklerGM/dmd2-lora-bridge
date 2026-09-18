@@ -34,17 +34,6 @@
 #endif
 #define RADIO_DEFAULT_POWER_LEVEL 3
 
-/*
- * REG1 bits 1-0 on the 22 dBm parts. The 30 dBm variants read the same index differently, so a
- * build that was not told which is fitted reports no tx_dbm at all rather than a number that
- * invites trust it has not earned.
- */
-#if defined(E22_VARIANT_M30)
-#define RADIO_TX_DBM { 30, 27, 24, 21 }
-#elif defined(E22_VARIANT_T22)
-#define RADIO_TX_DBM { 22, 17, 13, 10 }
-#endif
-
 _Static_assert(RADIO_CHANNEL_MIN >= 0 && RADIO_CHANNEL_MIN <= RADIO_CHANNEL_MAX &&
                RADIO_CHANNEL_MAX <= 80, "E22 channel bounds must stay inside 0..80");
 _Static_assert(RADIO_DEFAULT_CHANNEL >= RADIO_CHANNEL_MIN &&
