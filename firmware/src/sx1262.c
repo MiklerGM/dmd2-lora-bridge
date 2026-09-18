@@ -55,6 +55,8 @@
 
 #define IRQ_TX_DONE      (1u << 0)
 #define IRQ_RX_DONE      (1u << 1)
+#define IRQ_PREAMBLE     (1u << 2)
+#define IRQ_HEADER_VALID (1u << 4)
 #define IRQ_HEADER_ERR   (1u << 5)
 #define IRQ_CRC_ERR      (1u << 6)
 #define IRQ_TIMEOUT      (1u << 9)
@@ -128,6 +130,10 @@ static SemaphoreHandle_t s_lock;
 static radio_request_t s_applied;
 static bool s_have_applied;
 static bool s_in_rx;
+#ifdef RX_STAGES
+static unsigned s_stage_preamble, s_stage_header, s_stage_rx_done, s_stage_hdr_err, s_stage_crc_err;
+static int64_t s_stage_next;
+#endif
 
 #define LOCK_WAIT_MS 2000
 
@@ -822,6 +828,39 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
         uint8_t irq[2] = {0, 0};
         if (!cmd_read(CMD_GET_IRQ_STATUS, irq, 2)) break;
         uint16_t flags = ((uint16_t)irq[0] << 8) | irq[1];
+#ifdef RX_STAGES
+        /*
+         * Where a reception dies, rather than only whether it lived.
+         *
+         * The modem latches each stage separately and the IRQ mask here is 0xFFFF, so all of them
+         * are already being recorded - this loop simply threw the distinction away. Counting them
+         * turns "it fails at acquisition" from an inference into a measurement: no preamble at all
+         * is one problem, a preamble that never yields a valid header is a different one, and a
+         * valid header followed by a CRC error is a third.
+         *
+         * Preamble and header-valid are consumed as they are seen, because they latch early and
+         * would otherwise be counted again on every poll of the same packet.
+         */
+        if (flags & (IRQ_PREAMBLE | IRQ_HEADER_VALID)) {
+            uint8_t eat[2] = {(uint8_t)((flags & (IRQ_PREAMBLE | IRQ_HEADER_VALID)) >> 8),
+                              (uint8_t)(flags & (IRQ_PREAMBLE | IRQ_HEADER_VALID))};
+            if (flags & IRQ_PREAMBLE) s_stage_preamble++;
+            if (flags & IRQ_HEADER_VALID) s_stage_header++;
+            cmd(CMD_CLEAR_IRQ_STATUS, eat, 2);
+        }
+        if (flags & IRQ_HEADER_ERR) s_stage_hdr_err++;
+        if (flags & IRQ_CRC_ERR) s_stage_crc_err++;
+        if (flags & IRQ_RX_DONE) s_stage_rx_done++;
+        {
+            int64_t now = esp_timer_get_time();
+            if (now >= s_stage_next) {
+                s_stage_next = now + 30 * 1000 * 1000;
+                ESP_LOGI(TAG, "stages: preamble %u -> header %u -> rx %u | hdr_err %u crc_err %u",
+                         s_stage_preamble, s_stage_header, s_stage_rx_done,
+                         s_stage_hdr_err, s_stage_crc_err);
+            }
+        }
+#endif
         if (!(flags & (IRQ_RX_DONE | IRQ_CRC_ERR | IRQ_HEADER_ERR))) {
             delay_us(2000);
             continue;
