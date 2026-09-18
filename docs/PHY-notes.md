@@ -391,6 +391,71 @@ The E22 also settles a question about the bench itself: it decodes the E220 at 6
 driver at 25 %, the same lopsidedness the E220 receiver shows. Two receivers of different chip
 families agree, so the defect is in what is transmitted, not in one receiver's fussiness.
 
+### The sync word: a hole in our own foundations, now closed
+
+A reviewer asked a sharp question: did the 256-value sweep that found "sync 0x55" establish what
+an E220 *transmits*, or only a setting on which we *receive* it? Those are not the same claim,
+and a permissive receiver would hide the difference.
+
+He was right that we had not checked. RadioLib's eight-bit argument expands to registers
+`(high | 0x04, low << 4 | 0x04)`, so sweeping all 256 arguments visited 256 of 65536 possible
+register pairs - every combination of the two **high** nibbles, with both low nibbles pinned at
+4. This driver copied that same pair, `0x54 0x54`, from the same formula.
+
+**Measured, receive side** - the sweep rerun over register pairs directly, 30 s per candidate
+against an E220 beacon, three cycles:
+
+| pair | decoded |
+|---|---|
+| `5454`, `5555`, `5050`, `5455`, `5554` | 15, 15, 15, 15, 15 - identical |
+| `5F5F` | 0 |
+| `4444`, `6464` | 0 |
+
+So the high nibbles are matched strictly and the low ones only partly: 0, 4 and 5 are
+interchangeable, F is not. Our pair sits inside a tolerant family, which is exactly why receive
+could never answer the question.
+
+**Measured, transmit side** - four pairs interleaved every 2 s for 776 s, ~94 transmissions each,
+into an E22 receiver:
+
+| pair | decoded |
+|---|---|
+| `5454` (what we send today) | 27.8 % |
+| `5555` | 34.2 % |
+| `5050` | 28.8 % |
+| `4444` (control) | **0 %** |
+
+`5454` against the other two working pairs: +3.7 points, p = 0.52. **No effect.** The control's
+clean zero proves the registers really were being rewritten per packet, so this is a negative
+result rather than an instrument that did nothing.
+
+The hypothesis is closed, and it was worth the day: it fitted every property of the defect -
+transmit-only, power-independent, per-packet, identical in two drivers that share the formula,
+absent on a module that writes its own registers. It simply is not true.
+
+*An early look at this run showed 27 % against 49 % and 44 % on five and nine receptions. It was
+noise, and it vanished by ~90 per cell. Third time on this bench: the same happened with the
+over-current limit and with the antenna.*
+
+### The product-information block
+
+Registers `0x80-0x86` are read-only "product information, 7 bytes" - documented for the E22,
+undocumented for the E220, answered by both. Two samples:
+
+```
+E220, 30 dBm:  00 00 10 1E 0B 00 00
+E22,  22 dBm:  00 22 10 16 0B 00 00
+                  ^^ ^^ ^^
+                  |  |  +-- rated power in dBm: 0x1E = 30, 0x16 = 22
+                  |  +----- same on both 900 MHz parts; plausibly the band
+                  +-------- differs by family
+```
+
+The power byte is what the firmware now reads at boot, which retired the per-variant build flags.
+The band byte is the one worth pinning down next, because it is the only field that would catch a
+mistake nothing else can see: a 400 MHz part accepts channel 18, reads its registers back
+correctly, and tunes to 428 MHz instead of 868. That needs a sample from another band.
+
 ### What is missing to go further
 
 An E220 reports one bit per packet: decoded or not. Every hypothesis left is about analogue signal

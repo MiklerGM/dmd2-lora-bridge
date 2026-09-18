@@ -547,6 +547,13 @@ radio_state_t radio_apply(const radio_request_t *req) {
 }
 
 radio_state_t radio_verify(const radio_request_t *req) {
+#ifdef SYNC_RX_SWEEP
+    /* The sweep is deliberately writing sync words this check would call a mismatch, and a
+     * mismatch takes the bridge out of "configured" - which stops the receive loop, which is
+     * what steps the sweep. Left in, the whole thing freezes on its second candidate. */
+    (void)req;
+    return RADIO_OK;
+#else
     if (!bus_lock()) return RADIO_BUSY;
     uint8_t sync[2] = {0, 0};
     uint8_t tx[6] = {CMD_READ_REGISTER, (uint8_t)(REG_LORA_SYNC_MSB >> 8),
@@ -570,6 +577,7 @@ radio_state_t radio_verify(const radio_request_t *req) {
         return RADIO_MISMATCH;
     }
     return RADIO_OK;
+#endif
 }
 
 bool radio_send(const uint8_t *data, size_t len) {
@@ -619,6 +627,31 @@ bool radio_send(const uint8_t *data, size_t len) {
      * queues, the transmit task drains, and a one-item lag between them silently shifts every
      * label by one step. Reading it here makes the label and the setting the same fact. */
     if (len && data[0] >= 'A' && data[0] <= 'D') s_preamble = SWEEP_PREAMBLE[data[0] - 'A'];
+#endif
+#ifdef SYNC_TX_SWEEP
+    /*
+     * Which sync register pair does an E220's receiver actually require?
+     *
+     * Receive could not answer it. Sweeping this radio's own receiver showed 0x54, 0x55 and 0x50
+     * in the low nibbles decoding an E220 identically - fifteen packets each - while 0x5F and
+     * both high-nibble controls gave a clean zero. So the correlator is strict about the high
+     * nibbles and loose about part of the low ones, and the pair this driver writes sits inside
+     * the tolerant set rather than having been measured.
+     *
+     * Transmit is the only direction that can settle it. 0x4444 is a control: it must decode
+     * nothing. If it decodes as often as the rest, the far end is not checking sync at all and
+     * this whole line of enquiry is wrong.
+     */
+    static const uint8_t SYNC_TX[4][2] = {
+        {0x54, 0x54},   /* A - what both drivers write today */
+        {0x55, 0x55},   /* B - the raw value, never a RadioLib argument */
+        {0x50, 0x50},   /* C - same tolerant family, different low nibbles */
+        {0x44, 0x44},   /* D - control, must be silent */
+    };
+    if (len && data[0] >= 'A' && data[0] <= 'D') {
+        set_standby();
+        reg_write(REG_LORA_SYNC_MSB, SYNC_TX[data[0] - 'A'], 2);
+    }
 #endif
     uint8_t clear[2] = {0xFF, 0xFF};
     uint8_t txbase[2] = {0x00, 0x00};
@@ -699,9 +732,65 @@ bool radio_send(const uint8_t *data, size_t len) {
     return ok;
 }
 
+#ifdef SYNC_RX_SWEEP
+/*
+ * Which sync register pair does an E220 actually transmit?
+ *
+ * The 256-value sweep that found "0x55" swept RadioLib's eight-bit argument, and that argument
+ * expands to (high | 0x04, low << 4 | 0x04) - so it covered all sixteen combinations of the two
+ * high nibbles while pinning both low nibbles at 4. Of 65536 possible register pairs it visited
+ * 256, and exactly one of those decoded.
+ *
+ * The low nibbles were never varied. If the part transmits, say, 0x55 0x55 and the correlator
+ * weighs those bits loosely, this receiver locks anyway - while this transmitter emits 0x54 0x54
+ * and the far end's does not. That would be transmit-only, per-packet, indifferent to power,
+ * identical in both drivers (they share the convention) and absent on a module that writes its
+ * own registers. Which is the whole shape of the defect.
+ *
+ * Receive is where this is cheap to ask: ~100 % against an E220 beacon, so a slice of half a
+ * minute per candidate is plenty. The last two candidates move a high nibble instead, as
+ * negative controls: if those decode, sync matching is far looser than any of this assumes.
+ */
+static const uint8_t SYNC_TRY[][2] = {
+    {0x54, 0x54},   /* what this driver and RadioLib both write */
+    {0x55, 0x55},   /* the raw value, if the byte was never a RadioLib argument */
+    {0x50, 0x50},
+    {0x5F, 0x5F},
+    {0x54, 0x55},
+    {0x55, 0x54},
+    {0x44, 0x44},   /* control: a different high nibble - should not decode */
+    {0x64, 0x64},   /* control */
+};
+#define SYNC_TRY_N (sizeof(SYNC_TRY) / sizeof(SYNC_TRY[0]))
+#ifndef SYNC_SLICE_MS
+#define SYNC_SLICE_MS 30000
+#endif
+static size_t s_sync_i;
+static int64_t s_sync_until;
+static unsigned s_sync_hits;
+
+static void sync_sweep_step(void) {
+    int64_t now = esp_timer_get_time();
+    if (s_sync_until && now < s_sync_until) return;
+    if (s_sync_until) {
+        ESP_LOGI(TAG, "sync %02X%02X -> %u decoded", SYNC_TRY[s_sync_i][0], SYNC_TRY[s_sync_i][1],
+                 s_sync_hits);
+        s_sync_i = (s_sync_i + 1) % SYNC_TRY_N;
+    }
+    s_sync_hits = 0;
+    s_sync_until = now + (int64_t)SYNC_SLICE_MS * 1000;
+    set_standby();
+    reg_write(REG_LORA_SYNC_MSB, SYNC_TRY[s_sync_i], 2);
+    enter_rx();
+}
+#endif
+
 size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_t first_wait_ms) {
     (void)idle_gap_ms;   /* a UART packet boundary; SPI hands over whole packets */
     if (!bus_lock()) return 0;
+#ifdef SYNC_RX_SWEEP
+    sync_sweep_step();
+#endif
     if (!s_in_rx) enter_rx();
 
     size_t produced = 0;
@@ -733,6 +822,9 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
                 if (payload > out_len) payload = out_len;
                 for (size_t i = 0; i < payload; i++) out[i] = frame[EBYTE_HEADER_LEN + i] ^ EBYTE_XOR;
                 produced = payload;
+#ifdef SYNC_RX_SWEEP
+                s_sync_hits++;
+#endif
             } else {
                 ESP_LOGW(TAG, "rx: %u bytes but not an EBYTE frame", (unsigned)n);
             }
