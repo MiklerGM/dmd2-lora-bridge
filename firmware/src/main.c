@@ -460,7 +460,32 @@ static void beacon_task(void *arg) {
         bridge_state_t snap = state_snapshot();
         if (!snap.online || !snap.configured) continue;
 
-#ifdef POWER_SWEEP
+#ifdef WIDE_SWEEP
+        static uint8_t wide_level;
+        wide_level = (uint8_t)((wide_level + 1) & 0x0F);
+        size_t len = 38;
+        char *copy = malloc(len + 1);
+        if (!copy) continue;
+        memset(copy, 'A' + wide_level, len);
+        copy[len] = '\0';
+#elif defined(LENGTH_SWEEP)
+        /*
+         * Does the packet fail at acquisition, or does something accumulate while it is on air?
+         * Four lengths, interleaved, nothing else varying - not power, which is what confounded
+         * the settle sweep. A defect that builds up over the transmission punishes the long ones;
+         * one that lands in the preamble or header does not care.
+         *
+         * Every length is a legal wire payload: none is 1 mod 4, and all are base64 characters.
+         */
+        static const uint8_t SWEEP_LEN[4] = {10, 24, 46, 100};
+        static uint8_t len_level;
+        len_level = (uint8_t)((len_level + 1) & 0x03);
+        size_t len = SWEEP_LEN[len_level];
+        char *copy = malloc(len + 1);
+        if (!copy) continue;
+        memset(copy, 'A' + len_level, len);
+        copy[len] = '\0';
+#elif defined(POWER_SWEEP)
         size_t len = 38;
         char *copy = malloc(len + 1);
         if (!copy) continue;

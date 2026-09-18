@@ -328,7 +328,7 @@ static bool set_modulation(void) {
     return cmd(CMD_SET_MODULATION, a, 4);
 }
 
-#ifdef PREAMBLE_SWEEP
+#if defined(PREAMBLE_SWEEP) || defined(WIDE_SWEEP)
 /*
  * Bench: the E220's own preamble length was never measured - the probe received it with 8
  * symbols configured, but that setting governs transmission, and a receiver decodes a longer
@@ -343,7 +343,7 @@ static uint16_t s_preamble = PHY_PREAMBLE;
 #endif
 
 static bool set_packet_params(uint8_t payload_len) {
-#ifdef PREAMBLE_SWEEP
+#if defined(PREAMBLE_SWEEP) || defined(WIDE_SWEEP)
     const uint16_t pre = s_preamble;
 #else
     const uint16_t pre = PHY_PREAMBLE;
@@ -574,7 +574,33 @@ bool radio_send(const uint8_t *data, size_t len) {
     for (size_t i = 0; i < len; i++) frame[EBYTE_HEADER_LEN + i] = data[i] ^ EBYTE_XOR;
     size_t total = EBYTE_HEADER_LEN + len;
 
-#ifdef PREAMBLE_SWEEP
+#ifdef WIDE_SWEEP
+    /*
+     * A 4x4 grid, every cell labelled by its payload letter, all sixteen interleaved every two
+     * seconds so they meet identical conditions. Rows vary the preamble; columns vary how the
+     * transmission starts, which is where the defect now has to live - a packet three times
+     * longer on air decodes just as often, so nothing accumulates once it is running.
+     *
+     * Reading the grid gives each factor's effect averaged over the other, which is the whole
+     * point: single sweeps kept landing inside the run-to-run swing of this link.
+     */
+    uint8_t start = 0;
+    if (len && data[0] >= 'A' && data[0] <= 'P') {
+        const uint8_t v = (uint8_t)(data[0] - 'A');
+        s_preamble = SWEEP_PREAMBLE[v >> 2];
+        start = (uint8_t)(v & 0x03);
+    }
+    /* Column 1 ramps the PA over 3.4 ms instead of 200 us: gentler spectrum while the first
+     * symbols - the ones the far end has to correlate against - are going out. */
+    {
+        uint8_t pa[4] = {2, 1, 0x00, 0x01};
+        cmd(CMD_SET_PA_CONFIG, pa, 4);
+        uint8_t tp[2] = {14, (uint8_t)(start == 1 ? 0x07 : 0x04)};
+        cmd(CMD_SET_TX_PARAMS, tp, 2);
+        uint8_t ocp = 0x38;
+        reg_write(REG_OCP, &ocp, 1);
+    }
+#elif defined(PREAMBLE_SWEEP)
     /* Take the step from the payload itself rather than from the applied power level: the beacon
      * queues, the transmit task drains, and a one-item lag between them silently shifts every
      * label by one step. Reading it here makes the label and the setting the same fact. */
@@ -617,7 +643,20 @@ bool radio_send(const uint8_t *data, size_t len) {
          * time a packet goes out.
          */
         fix_modulation_quality();
+#ifdef WIDE_SWEEP
+        /* Column 3: hold the oscillator up and let it settle before transmitting. Column 2:
+         * throw the front end over to transmit long before the carrier appears, so any switching
+         * transient is finished well ahead of the preamble. */
+        if (start == 3) {
+            uint8_t xosc = 0x01;
+            cmd(CMD_SET_STANDBY, &xosc, 1);
+            delay_us(40000);
+        }
         fem_transmit(true);
+        if (start == 2) delay_us(19000);
+#else
+        fem_transmit(true);
+#endif
         int64_t t_start = esp_timer_get_time();
         ok = cmd(CMD_SET_TX, go, 3);
         /* At SF11/BW500 a 46-byte frame is about a quarter of a second on the air. */
