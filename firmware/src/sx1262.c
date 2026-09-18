@@ -465,19 +465,24 @@ void radio_init(void) {
 
 #if PIN_FEM_VCTRL >= 0
     /*
-     * Which board is this? V4.3 pulls CSD up to the front end's supply through 10k; V4.2 does
-     * not. It matters because the two revisions wire the front end differently - on V4.3 DIO2
-     * drives CPS and GPIO5 drives CTX, while on V4.2 DIO2 drives CTX and CPS hangs on GPIO46,
-     * which nothing here touches. A floating CPS would enable the amplifier at random from one
-     * packet to the next, which is the shape of the transmit defect being chased.
+     * Which board is this? V4.3 pulls CSD up through 10k, V4.2 does not - and it matters, because
+     * the revisions wire the front end differently: on V4.3 DIO2 drives CPS and GPIO5 drives CTX,
+     * while on V4.2 DIO2 drives CTX and CPS hangs on GPIO46, which nothing here touches. A
+     * floating control input would enable the amplifier at random from packet to packet.
+     *
+     * The pull-up references Vfem, not the main rail, so the supply has to be up before the
+     * question means anything. Reading it first - as the first version of this did - answers
+     * "V4.2" on every board, including one with 4.3 printed on it.
      */
+    gpio_set_level((gpio_num_t)PIN_FEM_VCTRL, 1);
+    delay_us(10000);
     {
         gpio_config_t probe = {.pin_bit_mask = (1ULL << PIN_FEM_CSD),
                                .mode = GPIO_MODE_INPUT};
         gpio_config(&probe);
         delay_us(1000);
         int csd = gpio_get_level((gpio_num_t)PIN_FEM_CSD);
-        ESP_LOGI(TAG, "front end: CSD idles %s -> %s", csd ? "high" : "low",
+        ESP_LOGI(TAG, "front end: with Vfem up, CSD idles %s -> %s", csd ? "high" : "low",
                  csd ? "V4.3, KCT8103L (CPS on DIO2)" : "V4.2, GC1109 (CPS on GPIO46, undriven)");
         gpio_config(&out);
     }
