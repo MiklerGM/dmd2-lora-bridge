@@ -653,6 +653,29 @@ bool radio_send(const uint8_t *data, size_t len) {
         reg_write(REG_LORA_SYNC_MSB, SYNC_TX[data[0] - 'A'], 2);
     }
 #endif
+#ifdef POWER_CLEAN
+    /*
+     * Transmit power, with one variable this time.
+     *
+     * The earlier sweep moved paDutyCycle and hpMax along with the level at every step, so its
+     * collapse at the bottom - 12 of 156 against 117 of 491, p < 1e-5 - cannot be read as either
+     * a power effect or a PA-structure effect. Here the pair is pinned at Semtech's validated
+     * (4, 7) for the SX1262's high-power PA and only SetTxParams moves, over 24 dB.
+     *
+     * The chain puts roughly (chip - 21 dB) at the front end's input, so +22 dBm here is about
+     * +1 dBm there, inside its rating.
+     */
+    static const int8_t CLEAN_DBM[4] = {22, 14, 6, -2};
+    if (len && data[0] >= 'A' && data[0] <= 'D') {
+        set_standby();
+        uint8_t pa[4] = {0x04, 0x07, 0x00, 0x01};
+        cmd(CMD_SET_PA_CONFIG, pa, 4);
+        uint8_t tp[2] = {(uint8_t)CLEAN_DBM[data[0] - 'A'], 0x04};
+        cmd(CMD_SET_TX_PARAMS, tp, 2);
+        uint8_t ocp = 0x38;
+        reg_write(REG_OCP, &ocp, 1);
+    }
+#endif
     uint8_t clear[2] = {0xFF, 0xFF};
     uint8_t txbase[2] = {0x00, 0x00};
     uint8_t go[3] = {0x00, 0x00, 0x00};   /* no timeout */

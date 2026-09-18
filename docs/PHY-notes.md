@@ -364,12 +364,22 @@ of their SPI command streams, not their rates. At this bench's run-to-run swing 
 Each was a sweep of four variants interleaved at 2 s and labelled by payload letter, so every
 variant met the same conditions and drift cancelled.
 
-- **Transmit power.** *Not settled - this one is withdrawn.* The claim was "flat across ~40 dB of
-  received level", and it was wrong twice. Within one run the measured span is **19 dB, −81 to
-  −62 dBm**; the 40 dB figure came from combining runs of different geometry, which the swing
-  below forbids. And the weakest step is not a soft roll-off but a collapse: 12/156 against
-  117/491, p < 1e-5. It also cannot be interpreted, because the power table moves `duty` and
-  `hpMax` along with the level at every step. **Repeat it with the PA pair fixed.**
+- **Transmit power.** Flat, and this time with one variable. The first sweep moved `paDutyCycle`
+  and `hpMax` along with the level at every step, and its collapse at the bottom - 12/156 against
+  117/491, p < 1e-5 - therefore belonged to either. Repeated with the pair pinned at Semtech's
+  validated (4, 7) and only `SetTxParams` moving, over 24 dB with no beacon on the air:
+
+  | chip output | decoded, n ≈ 88 each |
+  |---|---|
+  | +22 dBm | 22.6 % |
+  | +14 dBm | 27.1 % |
+  | +6 dBm | 24.9 % |
+  | −2 dBm | 20.4 % |
+
+  A 4.5-point spread over 16 dB; top three against the bottom, z = 0.87. **The collapse did not
+  reproduce**, so it was the off-table PA pair rather than the level. Note also that the earlier
+  "flat across ~40 dB of received level" was wrong: within one run the measured span is 19 dB,
+  −81 to −62 dBm, and the 40 dB came from combining runs of different geometry.
 - **The front end.** Powering the KCT8103L down and leaning on the chip's own output made things
   worse, not better (2.8 % and 20.7 % against 31.7 % with it on). Its receive path is proven good
   by the ~100 % reverse direction.
