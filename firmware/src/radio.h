@@ -38,10 +38,12 @@ typedef enum {
  */
 #if defined(RADIO_BACKEND_E220)
 #include "e220.h"
+#elif defined(RADIO_BACKEND_E22)
+#include "e22.h"
 #elif defined(RADIO_BACKEND_SX1262)
 #include "sx1262.h"
 #else
-#error "select a radio backend: -DRADIO_BACKEND_E220 or -DRADIO_BACKEND_SX1262"
+#error "select a radio backend: -DRADIO_BACKEND_E220, -DRADIO_BACKEND_E22 or -DRADIO_BACKEND_SX1262"
 #endif
 
 void radio_init(void);

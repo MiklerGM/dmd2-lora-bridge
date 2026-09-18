@@ -289,6 +289,20 @@ control, on the theory that EBYTE maps the same air-rate index to different SF/B
 families. Measured, it is not: on index 2 it hears an E220 perfectly well, and it builds with
 `-DE22_MODULE=1` as a second receiver.
 
+## Radio backends
+
+| Environment | Radio | State |
+|---|---|---|
+| `esp32dev`, `esp32s3`, `esp32c3` | EBYTE E220 (LLCC68) over UART | proven, carries group traffic |
+| `esp32dev_e22` | EBYTE E22 (SX1262) over UART | proven on the bench, full bridge path untested |
+| `heltec_sx1262` | bare SX1262 over SPI | receives perfectly, **transmits badly** - see PHY-notes |
+
+The two EBYTE parts are one driver. `-DE22_MODULE` selects the E22's nine-register block and
+its M0=0/M1=1 configuration mode, and it must be set for the whole build: it changes the length
+of a register frame, so a translation unit compiled without it would place the channel byte
+somewhere the rest of the firmware does not look. That is why it lives in the environment's
+`build_flags` rather than in a header.
+
 ## Bench-only build flags
 
 None of these belong in a shipped image; every one is compiled out unless named.

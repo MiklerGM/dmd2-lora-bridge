@@ -33,8 +33,14 @@ typedef struct {
 #define E220_REPLY_LEN (3 + E220_REG_COUNT)
 
 /* The DMD group profile, as read out of the stock driver. */
+/* Bench: -DE220_AIR_RATE=0 moves the module to 0.3 kbps, which is SF12/BW125 rather than the
+ * group's SF11/BW500, so a bandwidth-specific transmit defect can be tested for. */
+#ifndef E220_AIR_RATE
+#define E220_AIR_RATE 2
+#endif
+
 #define E220_GROUP_CONFIG                                                 \
-    (e220_config_t) { .address = 0, .channel = 18, .air_rate = 2,         \
+    (e220_config_t) { .address = 0, .channel = 18, .air_rate = E220_AIR_RATE, \
                       .power = 3, .packet_size = 0, .transparent = true,  \
                       .lbt = false, .key = 0 }
 

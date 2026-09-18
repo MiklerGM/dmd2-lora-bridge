@@ -3,6 +3,9 @@ test:
 	@gcc -std=c11 -Wall -Wextra -Werror -o /tmp/test_e220_regs \
 		test/test_e220_regs.c src/e220_regs.c
 	@/tmp/test_e220_regs
+	@gcc -std=c11 -Wall -Wextra -Werror -DE22_MODULE=1 -Isrc -o /tmp/test_e22_regs \
+		test/test_e22_regs.c src/e220_regs.c
+	@/tmp/test_e22_regs
 	@gcc -std=c11 -Wall -Wextra -Werror -o /tmp/test_led_priority test/test_led_priority.c
 	@/tmp/test_led_priority
 	@gcc -std=c11 -Wall -Wextra -Werror -o /tmp/test_cfg_parse \

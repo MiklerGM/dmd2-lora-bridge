@@ -252,6 +252,28 @@ the air interface is guessed any more.
 
 ---
 
+## M5.7 — A second working radio: the E22 — **PROVEN on hardware**
+
+The bare SX1262 transmits badly (see PHY-notes). EBYTE's E22 is the same chip behind their own
+MCU and output stage, and on this bench an E220 decodes **96 %** of what it sends against 17 %
+from the bare part. That makes it the SX1262 that works, and worth a backend of its own rather
+than a bench flag.
+
+It is one driver, not two: the E22's register block is the E220's with **NETID inserted at
+0x02**, pushing REG0..REG3 and the key up by one, and its configuration mode is **M0=0, M1=1**
+rather than M0=1, M1=1. Both live behind `-DE22_MODULE`, which the build defines globally
+because it changes how long a register frame is.
+
+The configuration mode was established by measurement, not by the manual - the one to hand
+covers a different package, and EBYTE's mode tables differ between them. A boot-time hunt walks
+all four M0/M1 combinations, asks each for its register block, and prints what answers.
+
+**Accept:** configured, transmitted and received against both an E220 and a bare SX1262.
+**Still open:** the full bridge path - phone, BLE, DMD2 IPC - has not been run on it. It has
+been a beacon and a receiver, nothing more.
+
+---
+
 ## M6 — Live interop with a real NOR7E  *(the actual goal)*
 
 Join a real group ride with one cooperating NOR7E owner. Internet off after joining.

@@ -24,7 +24,13 @@
 #include "cfg_parse.h"
 #include "e220_regs.h"
 
-/* ---- what this backend is, for the status line and the build's own limits ------------- */
+/* ---- what this backend is, for the status line and the build's own limits -------------
+ *
+ * The E22 shares every line of this driver and supplies its own identity from e22.h, so the
+ * block below belongs to the E220 selection alone. Everything after it - the types, the API -
+ * is common to both parts.
+ */
+#ifndef RADIO_BACKEND_E22
 
 /* Reported as radio= for diagnostics; compatibility is defined by proto/mode/capabilities. */
 #define RADIO_NAME "e220"
@@ -70,6 +76,8 @@ _Static_assert(RADIO_DEFAULT_POWER_LEVEL >= 0 && RADIO_DEFAULT_POWER_LEVEL <= 3,
 #elif defined(E220_VARIANT_T22)
 #define RADIO_TX_DBM { 22, 17, 13, 10 }
 #endif
+
+#endif /* !RADIO_BACKEND_E22 */
 
 void e220_init(void);
 

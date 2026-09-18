@@ -66,8 +66,22 @@
  * The measured E220 PHY. Not parameters to tune - every one of them was established on hardware
  * and changing any breaks demodulability with the group. See docs/PHY-notes.md.
  */
+#ifdef PHY_ALT_RATE
+/*
+ * Bench: the same family at EBYTE air rate 0 rather than 2. Semtech's erratum 15.1 says plainly
+ * that "some sensitivity degradation may be observed on any LoRa device, when receiving signals
+ * transmitted by the SX1261/2 with a LoRa BW of 500 kHz" - which is this project's symptom in the
+ * vendor's own words, and is bandwidth-specific. Moving both ends off 500 kHz tests exactly that.
+ *
+ * 0.3 kbps is SF12/BW125 by the LoRa rate identity: 12 * 125000 * 0.8 / 4096 = 293 bps. At a
+ * 32.8 ms symbol LDRO is genuinely required, which it already is.
+ */
+#define PHY_SF        12
+#define PHY_BW_CODE   0x04   /* 125 kHz */
+#else
 #define PHY_SF        11
 #define PHY_BW_CODE   0x06   /* 500 kHz */
+#endif
 #define PHY_CR_CODE   0x01   /* 4/5 */
 #define PHY_LDRO      0x01   /* forced on: the chip's own rule would leave it off here */
 #define PHY_PREAMBLE  8

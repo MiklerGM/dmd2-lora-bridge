@@ -1,14 +1,13 @@
-/* Compiled only into the build that selects this backend; see radio.h. */
-#ifdef RADIO_BACKEND_E220
+/* Compiled only into the build that selects one of these backends; see radio.h. */
+#if defined(RADIO_BACKEND_E220) || defined(RADIO_BACKEND_E22)
 
 #include "radio.h"
 
-#include "e220.h"
-
 /*
- * The E220 behind the seam. An adapter and nothing else - e220.c is untouched, because the
- * driver was already proven on hardware and rewriting working register code to fit a new
- * signature is how proven things stop being proven.
+ * EBYTE's UART modules behind the seam - E220 and E22 both, because they are one driver. An
+ * adapter and nothing else: e220.c is untouched, since the driver was already proven on
+ * hardware and rewriting working register code to fit a new signature is how proven things
+ * stop being proven.
  */
 
 static radio_state_t from_e220(e220_state_t s) {
@@ -41,4 +40,4 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
 
 size_t radio_identity(char *out, size_t out_len) { return e220_read_firmware(out, out_len); }
 
-#endif /* RADIO_BACKEND_E220 */
+#endif /* RADIO_BACKEND_E220 || RADIO_BACKEND_E22 */
