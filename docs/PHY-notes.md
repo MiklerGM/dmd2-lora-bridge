@@ -331,20 +331,45 @@ PHY and the same frame; only the direction changes.
 | link | share decoded |
 |---|---|
 | E220 → SX1262 | ~100 % |
-| E220 → E220 | 92-96 % |
-| SX1262 → E220, this driver | 10-32 % |
-| SX1262 → E220, RadioLib on the same board | ~26 % |
+| an EBYTE module → an EBYTE module | **100 %** |
+| SX1262 → EBYTE, this driver | **22.0 %** (95 % CI 20.3-23.8) |
 
-**Two independent drivers fail identically**, so this is not a coding mistake in either. Their SPI
-command streams were captured and diffed byte for byte.
+Those are the numbers after excluding slots where our own transmission collided with the control
+beacon, which is the correction that matters most here: **the control was also the interferer.**
+Reconstructing every transmit slot from the reception timestamps (the fit accounts for 536 of 536
+receptions within ±200 ms) splits the run cleanly:
+
+| | trials | decoded |
+|---|---|---|
+| collision-free (\|offset\| > 0.45 s) | 2211 | **22.0 %** |
+| colliding | 948 | 5.2 % |
+
+So the 17 % this document used to quote is a mixture of a 22 % link and a 5 % collision floor with
+30 % of the weight on the floor. The same correction applied to the reference transmitter takes it
+from 96.9 % to **939 of 939 — exactly 100 %**, its 65 losses being 59 collisions with us, 6 inside
+one 24-second blackout, and none unexplained.
+
+**The true comparison is 100 % against 22 %.**
+
+That also proves the receiver hears us perfectly well: our transmissions *deny the channel* to a
+link that is otherwise flawless, and the losses concentrate exactly where the control starts
+inside our packet. Whatever is wrong, it is not that nothing arrives.
+
+**Two independent drivers fail identically** - but the evidence for that is the byte-for-byte diff
+of their SPI command streams, not their rates. At this bench's run-to-run swing (below) 26 % and
+22 % are indistinguishable.
 
 ### Ruled out by measurement, not by argument
 
 Each was a sweep of four variants interleaved at 2 s and labelled by payload letter, so every
 variant met the same conditions and drift cancelled.
 
-- **Transmit power.** Flat across ~40 dB of *received* level, −77 dBm to −33 dBm. Only the very
-  bottom of the range falls off. No budget-limited link behaves this way.
+- **Transmit power.** *Not settled - this one is withdrawn.* The claim was "flat across ~40 dB of
+  received level", and it was wrong twice. Within one run the measured span is **19 dB, −81 to
+  −62 dBm**; the 40 dB figure came from combining runs of different geometry, which the swing
+  below forbids. And the weakest step is not a soft roll-off but a collapse: 12/156 against
+  117/491, p < 1e-5. It also cannot be interpreted, because the power table moves `duty` and
+  `hpMax` along with the level at every step. **Repeat it with the PA pair fixed.**
 - **The front end.** Powering the KCT8103L down and leaning on the chip's own output made things
   worse, not better (2.8 % and 20.7 % against 31.7 % with it on). Its receive path is proven good
   by the ~100 % reverse direction.
@@ -352,7 +377,10 @@ variant met the same conditions and drift cancelled.
   off-table (2,1) at 2 dBm, p = 0.46.
 - **TCXO settling.** Holding STDBY_XOSC for 10/40/100 ms before transmit does not help. The 5 ms
   startup is real and measurable - it shows as exactly 5 ms more time on air - but it is not this.
-- **Preamble length.** 8/16/32/64 symbols, flat. The E220's own preamble was measured indirectly
+- **Preamble length.** 8/16/32/64 symbols: 20.6 / 23.7 / 20.5 / 23.3 % on collision-free slots,
+  n ≈ 550 each, χ² = 2.78 on 3 df. A well-powered null, and the treatments are *proven* to have
+  reached the air: the reception timestamps carry them, at +29/+93/+232 ms above the shortest
+  preamble against +33/+98/+229 ms predicted from the symbol count. The E220's own preamble was measured indirectly
   through the RSSI instrument's view of its on-air span: it is *shorter* than ours, not longer.
 - **A varying field in the EBYTE header.** Bytes 2-6 are constant in the E220's own transmissions
   too, so duplicate suppression would punish it equally.
@@ -436,6 +464,20 @@ absent on a module that writes its own registers. It simply is not true.
 *An early look at this run showed 27 % against 49 % and 44 % on five and nine receptions. It was
 noise, and it vanished by ~90 per cell. Third time on this bench: the same happened with the
 over-current limit and with the antenna.*
+
+### Why effects keep evaporating, quantified
+
+The link's own success probability wanders. Over 200 s blocks the collision-free rate runs from
+4.5 % to 45.6 %; across 32 blocks χ² = 100.4 on 31 df, z = +8.8, implying the underlying p drifts
+with **sd ≈ 0.09-0.11** and a correlation time of about **115 s**.
+
+The operational consequence is the single most useful number on this bench: **a 600 s run holds
+only ~5 independent draws of that drift, so its mean carries ±4.5 points of non-binomial error on
+top of the binomial.** Two runs cannot be compared for anything below roughly **20 points**.
+
+Interleaving variants every 2 s is fully common-mode against this and is unaffected - the design
+was right. Only cross-run comparison is poisoned, and that is exactly what produced all three
+effects that later evaporated.
 
 ### The product-information block
 
