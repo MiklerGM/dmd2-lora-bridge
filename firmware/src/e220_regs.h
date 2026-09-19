@@ -5,7 +5,19 @@
 
 #include "cfg_parse.h"
 
-/* Register packing for the EBYTE E220, kept free of ESP-IDF so it can be tested on the host. */
+/* Register packing for EBYTE's UART modules, kept free of ESP-IDF so it can be tested on the
+ * host.
+ *
+ * One layout per part, chosen at run time rather than by the build. The E22 is the E220 with
+ * NETID inserted at 0x02, which pushes REG0..REG3 and the key up by one byte; everything else -
+ * the bit fields inside those registers, the command set, the frequency identity - matches. The
+ * part announces itself at init (see e220.c), so a single image drives either module and a
+ * mismatched build flag stops being a thing that can happen. */
+
+typedef enum {
+    E220_PART_E220 = 0,   /* eight registers, configuration mode M0=1 M1=1 */
+    E220_PART_E22  = 1,   /* nine registers with NETID at 0x02, configuration mode M0=0 M1=1 */
+} e220_part_t;
 
 typedef struct {
     uint16_t address;
@@ -18,36 +30,43 @@ typedef struct {
     uint16_t key;
 } e220_config_t;
 
-/*
- * The E22 is the same family with one register inserted: NETID at 0x02, which pushes REG0..REG3
- * and the key up by one. Bit layouts inside those registers match, the write command matches,
- * and Frequency = 850.125 + CH * 1 MHz matches - so only the count, the offset and the mode pins
- * differ. Selected with -DE22_MODULE.
- */
-#ifdef E22_MODULE
-#define E220_REG_COUNT 9
-#else
-#define E220_REG_COUNT 8
-#endif
-#define E220_FRAME_LEN (3 + E220_REG_COUNT)
-#define E220_REPLY_LEN (3 + E220_REG_COUNT)
+/* Buffers are sized for the larger part; the live length comes from e220_frame_len(). */
+#define E220_REG_MAX   9
+#define E220_FRAME_MAX (3 + E220_REG_MAX)
+#define E220_REPLY_MAX (3 + E220_REG_MAX)
 
-/* The DMD group profile, as read out of the stock driver. */
-/* Bench: -DE220_AIR_RATE=0 moves the module to 0.3 kbps, which is SF12/BW125 rather than the
- * group's SF11/BW500, so a bandwidth-specific transmit defect can be tested for. */
+/* Selects the layout. Called once from init with whatever the hardware turned out to be;
+ * defaults to the E220 so a module that never answers is still driven with something. */
+void e220_regs_select(e220_part_t part);
+e220_part_t e220_regs_part(void);
+
+/* "e220" or "e22", for the status line the phone parses. */
+const char *e220_part_name(void);
+
+size_t e220_reg_count(void);       /* 8 or 9 */
+size_t e220_frame_len(void);       /* 3 + reg_count */
+size_t e220_readback_count(void);  /* how many of them a read gives a usable answer for */
+
+/* Which bits of register i are compared, for a mismatch report that says what actually differs. */
+uint8_t e220_readback_mask_at(size_t i);
+
+/* Bench: -DE220_AIR_RATE=0 moves the module to its slowest rate. On this family indices 0, 1
+ * and 2 are all 2.4 kbps, so it is not the bandwidth change it looks like. */
 #ifndef E220_AIR_RATE
 #define E220_AIR_RATE 2
 #endif
 
-#define E220_GROUP_CONFIG                                                 \
+/* The DMD group profile, as read out of the stock driver. */
+#define E220_GROUP_CONFIG                                                     \
     (e220_config_t) { .address = 0, .channel = 18, .air_rate = E220_AIR_RATE, \
-                      .power = 3, .packet_size = 0, .transparent = true,  \
+                      .power = 3, .packet_size = 0, .transparent = true,      \
                       .lbt = false, .key = 0 }
 
 /* Builds the fixed DMD profile around the three backend-neutral settings from CFG. */
 e220_config_t e220_config_for(const radio_request_t *req);
 
-/* Builds the C0 write-register frame. out must hold E220_FRAME_LEN bytes.
+/* Builds the C0 write-register frame. out must hold E220_FRAME_MAX bytes; e220_frame_len() of
+ * them are written.
  *
  * C0 writes to the module's flash, so it belongs to a deliberate configuration change and
  * nowhere else. Anything that only wants to know what the module is holding uses the read
@@ -56,27 +75,6 @@ void e220_build_frame(const e220_config_t *cfg, uint8_t *out);
 
 /* Builds the C1 read-register request for the same block. out must hold 3 bytes. */
 void e220_build_read_frame(uint8_t *out);
-
-/*
- * How many of the registers a read gives back a usable answer for. The last two hold the
- * encryption key, which this family accepts but never reads back - it answers zero - so
- * comparing them would report a mismatch on every read of a module that is perfectly fine.
- */
-#ifdef E22_MODULE
-#define E220_REG_READBACK 7
-#else
-#define E220_REG_READBACK 6
-#endif
-
-/*
- * Which bits of those registers this driver actually decides, and which therefore mean
- * something when read back. The rest were copied from the stock template because they are
- * reserved or undocumented for this family, and comparing bits nobody chose would report a
- * mismatch on a module that is behaving perfectly. Everything needed by the data path is here:
- * UART baud/parity, address, air rate, sub-packet size, power, channel, fixed/transparent, LBT,
- * and the RSSI-append bit that would corrupt the payload for every receiver.
- */
-extern const uint8_t E220_READBACK_MASK[E220_REG_READBACK];
 
 /* Returns the first meaningful register that differs, or -1. Reserved bits and the write-only
  * key are intentionally outside this comparison; UART baud/parity are part of it. */

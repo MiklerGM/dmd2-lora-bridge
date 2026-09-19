@@ -12,7 +12,6 @@
  * what lets a board with a bare SX1262 join a group of E220s.
  */
 
-#define RADIO_NAME "sx1262"
 
 /*
  * Transmission is OFF by default, and that is deliberate rather than cautious boilerplate.

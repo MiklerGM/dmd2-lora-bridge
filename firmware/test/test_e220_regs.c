@@ -7,12 +7,18 @@
 
 static void dump(const char *label, const uint8_t *f) {
     printf("%-28s", label);
-    for (int i = 0; i < E220_FRAME_LEN; i++) printf(" %02X", f[i]);
+    for (size_t i = 0; i < e220_frame_len(); i++) printf(" %02X", f[i]);
     printf("\n");
 }
 
+static void e22_layout(void);
+
 int main(void) {
-    uint8_t f[E220_FRAME_LEN];
+    /* Layout is chosen at run time now, so both parts fit in one binary. Everything below this
+     * line is the E220's; the E22's follows at the end. */
+    e220_regs_select(E220_PART_E220);
+
+    uint8_t f[E220_FRAME_MAX];
 
     /* 1. Logical CFG fields land in the backend profile without letting Android choose the
      *    interop-critical register constants. */
@@ -25,9 +31,9 @@ int main(void) {
 
     /* A write reply may differ in fields we did not choose, but a different RF setting must
      * report MISMATCH. This is the same predicate apply and the periodic verify both use. */
-    uint8_t reply[E220_REG_COUNT];
+    uint8_t reply[E220_REG_MAX];
     e220_build_frame(&mapped, f);
-    memcpy(reply, &f[3], sizeof(reply));
+    memcpy(reply, &f[3], e220_reg_count());
     reply[3] ^= 0x3C;  /* reserved bits */
     reply[6] = 0xBE;   /* write-only key */
     reply[7] = 0xEF;
@@ -46,28 +52,29 @@ int main(void) {
     for (size_t i = 0; i < sizeof(owned) / sizeof(owned[0]); i++) {
         for (uint8_t bit = 1; bit != 0; bit <<= 1) {
             if ((owned[i].mask & bit) == 0) continue;
-            uint8_t changed[E220_REG_COUNT];
-            memcpy(changed, reply, sizeof(changed));
+            uint8_t changed[E220_REG_MAX];
+            memcpy(changed, reply, e220_reg_count());
             changed[owned[i].reg] ^= bit;
             assert(e220_first_mismatch(changed, &mapped) == owned[i].reg);
         }
     }
     printf("%-28s ok\n", "meaningful reply fields");
 
-    uint8_t response[E220_REPLY_LEN] = {0xC1, 0x00, E220_REG_COUNT};
-    assert(e220_reply_valid(response, sizeof(response)));
+    const size_t rlen = e220_frame_len();
+    uint8_t response[E220_REPLY_MAX] = {0xC1, 0x00, (uint8_t)e220_reg_count()};
+    assert(e220_reply_valid(response, rlen));
     response[0] = 0xC0;
-    assert(e220_reply_valid(response, sizeof(response)));
+    assert(e220_reply_valid(response, rlen));
     response[0] = 0xC2;
-    assert(!e220_reply_valid(response, sizeof(response)));
+    assert(!e220_reply_valid(response, rlen));
     response[0] = 0xC1;
     response[1] = 1;
-    assert(!e220_reply_valid(response, sizeof(response)));
+    assert(!e220_reply_valid(response, rlen));
     response[1] = 0;
     response[2]--;
-    assert(!e220_reply_valid(response, sizeof(response)));
-    response[2] = E220_REG_COUNT;
-    assert(!e220_reply_valid(response, sizeof(response) - 1));
+    assert(!e220_reply_valid(response, rlen));
+    response[2] = (uint8_t)e220_reg_count();
+    assert(!e220_reply_valid(response, rlen - 1));
     printf("%-28s ok\n", "reply structure");
 
     /* 2. The stock profile: what a DMD tablet asks for, power index 0. */
@@ -142,10 +149,81 @@ int main(void) {
      *    had just been superseded. */
     uint8_t rd[3];
     e220_build_read_frame(rd);
-    assert(rd[0] == 0xC1 && rd[1] == 0x00 && rd[2] == E220_REG_COUNT);
-    assert(E220_REG_READBACK < E220_REG_COUNT);   /* the key never reads back */
+    assert(rd[0] == 0xC1 && rd[1] == 0x00 && rd[2] == e220_reg_count());
+    assert(e220_readback_count() < e220_reg_count());   /* the key never reads back */
+    e22_layout();
     printf("%-28s ok\n", "read request is C1");
 
     printf("\nall register checks passed\n");
     return 0;
+}
+
+static void frame_matches_the_datasheet_layout(void) {
+    e220_config_t cfg = E220_GROUP_CONFIG;
+    uint8_t f[E220_FRAME_MAX];
+    e220_build_frame(&cfg, f);
+
+    assert(e220_reg_count() == 9);
+    assert(E220_FRAME_MAX == 12);
+
+    const uint8_t want[12] = {
+        0xC0, 0x00, 0x09,   /* write nine registers from address zero */
+        0x00, 0x00,         /* ADDH, ADDL */
+        0x00,               /* NETID - the byte the E220 does not have */
+        0x62,               /* REG0: 9600 8N1, air rate index 2 */
+        0x03,               /* REG1: 240-byte sub-packet, ambient RSSI off, power index 3 */
+        0x12,               /* REG2: channel 18 -> 868.125 MHz */
+        0x00,               /* REG3: transparent, no appended RSSI byte, LBT off */
+        0x00, 0x00,         /* CRYPT */
+    };
+    assert(memcmp(f, want, sizeof(want)) == 0);
+}
+
+static void channel_and_power_land_past_netid(void) {
+    e220_config_t cfg = E220_GROUP_CONFIG;
+    cfg.channel = 19;
+    cfg.power = 1;
+    uint8_t f[E220_FRAME_MAX];
+    e220_build_frame(&cfg, f);
+
+    /* 3 header bytes, then registers: the channel is REG2, which sits one later than on an
+     * E220. Asserting the index rather than the value is the point of this test. */
+    assert(f[3 + 5] == 19);
+    assert((f[3 + 4] & 0x03) == 1);
+    assert(f[3 + 2] == 0x00);   /* NETID untouched by either */
+}
+
+static void readback_compares_seven_registers(void) {
+    e220_config_t cfg = E220_GROUP_CONFIG;
+    uint8_t f[E220_FRAME_MAX];
+    e220_build_frame(&cfg, f);
+
+    assert(e220_readback_count() == 7);
+    assert(e220_first_mismatch(&f[3], &cfg) == -1);
+
+    uint8_t wrong[E220_REG_MAX];
+    memcpy(wrong, &f[3], e220_readback_count());
+    wrong[5] = 20;                                   /* a module sitting on another channel */
+    assert(e220_first_mismatch(wrong, &cfg) == 5);
+
+    memcpy(wrong, &f[3], e220_readback_count());
+    wrong[4] ^= 0x04;                                /* a reserved bit nobody chose */
+    assert(e220_first_mismatch(wrong, &cfg) == -1);
+}
+
+static void e22_layout(void) {
+    /*
+     * The same driver against the other part. NETID at 0x02 pushes every field after it up by
+     * one, so these assert *indices* rather than values - an off-by-one past NETID would
+     * configure the wrong register and the module would answer a perfectly well-formed reply
+     * either way.
+     */
+    e220_regs_select(E220_PART_E22);
+    assert(strcmp(e220_part_name(), "e22") == 0);
+    frame_matches_the_datasheet_layout();
+    channel_and_power_land_past_netid();
+    readback_compares_seven_registers();
+    printf("%-28s ok\n", "e22 layout");
+    e220_regs_select(E220_PART_E220);
+    assert(strcmp(e220_part_name(), "e220") == 0);
 }

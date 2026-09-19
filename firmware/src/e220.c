@@ -92,11 +92,7 @@ static bool e220_mode_normal(void) { return e220_set_mode(0, 0, "normal"); }
  * and an E22 wants M0=0/M1=1 - so it is a variable, set once by detection at init and defaulted
  * to whatever the build selected.
  */
-#ifdef E22_MODULE
-static int s_cfg_m0 = 0, s_cfg_m1 = 1;
-#else
-static int s_cfg_m0 = 1, s_cfg_m1 = 1;
-#endif
+static int s_cfg_m0 = 1, s_cfg_m1 = 1;   /* corrected by detection at init */
 
 static bool e220_mode_config(void) { return e220_set_mode(s_cfg_m0, s_cfg_m1, "configuration"); }
 
@@ -129,30 +125,57 @@ void e220_init(void) {
     ESP_ERROR_CHECK(uart_set_pin(E220_UART, PIN_TX, PIN_RX,
                                  UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
     /*
-     * Which mode pins does this module answer on? Asked carefully, not swept: a fast walk through
-     * all four combinations wedges an E220 badly enough that it ignores everything for the next
-     * ten seconds, which is how this was found. Each attempt goes through the same path a normal
-     * configuration read uses - change mode, wait for AUX on both sides, then ask - and there are
-     * two candidates rather than four, because only M1=1 is configuration on either part.
+     * Which part is this, and which pins mean configuration on it?
+     *
+     * The two questions are one question: an E220 answers at M0=1 M1=1 with eight registers, an
+     * E22 at M0=0 M1=1 with nine, and nothing else answers at all. So each candidate selects a
+     * register layout and a pin pair together, which also settles the chicken-and-egg in asking
+     * "how many registers do you have" before knowing the answer - the read frame is built for
+     * the layout being tried, and a reply of the wrong length simply is not a match.
+     *
+     * Asked carefully, not swept. A fast walk through all four pin combinations wedges an E220
+     * badly enough that it ignores everything for the next ten seconds, which is how that was
+     * found; each attempt here goes through the same path a normal configuration read uses -
+     * change mode, wait for AUX on both sides, ask, and drop back to normal before trying the
+     * other candidate.
      */
-    for (int attempt = 0; attempt < 2; attempt++) {
-        s_cfg_m0 = attempt == 0 ? s_cfg_m0 : !s_cfg_m0;
-        uint8_t req[3] = {0xC1, 0x00, E220_REG_COUNT};
-        uint8_t resp[3 + E220_REG_COUNT] = {0};
+    static const struct { e220_part_t part; int m0, m1; } CANDIDATES[] = {
+        {E220_PART_E220, 1, 1},
+        {E220_PART_E22,  0, 1},
+    };
+    bool identified = false;
+    for (size_t i = 0; i < sizeof(CANDIDATES) / sizeof(CANDIDATES[0]); i++) {
+        e220_regs_select(CANDIDATES[i].part);
+        s_cfg_m0 = CANDIDATES[i].m0;
+        s_cfg_m1 = CANDIDATES[i].m1;
+        uint8_t req[3];
+        e220_build_read_frame(req);
+        uint8_t resp[E220_REPLY_MAX] = {0};
         int n = 0;
         if (e220_mode_config()) {
             uart_flush_input(E220_UART);
             uart_write_bytes(E220_UART, (const char *)req, sizeof(req));
             uart_wait_tx_done(E220_UART, pdMS_TO_TICKS(500));
             wait_aux(500);
-            n = uart_read_bytes(E220_UART, resp, sizeof(resp), pdMS_TO_TICKS(500));
+            n = uart_read_bytes(E220_UART, resp, e220_frame_len(), pdMS_TO_TICKS(500));
         }
-        if (n == (int)sizeof(resp) && (resp[0] == 0xC0 || resp[0] == 0xC1)) {
-            ESP_LOGI(TAG, "configuration mode is M0=%d M1=%d", s_cfg_m0, s_cfg_m1);
+        if (n > 0 && e220_reply_valid(resp, (size_t)n)) {
+            ESP_LOGI(TAG, "module is an %s: %u registers, configuration mode M0=%d M1=%d",
+                     e220_part_name(), (unsigned)e220_reg_count(), s_cfg_m0, s_cfg_m1);
+            identified = true;
             break;
         }
-        ESP_LOGW(TAG, "no answer in M0=%d M1=%d (%d bytes)", s_cfg_m0, s_cfg_m1, n);
+        ESP_LOGW(TAG, "not an %s (M0=%d M1=%d, %d bytes)", e220_part_name(),
+                 s_cfg_m0, s_cfg_m1, n);
         e220_mode_normal();
+    }
+    if (!identified) {
+        /* Nothing answered. Fall back to the E220 layout so the rest of init has something to
+         * work with, and let apply report the failure in its own words. */
+        e220_regs_select(E220_PART_E220);
+        s_cfg_m0 = 1;
+        s_cfg_m1 = 1;
+        ESP_LOGW(TAG, "no module identified; assuming an e220");
     }
 
     /*
@@ -207,7 +230,7 @@ static bool wait_aux(uint32_t timeout_ms) {
 }
 
 e220_state_t e220_apply(const e220_config_t *cfg) {
-    uint8_t frame[E220_FRAME_LEN];
+    uint8_t frame[E220_FRAME_MAX];
     e220_build_frame(cfg, frame);
 
     if (!uart_lock()) {
@@ -219,13 +242,13 @@ e220_state_t e220_apply(const e220_config_t *cfg) {
         return E220_NO_ANSWER;
     }
     uart_flush_input(E220_UART);
-    int written = uart_write_bytes(E220_UART, (const char *)frame, sizeof(frame));
+    int written = uart_write_bytes(E220_UART, (const char *)frame, e220_frame_len());
     bool drained = uart_wait_tx_done(E220_UART, pdMS_TO_TICKS(500)) == ESP_OK;
     bool idle = wait_aux(500);
 
-    uint8_t resp[3 + E220_REG_COUNT] = {0};
+    uint8_t resp[E220_REPLY_MAX] = {0};
     int n = (written == (int)sizeof(frame) && drained && idle)
-                ? uart_read_bytes(E220_UART, resp, sizeof(resp), pdMS_TO_TICKS(500))
+                ? uart_read_bytes(E220_UART, resp, e220_frame_len(), pdMS_TO_TICKS(500))
                 : 0;
     bool normal = e220_mode_normal();
     uart_unlock();
@@ -247,9 +270,9 @@ e220_state_t e220_apply(const e220_config_t *cfg) {
          * M0/M1, a module that is not an E220 - and every one of them looks identical unless
          * the raw reply is visible. Print what actually came back, and what was expected. */
         char got[3 * sizeof(resp) + 1] = {0};
-        char want[3 * E220_REG_COUNT + 1] = {0};
+        char want[3 * E220_REG_MAX + 1] = {0};
         for (int i = 0; i < n && i < (int)sizeof(resp); i++) sprintf(got + 3 * i, "%02X ", resp[i]);
-        for (int i = 0; i < E220_REG_COUNT; i++) sprintf(want + 3 * i, "%02X ", frame[3 + i]);
+        for (size_t i = 0; i < e220_reg_count(); i++) sprintf(want + 3 * i, "%02X ", frame[3 + i]);
         ESP_LOGW(TAG, "apply: reply %d bytes [%s] - expected C0/C1 00 08 [%s]", n, got, want);
         if (!idle) ESP_LOGW(TAG, "apply: AUX stayed low");
         if (state == E220_NO_ANSWER) {
@@ -263,7 +286,7 @@ e220_state_t e220_apply(const e220_config_t *cfg) {
 }
 
 e220_state_t e220_verify(const e220_config_t *cfg) {
-    uint8_t want[E220_FRAME_LEN];
+    uint8_t want[E220_FRAME_MAX];
     e220_build_frame(cfg, want);
     uint8_t req[3];
     e220_build_read_frame(req);
@@ -278,9 +301,9 @@ e220_state_t e220_verify(const e220_config_t *cfg) {
     bool drained = uart_wait_tx_done(E220_UART, pdMS_TO_TICKS(500)) == ESP_OK;
     bool idle = wait_aux(500);
 
-    uint8_t resp[3 + E220_REG_COUNT] = {0};
+    uint8_t resp[E220_REPLY_MAX] = {0};
     int n = (written == (int)sizeof(req) && drained && idle)
-                ? uart_read_bytes(E220_UART, resp, sizeof(resp), pdMS_TO_TICKS(500))
+                ? uart_read_bytes(E220_UART, resp, e220_frame_len(), pdMS_TO_TICKS(500))
                 : 0;
     bool normal = e220_mode_normal();
     uart_unlock();
@@ -299,7 +322,7 @@ e220_state_t e220_verify(const e220_config_t *cfg) {
      */
     int mismatch = e220_first_mismatch(&resp[3], cfg);
     if (mismatch >= 0) {
-        uint8_t mask = E220_READBACK_MASK[mismatch];
+        uint8_t mask = e220_readback_mask_at((size_t)mismatch);
         /* Say which register and what came back: a persistent mismatch keeps the radio down,
          * and this line is what makes it fixable rather than merely visible. */
         ESP_LOGW(TAG, "verify: register %d is %02X, expected %02X (mask %02X)",

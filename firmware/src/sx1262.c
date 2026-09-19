@@ -925,6 +925,8 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
 
 /* This backend cannot know. The front end's gain has never been put on a meter, and the chip's
  * own setting says nothing about what leaves the antenna. */
+const char *radio_name(void) { return "sx1262"; }
+
 bool radio_tx_dbm(int8_t out[4]) {
     (void)out;
     return false;

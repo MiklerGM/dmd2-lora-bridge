@@ -1,5 +1,5 @@
 /* Compiled only into the build that selects one of these backends; see radio.h. */
-#if defined(RADIO_BACKEND_E220) || defined(RADIO_BACKEND_E22)
+#ifdef RADIO_BACKEND_E220
 
 #include "radio.h"
 
@@ -42,4 +42,7 @@ size_t radio_identity(char *out, size_t out_len) { return e220_read_firmware(out
 
 bool radio_tx_dbm(int8_t out[4]) { return e220_tx_dbm(out); }
 
-#endif /* RADIO_BACKEND_E220 || RADIO_BACKEND_E22 */
+/* Whichever of the two parts answered at init. */
+const char *radio_name(void) { return e220_part_name(); }
+
+#endif /* RADIO_BACKEND_E220 */

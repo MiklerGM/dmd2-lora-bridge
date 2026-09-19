@@ -29,7 +29,6 @@ typedef enum {
  * Each backend header supplies its own identity and build limits, which the status line and the
  * CFG range checks read directly:
  *
- *   RADIO_NAME              reported as radio=, so the phone can refuse a backend it cannot drive
  *   RADIO_TX_ENABLED        whether this build may transmit at all
  *   RADIO_CHANNEL_MIN/MAX   what the hardware covers
  *   RADIO_DEFAULT_CHANNEL   what it comes up on before the phone says anything
@@ -41,12 +40,10 @@ typedef enum {
  */
 #if defined(RADIO_BACKEND_E220)
 #include "e220.h"
-#elif defined(RADIO_BACKEND_E22)
-#include "e22.h"
 #elif defined(RADIO_BACKEND_SX1262)
 #include "sx1262.h"
 #else
-#error "select a radio backend: -DRADIO_BACKEND_E220, -DRADIO_BACKEND_E22 or -DRADIO_BACKEND_SX1262"
+#error "select a radio backend: -DRADIO_BACKEND_E220 or -DRADIO_BACKEND_SX1262"
 #endif
 
 void radio_init(void);
@@ -78,3 +75,10 @@ size_t radio_identity(char *out, size_t out_len);
  * reporting nothing, because someone would believe it.
  */
 bool radio_tx_dbm(int8_t out[4]);
+
+/*
+ * What to report as radio=. A function rather than a macro because one EBYTE backend drives two
+ * parts and only finds out which at init - the same reason the power table moved across this
+ * seam. Must be free of spaces: the phone parses the status line by token.
+ */
+const char *radio_name(void);

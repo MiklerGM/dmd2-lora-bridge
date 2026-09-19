@@ -26,14 +26,10 @@
 
 /* ---- what this backend is, for the status line and the build's own limits -------------
  *
- * The E22 shares every line of this driver and supplies its own identity from e22.h, so the
- * block below belongs to the E220 selection alone. Everything after it - the types, the API -
- * is common to both parts.
+ * One backend, two parts. The E220 and the E22 share every line of this driver and differ by one
+ * inserted register and a different configuration-mode pin pair, both settled at init - so the
+ * name is reported by radio_name() rather than fixed here, and the limits below hold for both.
  */
-#ifndef RADIO_BACKEND_E22
-
-/* Reported as radio= for diagnostics; compatibility is defined by proto/mode/capabilities. */
-#define RADIO_NAME "e220"
 
 /*
  * Transmission is permitted in this build. It is a build-time admission switch, not evidence
@@ -57,7 +53,7 @@
 #define RADIO_DEFAULT_POWER_LEVEL 3
 
 _Static_assert(RADIO_CHANNEL_MIN >= 0 && RADIO_CHANNEL_MIN <= RADIO_CHANNEL_MAX &&
-               RADIO_CHANNEL_MAX <= 80, "E220 channel bounds must stay inside 0..80");
+               RADIO_CHANNEL_MAX <= 80, "EBYTE channel bounds must stay inside 0..80");
 _Static_assert(RADIO_DEFAULT_CHANNEL >= RADIO_CHANNEL_MIN &&
                RADIO_DEFAULT_CHANNEL <= RADIO_CHANNEL_MAX,
                "default channel must be accepted by this backend");
@@ -71,7 +67,7 @@ _Static_assert(RADIO_DEFAULT_POWER_LEVEL >= 0 && RADIO_DEFAULT_POWER_LEVEL <= 3,
  * told reports no tx_dbm at all. An unknown transmit power has to look unknown on the phone:
  * a guessed number is worse than a blank, because it invites someone to trust it.
  */
-#endif /* !RADIO_BACKEND_E22 */
+
 
 void e220_init(void);
 

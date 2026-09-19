@@ -188,7 +188,7 @@ static void send_status_locked(void) {
     int at = snprintf(out, sizeof(out),
                       "ST proto=%d radio=%s mode=%s online=%u tx=%u configured=%u "
                       "channel=%u power_level=%u lbt=%u min_power_level=%d",
-                      BRIDGE_PROTO, RADIO_NAME, BRIDGE_MODE, (unsigned)s.online,
+                      BRIDGE_PROTO, radio_name(), BRIDGE_MODE, (unsigned)s.online,
                       (unsigned)RADIO_TX_ENABLED, (unsigned)(s.online && s.configured),
                       s.req.channel, s.req.power_level, (unsigned)s.req.lbt, MIN_POWER_INDEX);
     at = clamp_at(at, sizeof(out));
@@ -695,6 +695,6 @@ void app_main(void) {
 
     bridge_state_t started = state_snapshot();
     ESP_LOGI(TAG, "bridge up: proto=%d radio=%s mode=%s ch=%u power_level=%u online=%d",
-             BRIDGE_PROTO, RADIO_NAME, BRIDGE_MODE, started.req.channel,
+             BRIDGE_PROTO, radio_name(), BRIDGE_MODE, started.req.channel,
              started.req.power_level, (int)started.online);
 }
