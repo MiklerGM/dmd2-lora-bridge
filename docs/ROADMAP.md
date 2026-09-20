@@ -261,12 +261,14 @@ than a bench flag.
 
 It is one driver, not two: the E22's register block is the E220's with **NETID inserted at
 0x02**, pushing REG0..REG3 and the key up by one, and its configuration mode is **M0=0, M1=1**
-rather than M0=1, M1=1. Both live behind `-DE22_MODULE`, which the build defines globally
-because it changes how long a register frame is.
+rather than M0=1, M1=1. Neither is a build flag: the module is asked at init, and a single image
+drives either part.
 
-The configuration mode was established by measurement, not by the manual - the one to hand
-covers a different package, and EBYTE's mode tables differ between them. A boot-time hunt walks
-all four M0/M1 combinations, asks each for its register block, and prints what answers.
+The configuration mode was established by measurement, not by the manual - the one to hand covers
+a different package, and EBYTE's mode tables differ between them. The first version of that
+measurement swept all four M0/M1 combinations and **wedged an E220 for ten seconds**, so what
+ships asks two candidates carefully instead, each through the same path a normal configuration
+read uses.
 
 **Accept:** configured, transmitted and received against both an E220 and a bare SX1262.
 **Still open:** the full bridge path - phone, BLE, DMD2 IPC - has not been run on it. It has

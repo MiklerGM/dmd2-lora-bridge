@@ -247,7 +247,9 @@ e220_state_t e220_apply(const e220_config_t *cfg) {
     bool idle = wait_aux(500);
 
     uint8_t resp[E220_REPLY_MAX] = {0};
-    int n = (written == (int)sizeof(frame) && drained && idle)
+    /* Against the frame's length, not the buffer's: the buffer is sized for the larger part, so
+     * comparing with sizeof() silently fails on every E220 and the reply is never read. */
+    int n = (written == (int)e220_frame_len() && drained && idle)
                 ? uart_read_bytes(E220_UART, resp, e220_frame_len(), pdMS_TO_TICKS(500))
                 : 0;
     bool normal = e220_mode_normal();
@@ -442,7 +444,7 @@ size_t e220_read_packet(uint8_t *out, size_t out_len, uint32_t idle_gap_ms,
         static int64_t next_poll;
         int64_t now = esp_timer_get_time();
         if (now >= next_poll) {
-        next_poll = now + E220_AMBIENT_RSSI * 1000;
+            next_poll = now + E220_AMBIENT_RSSI * 1000;
         static const uint8_t req[6] = {0xC0, 0xC1, 0xC2, 0xC3, 0x00, 0x01};
         uint8_t resp[4] = {0};
         if (uart_write_bytes(E220_UART, (const char *)req, sizeof(req)) == (int)sizeof(req) &&

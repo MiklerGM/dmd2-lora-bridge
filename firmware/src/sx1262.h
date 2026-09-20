@@ -34,7 +34,9 @@
 #define RADIO_CHANNEL_MIN 0
 #define RADIO_CHANNEL_MAX 80
 
+#ifndef RADIO_DEFAULT_CHANNEL
 #define RADIO_DEFAULT_CHANNEL 18
+#endif
 #define RADIO_DEFAULT_POWER_LEVEL 3
 
 /*
@@ -93,4 +95,25 @@
  * off-voltage drifts the carrier without failing anything loudly. */
 #ifndef SX_TCXO_MV
 #define SX_TCXO_MV 1800
+#endif
+
+/* SetDIO3AsTcxoCtrl's voltage field, from the datasheet's table. */
+#if   SX_TCXO_MV == 1600
+#define SX_TCXO_CODE 0x00
+#elif SX_TCXO_MV == 1700
+#define SX_TCXO_CODE 0x01
+#elif SX_TCXO_MV == 1800
+#define SX_TCXO_CODE 0x02
+#elif SX_TCXO_MV == 2200
+#define SX_TCXO_CODE 0x03
+#elif SX_TCXO_MV == 2400
+#define SX_TCXO_CODE 0x04
+#elif SX_TCXO_MV == 2700
+#define SX_TCXO_CODE 0x05
+#elif SX_TCXO_MV == 3000
+#define SX_TCXO_CODE 0x06
+#elif SX_TCXO_MV == 3300
+#define SX_TCXO_CODE 0x07
+#else
+#error "SX_TCXO_MV must be one of the voltages SetDIO3AsTcxoCtrl accepts"
 #endif

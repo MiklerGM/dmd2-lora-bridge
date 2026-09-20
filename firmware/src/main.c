@@ -77,7 +77,7 @@
 #define MIN_POWER_INDEX 3
 #endif
 _Static_assert(MIN_POWER_INDEX >= 0 && MIN_POWER_INDEX <= 3,
-               "MIN_POWER_INDEX must be an E220 power level from 0 through 3");
+               "MIN_POWER_INDEX must be a power level from 0 through 3");
 
 /*
  * Hold the board's BOOT button for a few seconds while this firmware is running to hand the
@@ -443,18 +443,33 @@ static void beacon_task(void *arg) {
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(BEACON_TX_MS));
 #ifdef POWER_SWEEP
-        /* Rotate the transmit power and spell the level into the payload, so one trip to one
-         * spot yields the whole curve instead of one point per trip. */
+        /*
+         * Rotate the transmit power and spell the level into the payload, so one trip to one
+         * spot yields the whole curve instead of one point per trip.
+         *
+         * SX1262 only, and deliberately so: on an EBYTE module apply is a 0xC0 write into the
+         * module's own flash, which e220_regs.h is explicit about reserving for deliberate
+         * configuration changes. Rotating it every beacon would be thousands of flash writes an
+         * hour. The sweep letter still reaches the payload below on any backend; only the
+         * re-apply is gated.
+         */
+#ifdef RADIO_BACKEND_SX1262
         static uint8_t sweep_level;
         sweep_level = (uint8_t)((sweep_level + 1) & 0x03);
         state_lock();
         radio_request_t sweep = s_state.req;
-        sweep.power_level = sweep_level;
+        sweep.power_level = floor_power(sweep_level);
         apply_locked(&sweep);
         state_unlock();
+#else
+#warning "POWER_SWEEP re-applies configuration per beacon; on an EBYTE backend that writes flash, so it is skipped"
 #endif
-        /* The same admission test handle_tx applies, for the same reason: a packet queued for a
-         * radio that is not configured is a packet that goes out on unknown settings. */
+#endif
+        /* The same admission tests handle_tx applies, for the same reasons: a packet queued for
+         * a radio that is not configured goes out on unknown settings, and one queued on a build
+         * that may not transmit fails in the driver and drags the bridge offline and back on
+         * every beacon. */
+        if (!RADIO_TX_ENABLED) continue;
         bridge_state_t snap = state_snapshot();
         if (!snap.online || !snap.configured) continue;
 

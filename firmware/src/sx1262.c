@@ -17,6 +17,10 @@
 
 #define TAG "sx1262"
 
+/* So radio_identity() names the PHY actually compiled in, rather than the one it used to be. */
+#define STR_(x) #x
+#define STR(x) STR_(x)
+
 /* ---- chip constants ------------------------------------------------------ */
 
 #define CMD_SET_SLEEP            0x84
@@ -80,9 +84,11 @@
  */
 #define PHY_SF        12
 #define PHY_BW_CODE   0x04   /* 125 kHz */
+#define PHY_BW_KHZ    125
 #else
 #define PHY_SF        11
 #define PHY_BW_CODE   0x06   /* 500 kHz */
+#define PHY_BW_KHZ    500
 #endif
 #define PHY_CR_CODE   0x01   /* 4/5 */
 #define PHY_LDRO      0x01   /* forced on: the chip's own rule would leave it off here */
@@ -245,10 +251,16 @@ static bool reg_read(uint16_t addr, uint8_t *out, size_t n) {
  * none of them, and the same pair worked when RadioLib (which applies this) drove the radio.
  */
 static bool fix_modulation_quality(void) {
-    /* Constant, not a read-modify-write: BW500 is the only bandwidth this backend uses, 0x00 is
-     * what the working reference puts on the wire, and a read that quietly returns a status byte
-     * would otherwise write that status byte straight into a modem register. */
-    uint8_t v = 0x00;
+    /*
+     * Errata 15.1 is not "clear bit 2" - it is "clear it at BW500, set it at every other
+     * bandwidth". Writing 0x00 unconditionally was right for the shipping PHY and wrong for the
+     * one build whose entire purpose is to leave 500 kHz, which would then have carried the
+     * BW500 workaround into BW125 and measured something other than what it claimed.
+     *
+     * Constant rather than a read-modify-write on purpose: a read that quietly returns a status
+     * byte would otherwise write that status byte into a modem register.
+     */
+    uint8_t v = (PHY_BW_CODE == 0x06) ? 0x00 : 0x04;
     return reg_write(REG_TX_MODULATION, &v, 1);
 }
 
@@ -389,7 +401,10 @@ static bool set_power(uint8_t level) {
 
 static bool configure(const radio_request_t *req) {
     uint8_t reg = 0x01;                      /* DC-DC, as the Heltec board is wired */
-    uint8_t tcxo[4] = {0x02,                 /* 1.8 V */
+    /* The voltage comes from SX_TCXO_MV rather than a literal, which is what that macro always
+     * claimed to control and never did - -DSX_TCXO_MV=1700 used to change nothing at all, in a
+     * project where half the open questions are about carrier drift. */
+    uint8_t tcxo[4] = {SX_TCXO_CODE,
                        0x00, 0x01, 0x40};    /* 5 ms startup */
     uint8_t pkt = PACKET_TYPE_LORA;
     uint8_t sync[2] = {PHY_SYNC_MSB, PHY_SYNC_LSB};
@@ -397,7 +412,14 @@ static bool configure(const radio_request_t *req) {
     uint8_t rfsw = 0x01;
     uint8_t fallback = 0x20;   /* fall back to STDBY_RC, not the reset default of FS */
     uint8_t calib = 0x7F;
-    uint8_t image[2] = {0xD7, 0xDB};   /* 863-870 MHz (datasheet table 9-2) */
+    /*
+     * Image rejection is calibrated per band, and the band follows the channel the phone asked
+     * for - channels 0..80 span 850.125 to 930.125 MHz, so a fixed 863-870 pair would calibrate
+     * the wrong band everywhere outside channels 13..19. Datasheet table 9-2 has no row between
+     * 870 and 902 MHz, so the halfway point picks the nearer of the two.
+     */
+    const bool upper_band = req->channel >= 36;   /* 850.125 + 36 = 886.125 MHz */
+    uint8_t image[2] = {upper_band ? 0xE1 : 0xD7, upper_band ? 0xE9 : 0xDB};
     uint8_t irq[8] = {0xFF, 0xFF, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00};
 
     /* Named steps, because "apply failed" on a bus that answers is otherwise a guess. */
@@ -406,14 +428,10 @@ static bool configure(const radio_request_t *req) {
     STEP("standby", set_standby());
     STEP("regulator", cmd(CMD_SET_REGULATOR_MODE, &reg, 1));
     STEP("tcxo", cmd(CMD_SET_DIO3_TCXO, tcxo, 4));
-    /* DIO2 drives the antenna switch on this board. Without this the switch stays on the receive
-     * path, so transmit raises TxDone and puts nothing on the air - which is exactly how this
-     * backend behaved for its first 130 transmissions. */
-
     STEP("calibrate", cmd(CMD_CALIBRATE, &calib, 1));
     delay_us(5000);
-    /* Image rejection is calibrated per band and is not covered by the calibrate-all above.
-     * 0x6B/0x6F is the 863-870 MHz pair from the datasheet's table. */
+    /* Not covered by the calibrate-all above. An earlier comment here claimed 0x6B/0x6F was the
+     * 863-870 row; that is the 470-510 one, and the code was briefly wrong to match. */
     STEP("calibrate image", cmd(CMD_CALIBRATE_IMAGE, image, 2));
     /*
      * After the calibrations, not before, which is where the working reference puts it and where
@@ -612,6 +630,9 @@ bool radio_send(const uint8_t *data, size_t len) {
      * Reading the grid gives each factor's effect averaged over the other, which is the whole
      * point: single sweeps kept landing inside the run-to-run swing of this link.
      */
+    /* SetPaConfig and SetTxParams are only accepted in standby; this block used to issue them
+     * while the radio was still in continuous receive. */
+    set_standby();
     uint8_t start = 0;
     if (len && data[0] >= 'A' && data[0] <= 'P') {
         const uint8_t v = (uint8_t)(data[0] - 'A');
@@ -935,7 +956,7 @@ bool radio_tx_dbm(int8_t out[4]) {
 size_t radio_identity(char *out, size_t out_len) {
     /* The chip has no firmware string to report. Naming the PHY is more use in a status line
      * than a blank, and it is space-free as the contract requires. */
-    const char *id = "SX1262-SF11BW500";
+    const char *id = "SX1262-SF" STR(PHY_SF) "BW" STR(PHY_BW_KHZ);
     size_t n = strlen(id);
     if (n >= out_len) n = out_len - 1;
     memcpy(out, id, n);

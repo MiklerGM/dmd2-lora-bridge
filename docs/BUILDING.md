@@ -286,22 +286,22 @@ key — is fixed by the protocol and lives inside the firmware, where it cannot 
 the phone. Keep power at level 3 (the weakest step) and the antennas apart; at bench range a
 strong transmitter can overload the receiver. The spare E22 was expected to be a negative
 control, on the theory that EBYTE maps the same air-rate index to different SF/BW on the two chip
-families. Measured, it is not: on index 2 it hears an E220 perfectly well, and it builds with
-`-DE22_MODULE=1` as a second receiver.
+families. Measured, it is not: on index 2 it hears an E220 perfectly well, and the ordinary
+`esp32dev` image drives it without any flag.
 
 ## Radio backends
 
 | Environment | Radio | State |
 |---|---|---|
-| `esp32dev`, `esp32s3`, `esp32c3` | EBYTE E220 (LLCC68) over UART | proven, carries group traffic |
-| `esp32dev_e22` | EBYTE E22 (SX1262) over UART | proven on the bench, full bridge path untested |
+| `esp32dev`, `esp32s3`, `esp32c3` | EBYTE **E220 or E22** over UART | E220 proven carrying group traffic; E22 proven on the bench, full bridge path untested |
 | `heltec_sx1262` | bare SX1262 over SPI | receives perfectly, **transmits badly** - see PHY-notes |
 
-The two EBYTE parts are one driver. `-DE22_MODULE` selects the E22's nine-register block and
-its M0=0/M1=1 configuration mode, and it must be set for the whole build: it changes the length
-of a register frame, so a translation unit compiled without it would place the channel byte
-somewhere the rest of the firmware does not look. That is why it lives in the environment's
-`build_flags` rather than in a header.
+The two EBYTE parts are one driver **and one image**. The E22 is the E220 with NETID inserted at
+0x02, pushing REG0..REG3 and the key up a byte, and its configuration mode is M0=0/M1=1 rather
+than M0=1/M1=1. Both are settled at init: an E220 answers at M0=1/M1=1 with eight registers and
+an E22 at M0=0/M1=1 with nine, so each candidate tries a layout and a pin pair together and the
+reply's length confirms the guess. Nothing about this is a build flag any more, and `radio=` in
+the status line reports whichever part answered.
 
 ## Bench-only build flags
 
@@ -309,10 +309,26 @@ None of these belong in a shipped image; every one is compiled out unless named.
 
 | Flag | What it does |
 |---|---|
-| `-DE22_MODULE=1` | Builds the E220 driver for an **E22** instead: nine registers rather than eight, because NETID sits at 0x02 and pushes the rest up, and configuration mode is `M0=0, M1=1` rather than `M0=1, M1=1`. Wiring and pinout are the same. |
-| `-DE22_MODE_HUNT=1` | Walks all four M0/M1 combinations at boot, asks each for its register block and logs the reply. This is how the E22's configuration mode was established rather than guessed — the manual to hand was for a different package. |
-| `-DE220_AMBIENT_RSSI=<ms>` | Polls the module for the channel's noise floor every `<ms>`, and logs it as dBm. The only instrument here that can tell "no signal" from "far too much signal", which is a distinction this bench has already got wrong once. It costs packets: each poll occupies the UART, so about once a second, and never faster when counting receptions. |
-| `-DBEACON_TX_MS=<ms>` | Transmits a fixed payload on a timer with no phone, no BLE and no DMD2. `-DBEACON_PAYLOAD_ID=<0-4>` selects what it sends, so the layer above the PHY can be read by varying one thing at a time. |
-| `-DSX1262_TX_ALLOWED=1` | Lets the SX1262 backend transmit at all. Off by default: receive is proven, transmit is not, and nobody has put the front end's output on a meter. |
-| `-DPOWER_SWEEP=1` | Rotates four labelled variants and spells each into the payload, so one run at one position yields a whole curve instead of one point. The label is the experiment's only identifier — do not let a second sweep ride on the same letter, which has happened and quietly confounded a whole run. |
-| `-DSX_SPI_TRACE=1` | Logs every SX1262 SPI transaction in the same shape RadioLib's own debug output uses, so the two can be diffed byte for byte. |
+| `-DE220_AIR_RATE=<0-7>` | Moves the module off air-rate index 2. On this family indices 0, 1 and 2 are all 2.4 kbps, so it is not the bandwidth change it looks like - measured, not assumed. |
+| `-DRADIO_DEFAULT_CHANNEL=<n>` | What the radio comes up on with no phone attached. |
+| `-DRX_STAGES=1` | Counts preamble-detected, header-valid, header-error and CRC-error separately instead of keeping one bit per packet. Validated against a known-good link before being aimed at a suspect one. |
+| `-DSX_FREQ_ERROR=1` | Logs RegFreqError after each reception - what the modem pulled the incoming carrier by, so two references can be compared directly. |
+| `-DSX_SPI_TRACE=1` | Logs every SX1262 SPI transaction in the shape RadioLib's own debug output uses, so the two can be diffed byte for byte. |
+| `-DPHY_ALT_RATE=1` | SF12/BW125 instead of SF11/BW500, for testing whether a defect is bandwidth-specific. Errata 15.1 follows the bandwidth automatically. |
+| `-DSX_TCXO_MV=<mV>` | The TCXO rail SetDIO3AsTcxoCtrl drives. One of 1600/1700/1800/2200/2400/2700/3000/3300; anything else is a compile error rather than a silently ignored knob. |
+
+Sweeps. Each rotates four or sixteen variants every two seconds and spells the variant into the
+payload, so all of them meet identical conditions - this link's success probability wanders with
+sd ~0.10 over ~115 s, which makes cross-run comparison worthless below about 20 points and
+interleaving the only honest design.
+
+| Flag | What it sweeps |
+|---|---|
+| `-DPOWER_SWEEP=1` | Four transmit powers. Also the label generator the other sweeps ride on. Re-applies configuration per beacon, so it is skipped on EBYTE backends where that would write the module's flash thousands of times an hour. |
+| `-DPOWER_CLEAN=1` | Transmit power again with the PA duty/hpMax pair pinned, which the first version varied alongside the level. |
+| `-DPREAMBLE_SWEEP=1` | 8/16/32/64 preamble symbols. |
+| `-DLENGTH_SWEEP=1` | 10/24/46/100-byte payloads - whether a defect accumulates through a packet or strikes at acquisition. |
+| `-DWIDE_SWEEP=1` | A 4x4 grid: preamble length against how the transmission starts. |
+| `-DTCXO_SETTLE_TEST=1` | 0/10/40/100 ms of oscillator settling before transmit. |
+| `-DSYNC_RX_SWEEP=1` | Sync register pairs on the receiver. Disables the liveness check, which would otherwise call the sweep's own writes a mismatch and stall it. |
+| `-DSYNC_TX_SWEEP=1` | Sync register pairs on the transmitter. |

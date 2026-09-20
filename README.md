@@ -54,10 +54,11 @@ and `docs/BUILDING.md` for how each milestone was checked.
 - Therefore it **cannot coexist** with the genuine DMD-LoRa app, and cannot ship on Play
   under that package name. Sideload only.
 - The bridge firmware has three radio backends behind one compile-time seam: an **EBYTE E220**
-  (LLCC68), an **EBYTE E22** (SX1262 behind EBYTE's own MCU, `-e esp32dev_e22`), and a **bare
-  SX1262** over SPI. The two EBYTE parts share a driver - they differ by one inserted register
-  and a different configuration-mode pin pair - and, contrary to an earlier assumption here,
-  they share a PHY on air-rate index 2 and hear each other perfectly well.
+  (LLCC68), an **EBYTE E22** (SX1262 behind EBYTE's own MCU), and a **bare
+  SX1262** over SPI. The two EBYTE parts share one driver *and one image*: they differ by one
+  inserted register and a different configuration-mode pin pair, and the module says which it is
+  at init, so there is no flag to get wrong. Contrary to an earlier assumption here, they also
+  share a PHY on air-rate index 2 and hear each other perfectly well.
 - The SX1262 backend **receives** correctly and **transmits poorly** — an E220 decodes ~10-30 %
   of its packets against 92-96 % from another E220 — so it is not ready to be a transmitter.
   See `docs/PHY-notes.md`.
