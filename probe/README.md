@@ -21,14 +21,14 @@ change as the hunt moves, which is why this is a separate project from `firmware
 | Flag | What it sweeps |
 |---|---|
 | *(none)* | every LLCC68 SF/BW x both sync words x both IQ polarities — 72 candidates |
-| `-DCONFIRM_SF11=1` | the answer, with LDRO both ways — 4 candidates |
+| `-DCONFIRM_SF11=1` | SF11/BW500 against the two standard sync words, LDRO both ways — 4 candidates. Written before the sync word was known, so it does **not** try the 0x55 that turned out to be the answer; `-DNIBBLE5` and `-DSYNC_SF11` are what found that |
 | `-DNIBBLE5=1` | the sixteen sync words ending in nibble 5, at SF11/BW500 |
 | `-DSYNC_SF11=1` | all 256 sync words at SF11/BW500 |
 | `-DCR_SWEEP=1` | coding rate 4/5..4/8, which only matters in implicit-header mode |
 | `-DCONTROL_SWEEP=1` | ambient Meshtastic and LoRaWAN, as a positive control for the receiver |
 
-`-DDWELL_MS=` sets seconds per candidate. Against a 1 Hz beacon, 5-6 s is enough to decide and
-20 s gives comfortable statistics.
+`-DDWELL_MS=` sets **milliseconds** per candidate, default 20000. Against a 1 Hz beacon, 5-6 s is
+enough to decide and 20 s gives comfortable statistics.
 
 ## Reading a result honestly
 

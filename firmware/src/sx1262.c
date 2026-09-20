@@ -204,12 +204,27 @@ static bool xfer(const uint8_t *tx, uint8_t *rx, size_t len) {
     return ok;
 }
 
+/*
+ * Set when the chip reported a command error, cleared at the start of configure(). A transfer
+ * that the SPI driver completed says the bus worked, not that the radio accepted what it was
+ * told - and publishing configured=1 on the strength of the former is how a rejected frequency
+ * or power would pass unnoticed.
+ */
+static bool s_cmd_error;
+
 static bool cmd(uint8_t opcode, const uint8_t *args, size_t n) {
-    uint8_t buf[16];
+    uint8_t buf[16], st[16] = {0};
     if (n + 1 > sizeof(buf)) return false;
     buf[0] = opcode;
     if (n) memcpy(&buf[1], args, n);
-    return xfer(buf, NULL, n + 1);
+    if (!xfer(buf, st, n + 1)) return false;
+    /* Status bits 3:1: 3 command timeout, 4 processing error, 5 failure to execute. */
+    const uint8_t status = (uint8_t)((st[n ? 1 : 0] >> 1) & 0x07);
+    if (status >= 3 && status <= 5) {
+        ESP_LOGW(TAG, "command %02X rejected, status %u", opcode, status);
+        s_cmd_error = true;
+    }
+    return true;
 }
 
 static bool cmd_read(uint8_t opcode, uint8_t *out, size_t n) {
@@ -422,6 +437,8 @@ static bool configure(const radio_request_t *req) {
     uint8_t image[2] = {upper_band ? 0xE1 : 0xD7, upper_band ? 0xE9 : 0xDB};
     uint8_t irq[8] = {0xFF, 0xFF, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00};
 
+    s_cmd_error = false;
+
     /* Named steps, because "apply failed" on a bus that answers is otherwise a guess. */
 #define STEP(what, expr) do { if (!(expr)) { ESP_LOGW(TAG, "configure: %s failed", what); \
                                              return false; } } while (0)
@@ -460,6 +477,9 @@ static bool configure(const radio_request_t *req) {
     STEP("ocp", set_ocp());
     /* Everything latched, only RxDone and TxDone on DIO1. */
     STEP("irq params", cmd(CMD_SET_DIO_IRQ_PARAMS, irq, 8));
+    /* Every step above reported a completed transfer; this asks whether the chip also accepted
+     * them, so configured=1 means the radio agreed rather than that the bus worked. */
+    STEP("no command was rejected", !s_cmd_error);
     {
         uint8_t sy[2] = {0, 0}, md = 0, cl = 0, oc = 0;
         reg_read(REG_LORA_SYNC_MSB, sy, 2);
@@ -475,6 +495,14 @@ static bool configure(const radio_request_t *req) {
 static bool enter_rx(void) {
     uint8_t clear[2] = {0xFF, 0xFF};
     uint8_t rx[3] = {0xFF, 0xFF, 0xFF};   /* continuous */
+    /*
+     * Put the payload length back to the maximum. SetPacketParams' length field is "the size to
+     * transmit or the largest the receiver will accept", so transmitting leaves the receiver
+     * capped at whatever was just sent - a 46-byte frame out means anything longer coming back
+     * is refused. Two bench radios sending the same size never notice; a group whose packets
+     * grow with the number of riders would, and only after a transmission.
+     */
+    if (!set_packet_params(255)) return false;
     if (!cmd(CMD_CLEAR_IRQ_STATUS, clear, 2)) return false;
     fem_transmit(false);
     if (!cmd(CMD_SET_RX, rx, 3)) return false;
@@ -556,6 +584,15 @@ void radio_init(void) {
 }
 
 radio_state_t radio_apply(const radio_request_t *req) {
+    /*
+     * This backend does not listen before it talks, so accepting lbt=1 would have the phone
+     * shown configured=1 lbt=1 over a transmitter that never checks the channel. Refusing is the
+     * honest answer until it is implemented.
+     */
+    if (req->lbt) {
+        ESP_LOGW(TAG, "listen-before-talk requested; this backend does not implement it");
+        return RADIO_MISMATCH;
+    }
     if (!bus_lock()) return RADIO_BUSY;
     bool ok = configure(req) && enter_rx();
     if (ok) {
@@ -756,8 +793,15 @@ bool radio_send(const uint8_t *data, size_t len) {
 #endif
         int64_t t_start = esp_timer_get_time();
         ok = cmd(CMD_SET_TX, go, 3);
-        /* At SF11/BW500 a 46-byte frame is about a quarter of a second on the air. */
-        int64_t deadline = esp_timer_get_time() + 3000 * 1000;
+        /*
+         * Derived from the compiled PHY, not a flat three seconds: at SF12/BW125 a hundred-byte
+         * payload is over four seconds on the air, and a fixed deadline would abort it and look
+         * like a failed bandwidth experiment rather than a too-short timer.
+         */
+        const uint32_t sym_us = ((1u << PHY_SF) * 1000u) / PHY_BW_KHZ;
+        const uint32_t symbols = PHY_PREAMBLE + 20u +
+                                 (8u * (uint32_t)total * 5u) / (4u * (PHY_SF - 2u));
+        int64_t deadline = esp_timer_get_time() + (int64_t)symbols * sym_us + 500 * 1000;
         while (ok) {
             uint8_t irq[2] = {0, 0};
             if (!cmd_read(CMD_GET_IRQ_STATUS, irq, 2)) { ok = false; break; }
@@ -768,8 +812,13 @@ bool radio_send(const uint8_t *data, size_t len) {
             delay_us(2000);
         }
         fem_transmit(false);
+        /* GetStatus has no payload: the status byte is the one clocked out beside the opcode,
+         * so the shared cmd_read() - which starts at rx[2] - reads past it. */
         uint8_t st = 0, err[2] = {0, 0};
-        cmd_read(0xC0 /* GetStatus */, &st, 1);
+        {
+            uint8_t sx[2] = {0xC0, 0x00}, sr[2] = {0, 0};
+            if (xfer(sx, sr, 2)) st = sr[1];
+        }
         cmd_read(0x17 /* GetDeviceErrors */, err, 2);
         ESP_LOGI(TAG, "send: %u bytes, air %lld us, status 0x%02x, errors 0x%04x", (unsigned)total,
                  esp_timer_get_time() - t_start, st, (unsigned)((err[0] << 8) | err[1]));

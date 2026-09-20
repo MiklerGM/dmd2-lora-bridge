@@ -48,9 +48,11 @@ and `docs/BUILDING.md` for how each milestone was checked.
 - The app's `applicationId` **must** be `com.thorkracing.dmdLora`, with a receiver at
   `.receiver.Dmd2CommandReceiver` and a service at `.service.LoraService` — DMD2 addresses
   them by explicit `ComponentName`, with no configuration hook.
-- It must declare **and** hold `com.thorkracing.dmdlora.permission.LORA_BRIDGE`; the receiver
-  and service require it, so the supported DMD2 baseline is 4.013 or newer (4.009 did not hold
-  the permission on its outbound calls).
+- It declares `com.thorkracing.dmdlora.permission.LORA_BRIDGE` for its **outbound** calls. Its
+  own receiver and service no longer require it: DMD2 4.017 does not hold that permission on the
+  calls it makes, so requiring it silently dropped every inbound message. The inbound side is
+  therefore open to any app on the device, which is a deliberate trade and is recorded as such
+  in the manifest.
 - Therefore it **cannot coexist** with the genuine DMD-LoRa app, and cannot ship on Play
   under that package name. Sideload only.
 - The bridge firmware has three radio backends behind one compile-time seam: an **EBYTE E220**

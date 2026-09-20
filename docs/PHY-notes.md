@@ -382,7 +382,10 @@ variant met the same conditions and drift cancelled.
   −81 to −62 dBm, and the 40 dB came from combining runs of different geometry.
 - **The front end.** Powering the KCT8103L down and leaning on the chip's own output made things
   worse, not better (2.8 % and 20.7 % against 31.7 % with it on). Its receive path is proven good
-  by the ~100 % reverse direction.
+  by the ~100 % reverse direction. **This does not exonerate its transmit path**: powering the
+  part down does not remove it from between the radio and the antenna, and the documented modes
+  do not describe an unpowered through-path, so that experiment compares "amplifier on" against
+  "something undefined" rather than against "amplifier absent".
 - **PA duty-cycle/hpMax pair.** Semtech's validated (4,7) at 22 dBm is no better than the
   off-table (2,1) at 2 dBm, p = 0.46.
 - **TCXO settling.** Holding STDBY_XOSC for 10/40/100 ms before transmit does not help. The 5 ms
@@ -467,7 +470,11 @@ into an E22 receiver:
 clean zero proves the registers really were being rewritten per packet, so this is a negative
 result rather than an instrument that did nothing.
 
-The hypothesis is closed, and it was worth the day: it fitted every property of the defect -
+No effect, then - though "no significant difference at this sample size" is what was measured,
+which is weaker than proof of no effect, and the three pairs may have been fewer than three
+conditions if the low nibbles are reserved as RadioLib's headers claim. What is solid is that the
+high nibbles match and the control was silent. It was worth the day either way: the hypothesis
+fitted every property of the defect -
 transmit-only, power-independent, per-packet, identical in two drivers that share the formula,
 absent on a module that writes its own registers. It simply is not true.
 
@@ -486,8 +493,20 @@ only ~5 independent draws of that drift, so its mean carries ±4.5 points of non
 top of the binomial.** Two runs cannot be compared for anything below roughly **20 points**.
 
 Interleaving variants every 2 s is fully common-mode against this and is unaffected - the design
-was right. Only cross-run comparison is poisoned, and that is exactly what produced all three
-effects that later evaporated.
+was right. Only cross-run comparison is poisoned.
+
+That does **not** account for all three effects that evaporated, and an earlier version of this
+paragraph claimed it did. Taken one at a time:
+
+- **The antenna** was a genuine cross-run comparison, 17.6 % against 11.9 % in two separate runs.
+  The drift explains it completely.
+- **The sync word** never left one run: it went from 27 % against 49 % on five and nine
+  receptions to nothing at ~90 per cell. Plain small-sample noise, no drift needed.
+- **The over-current limit** is the awkward one. Both estimates were within-run and therefore
+  common-mode against drift, and yet they came out +11 and -7. That eighteen-point swing is
+  further than binomial noise on ~144 per arm comfortably reaches. The combined result is a
+  clean null, so the conclusion stands - but *why* the two runs disagreed that much is not
+  explained, and it is a reason to keep replicating rather than a solved question.
 
 ### The product-information block
 

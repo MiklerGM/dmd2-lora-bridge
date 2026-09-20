@@ -444,25 +444,26 @@ static void beacon_task(void *arg) {
         vTaskDelay(pdMS_TO_TICKS(BEACON_TX_MS));
 #ifdef POWER_SWEEP
         /*
-         * Rotate the transmit power and spell the level into the payload, so one trip to one
-         * spot yields the whole curve instead of one point per trip.
-         *
-         * SX1262 only, and deliberately so: on an EBYTE module apply is a 0xC0 write into the
-         * module's own flash, which e220_regs.h is explicit about reserving for deliberate
-         * configuration changes. Rotating it every beacon would be thousands of flash writes an
-         * hour. The sweep letter still reaches the payload below on any backend; only the
-         * re-apply is gated.
+         * The label generator and the power control, kept apart - they were one block, and
+         * gating the whole thing for one backend left the payload below referring to a counter
+         * that no longer existed. Every sweep rides on this letter; only the re-apply is a
+         * radio operation.
          */
-#ifdef RADIO_BACKEND_SX1262
         static uint8_t sweep_level;
         sweep_level = (uint8_t)((sweep_level + 1) & 0x03);
+#ifdef RADIO_BACKEND_SX1262
+        /*
+         * Re-applying per beacon is how the power actually changes. Not done on an EBYTE
+         * backend: there apply is a 0xC0 write into the module's own flash, which e220_regs.h
+         * reserves for deliberate configuration changes, and a beacon would spend thousands of
+         * write cycles an hour. The letters still cycle, so a sweep that only needs labels -
+         * preamble, length, sync - works on either radio.
+         */
         state_lock();
         radio_request_t sweep = s_state.req;
         sweep.power_level = floor_power(sweep_level);
         apply_locked(&sweep);
         state_unlock();
-#else
-#warning "POWER_SWEEP re-applies configuration per beacon; on an EBYTE backend that writes flash, so it is skipped"
 #endif
 #endif
         /* The same admission tests handle_tx applies, for the same reasons: a packet queued for

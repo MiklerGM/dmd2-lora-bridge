@@ -282,9 +282,10 @@ the first question with no: it is already transmitting from its own GNSS and is 
 5. **Version drift.** The contract was recovered from specific DMD2/DMD-LoRa versions. Record the
    versions we test against; re-check after DMD2 updates.
 6. **Package collision.** Cannot be installed next to the genuine DMD-LoRa app.
-7. **The IPC permission is not an identity proof.** The DMD receiver and service require
-   `LORA_BRIDGE`, which drops compatibility with 4.009 and blocks ordinary apps that did not
-   request it. Its protection level must remain `normal` because DMD2 and this app have different
+7. **The IPC permission is not an identity proof, and inbound no longer uses it.** This app's
+   receiver and service used to require `LORA_BRIDGE`; DMD2 4.017 does not hold it on its
+   outbound calls, so the requirement blocked all inbound traffic and was removed. Inbound is
+   open to any app on the device. Its protection level must remain `normal` because DMD2 and this app have different
    signing keys; a deliberately malicious app can declare the same permission. The global
    35-second CFG interval still bounds flash writes, but this is not cryptographic caller
    authentication.
