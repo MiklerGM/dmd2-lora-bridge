@@ -70,7 +70,10 @@ class Receiver(threading.Thread):
     def run(self):
         stream = self._open()
         while not self.stop.is_set():
-            raw = stream.readline() if self.proc else stream.readline()
+            try:
+                raw = stream.readline()
+            except Exception:
+                break          # the port went away, which on the way out is expected
             if not raw:
                 continue
             line = raw.decode("utf-8", "replace").rstrip()
@@ -80,11 +83,16 @@ class Receiver(threading.Thread):
                 self.seen.setdefault(int(m.group(1)), time.time())
 
     def close(self):
+        """Stop first and wait, then close: closing the port under a blocked reader raises."""
         self.stop.set()
         if self.proc:
             self.proc.terminate()
+        self.join(timeout=3.0)
         if self.port:
-            self.port.close()
+            try:
+                self.port.close()
+            except Exception:
+                pass
 
 
 class Transmitter:
@@ -173,7 +181,7 @@ def main():
         seq = next(counter)
         if tx.send(seq, args.extra):
             sent[seq] = tx.name
-        print(f"\r{i}/{len(schedule)} packets, {len(sent)} away", end="", flush=True)
+        print(f"\r{i}/{len(schedule)} packets, {len(sent)} away ", end="", flush=True)
         time.sleep(args.gap)
     print()
 
