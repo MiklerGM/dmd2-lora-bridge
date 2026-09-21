@@ -422,6 +422,37 @@ Modules hear everything and are heard by everything. The one failing region of t
 our transmitter against a module's receiver, and it fails the same way for both of our boards
 against both parts.
 
+### Pooled, and two more classes closed
+
+Across every across-the-room cell measured in one evening:
+
+| | decoded |
+|---|---|
+| our transmitter into a module | **37/160 = 23 % ± 6.5** |
+| a module into anything | **320/320 = 100 %** |
+
+Single runs of 24 swing by fifteen points, so read that pooled figure and not the cells. Two of
+the cells even swapped which of our two boards looked better between consecutive runs, which is
+exactly the trap that has cost this project three findings.
+
+**Cadence does not matter.** Quadrupling the gap between packets - 3.2 s instead of 0.8 - moved
+our boards from 21 % and 12 % to 25 % and 25 %, both inside that swing, while the modules held
+100 % in both, so the conditions were steady and the run counts. That closes recovery time in
+the module's receiver, thermal accumulation, its UART being busy with the previous packet, and
+our own receive cycle between transmissions.
+
+**Holding the oscillator up does not matter.** STDBY_XOSC as the fallback mode plus 30 ms of
+settle before SetTx, on one board while the other kept STDBY_RC: 21 % against 12 %, and the
+sign between the two boards was the other way round in the run before. This was worth trying
+because the failure is random per packet, indifferent to level across forty decibels and
+indifferent to the payload - the shape of something re-rolled at each transmission, which a
+TCXO that is powered down between packets and given 5 ms to restart certainly is. It is not
+that.
+
+The same shape is what makes the remaining candidates narrow. Whatever it is, it is decided
+afresh for each transmission, it does not care how loud the packet arrives or what is in it,
+and it is invisible to a receiver running our own configuration.
+
 ### Level, measured at the module that refuses us
 
 Read the maximum, not the median: the instrument polls every 250 ms against a 320 ms packet, so

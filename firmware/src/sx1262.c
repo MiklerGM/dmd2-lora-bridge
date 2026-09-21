@@ -604,7 +604,26 @@ static bool configure(const radio_request_t *req) {
     uint8_t sync[2] = {PHY_SYNC_MSB, PHY_SYNC_LSB};
     uint8_t base[2] = {0x00, 0x00};
     uint8_t rfsw = 0x01;
+#ifdef TX_KEEP_XOSC
+    /*
+     * Keep the crystal oscillator running between packets, and let it settle before the
+     * carrier.
+     *
+     * STDBY_RC powers the TCXO down, so every SetTx restarts it and waits only the 5 ms that
+     * SetDIO3AsTcxoCtrl allows. The chip calls it ready when it oscillates, not when it is on
+     * frequency, so the first symbols go out on a carrier that is still moving - and it is
+     * re-rolled on every transmission.
+     *
+     * That shape matches what is actually measured, which is why this is worth trying after so
+     * much else was not: the failure is random packet to packet, indifferent to level across
+     * forty decibels, and indifferent to the payload. It would also explain the larger gap,
+     * since the working reference falls back to STDBY_RC too and reaches a module about as
+     * often as we do, while a module - whose firmware we cannot see - reaches one always.
+     */
+    uint8_t fallback = 0x30;   /* STDBY_XOSC: the oscillator stays up between packets */
+#else
     uint8_t fallback = 0x20;   /* fall back to STDBY_RC, not the reset default of FS */
+#endif
     uint8_t calib = 0x7F;
     /*
      * Image rejection is calibrated per band, and the band follows the channel the phone asked
@@ -1115,6 +1134,13 @@ bool radio_send(const uint8_t *data, size_t len) {
         fem_transmit(true);
 #endif
         int64_t t_start = esp_timer_get_time();
+#ifdef TX_KEEP_XOSC
+        {
+            uint8_t xosc = 0x01;   /* STDBY_XOSC */
+            cmd(CMD_SET_STANDBY, &xosc, 1);
+            vTaskDelay(pdMS_TO_TICKS(TX_KEEP_XOSC));
+        }
+#endif
         ok = cmd(CMD_SET_TX, go, 3);
         /*
          * Derived from the compiled PHY, not a flat three seconds: at SF12/BW125 a hundred-byte
