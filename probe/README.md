@@ -1,7 +1,7 @@
 # PHY probe
 
-Receive-only hunt for the SF/BW/sync an E220 actually uses. **Not the bridge, and not a radio
-backend for it** — see the reasoning in [`../docs/PHY-notes.md`](../docs/PHY-notes.md).
+PHY investigation, including receive sweeps and a RadioLib transmit reference. **Not the bridge,
+and not a radio backend for it** — see [`../docs/PHY-notes.md`](../docs/PHY-notes.md).
 
 > **The hunt succeeded on 2026-09-17.** Air rate index 2 is **SF11 / BW500 / sync 0x55 /
 > explicit header / CRC on / LDRO forced on**, at 868.125 MHz. An SX1262 set to exactly that
@@ -9,9 +9,17 @@ backend for it** — see the reasoning in [`../docs/PHY-notes.md`](../docs/PHY-n
 > chirp-slope aliasing that sent the search to SF7/BW125 for most of a day, are in
 > [`../docs/PHY-notes.md`](../docs/PHY-notes.md).
 >
-> The frame above it went the same way: `2C <channel> A0 01 00 00 00 <len>` then the payload
-> **XOR 0x12** — a fixed byte, not the channel, which the first captures made it look like
-> because they were all on channel 18 (= 0x12).
+> The frame is `2C <channel> (A0 XOR c) (01 XOR c) 00 00 00 <len>`, where `c` is the XOR
+> of all original payload bytes, followed by the payload **XOR 0x12**. The constant-marker
+> captures all had `c = 0`; the later interpretation as a packet counter was also wrong.
+
+## Command-driven driver comparison
+
+`heltec_bisect` builds RadioLib and the bridge driver into one commanded probe, using Arduino
+SPI for both. `bench/compare_drivers.py` switches init/TX paths and interleaves an E22 control.
+Modes, exact port mapping, captured frames and results are documented in
+[`../bench/results/README.md`](../bench/results/README.md). Every measured packet is commanded;
+there is no background beacon in this environment.
 
 ## Sweep modes
 

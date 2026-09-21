@@ -5,6 +5,64 @@ gathered while waiting for hardware. Source: EBYTE *E220-900T22S User Manual* (o
 cdebyte.com). The E220-900T30x DMD uses shares this PHY register model; only the power
 table differs (30/27/24/21 dBm instead of 22/17/13/10).
 
+## 2026-09-21 correction: bytes 2–3 are payload-dependent, not a counter
+
+The counter interpretation introduced in `2a0f975` is wrong. With `c` equal to the XOR of
+**all original payload bytes**, the E22 sends `A0 ^ c`, `01 ^ c` in bytes 2–3. The payload
+itself is still XORed with `0x12`. These are full bytes, not four-bit fields: an eleven-byte
+payload `00000000AAA` produces **E1 40**.
+
+Measured on the current separated-room bench: 27 complete E22 frames, with repeated inputs,
+the digit `1` moved through all eight positions, and payload lengths 8–100. Every capture
+matches this formula and the complete expected encoded payload. Repeating an input repeats
+the header; changing `00000005` to `00000015` changes the field from `A5 04` to `A4 05`,
+although the transmit order increases. Those two observations distinguish it from a counter.
+
+`firmware/src/ebyte_frame.h` now encodes this rule. The host regression uses complete captured
+frames as golden values, including an odd length and repeated calls. This corrects a framing
+defect; it does **not** by itself explain the remaining bare-SX1262 versus EBYTE delivery gap.
+
+Consequently, an EBYTE UART silence is not proof of a PHY failure: the module can reject the
+encapsulation after a successful LoRa decode. Past UART tests using a constant/copied header
+with varying numbered payloads, or an independent counter, are confounded by that defect.
+Sweeps using an even-length constant marker and `A0 01` are not invalidated by this finding.
+The claim below that the layer above the PHY was already solved was premature.
+
+The controlled comparison and full raw captures are retained in
+[`bench/results`](../bench/results/README.md). Among 90 deliberately incorrect counter-header
+frames, **none reached E220**; six accidentally correct ones in those same arms produced two
+receptions. Correct headers yielded 19/48 with RadioLib and 8/48 with our TX, versus E22 48/48.
+A subsequent comparison reversed the driver ordering (3/24 versus 10/24); do not treat the
+first run's difference as proof of a persistent driver defect. Both still lose to E22.
+
+In the normal ESP-IDF firmware, the corrected driver delivered **15/48** to E220 against
+**46/48** from the interleaved E22; T-Deck received **44/48** and **48/48** respectively.
+RadioLib's long interleaver at the same CR 4/5 was also tried: E220 counts were 8/24 versus
+3/24 with normal interleaving, then **4/24 versus 4/24** on immediate repeat. E22 was 24/24
+in both runs. This is not a confirmed improvement and is not enabled in the normal build.
+
+Reversing the link without moving boards also reproduces the remaining loss: remote T-Deck
+and E220 transmitted in alternating ABBA/BAAB blocks; the local **E22 received 5/48 from
+T-Deck versus 46/48 from E220**. The local Heltec received 46/48 and 48/48, with all 94 numbered
+frames matching the expected payload and corrected header. This confirms the gap on a distant
+SX1262-based E22 receiver too, using a T-Deck without the Heltec front end. It does not locate
+the loss inside the EBYTE radio versus its module firmware; that needs another observation
+point, such as the module's SPI/IRQ traffic or an RF waveform capture.
+
+The reverse run also captured an extra E220 frame containing `C1 00 08` after seq 51, followed
+by a transient `radio stopped answering` on that module. Its register-read command reached
+the air instead of producing a configuration reply. That frame is excluded from trial counts;
+mode/AUX synchronization during the periodic health check remains an independent issue.
+
+The `RX_SYMB_TIMEOUT` experiment also exposed an instrument failure: `IRQ_TIMEOUT` was ignored,
+leaving the software's RX flag set after the radio stopped receiving. At a value of 8 the old
+code received zero packets from **all three** transmitters, including E22. Rearming on timeout
+restored reception and counted 2624 timeouts in 120 seconds. The knob also needs the sync-timeout
+register update present in [Semtech's implementation](https://github.com/Lora-net/LoRaMac-node/blob/master/src/radio/sx126x/sx126x.c).
+It did not reproduce E220's selectivity: even after that update it impaired E22 reception too.
+It is left disabled in the normal build. Timing diagnostics now reset their timestamps after
+failed receptions; formerly a later packet could inherit an earlier failed preamble's time.
+
 ## Confirmed from the datasheet — matches what DMD writes
 
 | Register | DMD value | Datasheet meaning |
@@ -18,7 +76,7 @@ table differs (30/27/24/21 dBm instead of 22/17/13/10).
 So an E220 set to `addr=0, channel=18, rate=2, packet=0, transparent` is a plain broadcast
 listener/sender on 868.125 MHz — exactly the shape DMD's design relies on.
 
-## SOLVED, 2026-09-17 — measured on hardware
+## Receive PHY identified, 2026-09-17 — measured on hardware
 
 > Everything below this section was written while the PHY was unknown. It is kept because the
 > reasoning that failed is worth reading, but **the inference it argues for is wrong** and is
@@ -84,19 +142,20 @@ FCC filings, which measure the thing directly rather than inferring it:
 Slope 122.07 kHz/ms plus BW 500 kHz gives SF11 arithmetically. Independently, SF11/BW500 at
 CR 4/5 is 2148 bps — the only one of the three that anyone would label "2.4k".
 
-### The layer above the PHY, also solved
+### The layer above the PHY (corrected 2026-09-21)
 
 The PHY carries an EBYTE frame, not the payload directly. A 38-byte payload arrives as 46 bytes:
 
 ```
-2C  CH  A0  01  00  00  00  LEN  |  payload XOR 0x12
+2C  CH  (A0 XOR c)  (01 XOR c)  00  00  00  LEN  |  payload XOR 0x12
+c = XOR of all original payload bytes
 ```
 
 | Byte | Meaning | How it is known |
 |---|---|---|
 | 0 | `0x2C` | constant across every capture |
 | 1 | **channel number** | tracked 0x12 -> 0x13 when the beacon moved from channel 18 to 19 |
-| 2-3 | `A0 01` | constant across every capture |
+| 2-3 | `A0 XOR c`, `01 XOR c` | repeated/varied payload captures; the old constant markers all had `c = 0` |
 | 4-6 | `00 00 00` | **unverified** - plausibly the address, but ours was only ever 0x0000 |
 | 7 | **payload length** | 0x0A / 0x26 / 0x64 for payloads of 10 / 38 / 100 bytes |
 | 8.. | payload **XOR 0x12** | see below |
@@ -114,8 +173,9 @@ channel". Moving the beacon to channel 19 moved the header byte to 0x13 and **le
 0x12**. Had we not checked, the rule written down here would have been wrong everywhere except
 channel 18.
 
-That is everything an SX1262 backend needs: prepend the eight bytes, XOR the payload on the way
-out, strip and XOR back on the way in.
+The backend prepends this header and XORs the payload on transmission. Receive currently checks
+the marker and length, then strips the header and reverses the payload XOR; it does not enforce
+bytes 2–3, so receiving our own incorrectly wrapped frames never validated their encapsulation.
 
 **Still unverified:** what `0x2C`, `0xA0` and `0x01` mean, and whether bytes 4-6 really are the
 address. Irrelevant for DMD interoperability, where the address is 0 as well, but it is an
@@ -361,10 +421,11 @@ Measured 2026-09-21, one Heltec V4.3, one bench, the two builds minutes apart.
 | the probe, driven by RadioLib | ~22 in 200 s, about one in five | 63 |
 | this driver | **0 of 30** | 28 of 30 |
 
-Both send the same frame at the same PHY through the same front end into the same two receivers,
-one of them in another room. So the difference is in this driver's register sequence and nothing
-else, and a working reference now exists on the hardware. What remains is a diff of two SPI
-traces rather than a search through the physics.
+Both use the same front end and the same two receivers, one in another room.
+**Correction:** this did not isolate the register sequence or use identical frames: the
+RadioLib probe used a constant marker while the driver's numbered payload needed different
+header bytes. The payload-dependent fields at the top of this document must be held correct
+before attributing a difference to either driver's SPI or PHY behavior.
 
 The same day ruled out a regression in our own history: the firmware from `3e10b41`, the commit
 that recorded 22.0 % over 2211 trials, was rebuilt and reflashed. It sent about 80 packets in 240

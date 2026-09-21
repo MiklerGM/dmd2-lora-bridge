@@ -8,19 +8,19 @@ It falls straight out of the constraints:
 - DMD2 only ever talks to `com.thorkracing.dmdLora` over Android broadcasts. Something with
   that package name must run **on the phone**. → Android app, mandatory.
 - The attached radio is a hardware peripheral: UART for the E220, SPI plus IRQ/front-end
-  control for the planned SX1262/KCT8103L backend. A phone cannot drive either directly, so
+  control for the SX1262 backend. A phone cannot drive either directly, so
   something must bridge phone ↔ radio. → ESP32 (BLE on one side, radio I/O on the other),
   mandatory.
 
 There is no third component and no useful way to merge these two. The split is minimal.
 
 > **What is built, as of this revision.** The two axes, the boundary and the BLE contract below
-> are implemented for the **E220 backend in `bridge` mode**, and that is the only combination
-> that exists. `beacon` mode and the SX1262/KCT8103L backend are described here because the
-> boundary was drawn to accommodate them, not because they ship: `mode` is reported by the
-> firmware but not yet persisted or switchable, and no SX1262 backend exists outside the
-> receive-only probe in `probe/`. Nothing in `probe/` may become a production backend before
-> real traffic has been received and measured — see `docs/ROADMAP.md`.
+> are implemented for the **E220/E22 UART backend** and the **SX1262 SPI backend** in `bridge`
+> mode. SX1262 receive is measured; its transmit path remains opt-in bench functionality with
+> unresolved EBYTE delivery loss. The Heltec has a KCT8103L front end; the T-Deck does not.
+> `beacon` mode remains planned: `mode` is reported but not yet persisted or switchable.
+> The Arduino project in `probe/` is diagnostic scaffolding, including a RadioLib reference
+> and function substitutions. Its results are hardware evidence, not release validation.
 
 ## 2. Two independent axes
 
@@ -29,13 +29,13 @@ them is the mistake this layout exists to prevent.
 
 | Axis | When it is fixed | Values |
 |---|---|---|
-| **Radio backend** | compile time, a property of the board | E220 over UART; SX1262 over SPI with a KCT8103L front end |
+| **Radio backend** | compile time, a property of the board | E220/E22 over UART; SX1262 over SPI, with or without a front end |
 | **Device mode** | runtime and persisted once beacon mode exists; currently fixed at build time | `bridge` — packets come from Android; `beacon` — packets come from the board's own GNSS |
 
 The backend is compile time because it is soldered down: a board either has an E220 on a UART
 or an SX1262 on a SPI bus, and a runtime choice between them would be a choice nobody can make
 wrongly *and* nobody can make usefully. The mode is intended to become runtime state because
-the same board can be both things on different days; the current E220 firmware implements only
+the same board can be both things on different days; the current firmware implements only
 `bridge`, so there is not yet a mode setting to persist.
 
 > **KCT8103L is not a transceiver.** It is a PA/LNA front end. The transceiver on an
@@ -206,7 +206,7 @@ ST proto=2 radio=e220 mode=bridge online=1 tx=1 configured=1 \
 | `configured` | the logical request below is applied to the hardware **and read back from it** |
 | `channel` `power_level` `lbt` | the bridge's logical snapshot after its own floor; a claim about actual hardware only while `configured=1` (otherwise it may be merely the boot or last confirmed request); channel and power must be in the contract ranges |
 | `min_power_level` | required; the strongest power level this build permits (`0..3`, where larger is weaker); `0` means the build lifted its own floor and says so |
-| `tx_dbm` | what that level is worth on the module fitted — **absent when the build was not told**, and then the phone shows the power as unknown |
+| `tx_dbm` | what that level is worth on the module fitted — absent when unknown; EBYTE reports its rated power at boot, while unmeasured front-end gain cannot be inferred from the SX1262 setting |
 | `fw` | optional diagnostic firmware identity; never used as a capability gate |
 
 The status is parsed as whole `key=value` tokens. Searching the line for `channel=` would find
@@ -268,9 +268,10 @@ the first question with no: it is already transmitting from its own GNSS and is 
 
 ## 6. Design risks to keep visible
 
-1. **PHY match (highest remaining).** Sync word and preamble are not exposed through the module's config surface.
-   Buying a genuine E220 makes them match by construction; confirm empirically with two of our
-   own modules before blaming anything else.
+1. **SX1262 → EBYTE delivery (highest remaining).** EBYTE-to-EBYTE reception works, and the
+   SX1262 receives EBYTE frames. Correcting the payload-dependent EBYTE header restores some
+   delivery, but both bare-chip drivers still lose many packets at the module's UART. Keep
+   SX1262 TX opt-in until the remaining gap in `PHY-notes.md` is explained.
 2. **BLE MTU.** The current largest wire payload is 200 unpadded-base64 characters (a maximum
    group packet is 187). MTU 247 carries a complete `TX` line, but the link still has to support
    fragmentation because the default characteristic payload is only 20 bytes.
@@ -289,3 +290,13 @@ the first question with no: it is already transmitting from its own GNSS and is 
    signing keys; a deliberately malicious app can declare the same permission. The global
    35-second CFG interval still bounds flash writes, but this is not cryptographic caller
    authentication.
+8. **SX1262 configuration confirmation is weaker than the contract above.** Its verifier
+   reads the sync word and compares a cached logical request, not hardware channel and power.
+   A partial failed apply also leaves the previous cache valid: the periodic verifier can
+   reopen TX under that old request although the chip was partly changed. Invalidate that
+   cache before the first hardware change and test a failure after the frequency write;
+   `configured` must stay false until a complete successful apply. This remains unfixed.
+9. **EBYTE mode changes under traffic still need hardware validation.** The reverse-link run
+   in `bench/results/2026-09-21-reverse-link.json` captured a `C1 00 08` register-read request
+   on air and a transient failed health check. The UART mutex and AUX checks did not prevent
+   that configuration transaction from being treated as payload. This remains unfixed.

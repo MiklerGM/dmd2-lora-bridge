@@ -2,6 +2,7 @@
 #ifdef RADIO_BACKEND_SX1262
 
 #include "radio.h"
+#include "ebyte_frame.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -179,6 +180,7 @@ static int s_once_preamble = -1, s_once_sync = -1;
 #endif
 #ifdef RX_STAGES
 static unsigned s_stage_preamble, s_stage_header, s_stage_rx_done, s_stage_hdr_err, s_stage_crc_err;
+static unsigned s_stage_timeout;
 static int64_t s_stage_next;
 static int64_t s_t_preamble, s_t_header;
 #endif
@@ -216,6 +218,11 @@ static bool wait_busy(uint32_t timeout_ms) {
 
 static bool xfer(const uint8_t *tx, uint8_t *rx, size_t len) {
     if (!wait_busy(100)) return false;
+#ifdef SX_BENCH_SPI
+    /* Same driver and command sequence, the working probe's bus implementation. */
+    extern bool sx_bench_spi(const uint8_t *, uint8_t *, size_t);
+    bool ok = sx_bench_spi(tx, rx, len);
+#else
     spi_transaction_t t = {.length = len * 8, .tx_buffer = tx, .rx_buffer = rx};
 #ifdef SX_SOFT_CS
     /*
@@ -232,6 +239,7 @@ static bool xfer(const uint8_t *tx, uint8_t *rx, size_t len) {
 #ifdef SX_SOFT_CS
     esp_rom_delay_us(1);
     gpio_set_level((gpio_num_t)PIN_SX_NSS, 1);
+#endif
 #endif
     /*
      * BUSY has to be low again before the next command, and it rises a moment *after* NSS does -
@@ -332,9 +340,9 @@ static bool reg_read(uint16_t addr, uint8_t *out, size_t n) {
  * SX1262 errata 15.1, "Modulation Quality with 500 kHz LoRa Bandwidth". At BW500 bit 2 of the
  * TxModulation register must be CLEARED before transmitting; at every other bandwidth it must
  * be set. Skipping it does not fail anything locally - the chip reports TxDone exactly as
- * usual - it just degrades the modulation enough that nothing on the other end decodes. That is
- * precisely what it did here: 49 transmissions reported ok, an E220 half a metre away heard
- * none of them, and the same pair worked when RadioLib (which applies this) drove the radio.
+ * usual. The workaround is required, but the old zero-reception result did not establish it
+ * as the cause: later register captures verified the relevant bit, and the EBYTE frame header
+ * also needed correction. See docs/PHY-notes.md for the controlled measurements.
  */
 #ifdef SX_REG_TRACE
 /*
@@ -745,8 +753,17 @@ static bool enter_rx(void) {
      * been reproduced on hardware we can instrument - instead of inside a black box.
      */
     {
-        uint8_t sn = RX_SYMB_TIMEOUT;
+        /* Semtech SX126xSetLoRaSymbNumTimeout also updates the sync-timeout register.
+         * https://github.com/Lora-net/LoRaMac-node/blob/master/src/radio/sx126x/sx126x.c */
+        unsigned symbols = RX_SYMB_TIMEOUT > 248 ? 248 : RX_SYMB_TIMEOUT;
+        unsigned mantissa = (symbols + 1) / 2, exponent = 0;
+        while (mantissa > 31) { mantissa = (mantissa + 3) / 4; ++exponent; }
+        uint8_t sn = (uint8_t)(mantissa << (2 * exponent + 1));
         if (!cmd(CMD_SET_SYMB_TIMEOUT, &sn, 1)) return false;
+        if (symbols) {
+            uint8_t sync_timeout = (uint8_t)(mantissa * 8 + exponent);
+            if (!reg_write(0x0706, &sync_timeout, 1)) return false;
+        }
     }
 #endif
     if (!cmd(CMD_CLEAR_IRQ_STATUS, clear, 2)) return false;
@@ -802,6 +819,7 @@ void radio_init(void) {
     fem_power(true);
     fem_transmit(false);
 
+#ifndef SX_BENCH_SPI
     spi_bus_config_t bus = {
         .mosi_io_num = PIN_SX_MOSI,
         .miso_io_num = PIN_SX_MISO,
@@ -829,6 +847,7 @@ void radio_init(void) {
     }
 #endif
     ESP_ERROR_CHECK(spi_bus_add_device(SPI2_HOST, &dev, &s_spi));
+#endif
 
     gpio_set_level((gpio_num_t)PIN_SX_RST, 0);
     delay_us(2000);
@@ -898,12 +917,8 @@ radio_state_t radio_verify(const radio_request_t *req) {
 #endif
 }
 
-/* Byte 2 and 3 of every outgoing EBYTE frame; a module never sends the same value twice
- * running, so neither does this. Four bits, wrapping, exactly as measured off the air. */
-static uint8_t s_frame_seq;
-
 #ifdef BENCH_CMD
-/* Set for one packet by radio_bench_tx; -1 means "number it as usual". */
+/* Set for one packet by radio_bench_tx; -1 means derive the header from the payload. */
 static int s_once_hdr = -1;
 #endif
 
@@ -914,31 +929,14 @@ bool radio_send(const uint8_t *data, size_t len) {
 
     /* The frame an E220 expects, built here because there is no module MCU to build it. */
     uint8_t frame[EBYTE_HEADER_LEN + 255];
-    frame[0] = 0x2C;
-    frame[1] = s_have_applied ? s_applied.channel : RADIO_DEFAULT_CHANNEL;
-    /*
-     * A per-packet counter, which this driver used to send as the constant A0 01.
-     *
-     * Read off the air from two modules: every frame an E220 or an E22 transmits carries
-     * 0xA0 | n in byte 2 and n ^ 1 in byte 3, with n a four-bit value that changes from packet
-     * to packet. Fourteen consecutive frames obeyed it without exception. What the far end does
-     * with it is not documented here and was not guessable from a constant - the point is that
-     * a module never repeats one, and this backend repeated the same value forever.
-     */
+    ebyte_frame_encode(frame, s_have_applied ? s_applied.channel : RADIO_DEFAULT_CHANNEL,
+                       data, len);
 #ifdef BENCH_CMD
     if (s_once_hdr >= 0) {
         frame[2] = (uint8_t)(s_once_hdr >> 8);
         frame[3] = (uint8_t)s_once_hdr;
-    } else
-#endif
-    {
-        frame[2] = (uint8_t)(0xA0 | (s_frame_seq & 0x0F));
-        frame[3] = (uint8_t)((s_frame_seq & 0x0F) ^ 1);
-        s_frame_seq++;
     }
-    frame[4] = frame[5] = frame[6] = 0x00;
-    frame[7] = (uint8_t)len;
-    for (size_t i = 0; i < len; i++) frame[EBYTE_HEADER_LEN + i] = data[i] ^ EBYTE_XOR;
+#endif
     size_t total = EBYTE_HEADER_LEN + len;
 
 #ifdef TX_REPLAY_RADIOLIB
@@ -1265,7 +1263,10 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
              * and the steps to tell apart are 45.
              */
             const int64_t t_now = esp_timer_get_time();
-            if ((flags & IRQ_PREAMBLE) && s_t_preamble == 0) s_t_preamble = t_now;
+            if (flags & IRQ_PREAMBLE) {
+                s_t_preamble = t_now;
+                s_t_header = 0;
+            }
             if ((flags & IRQ_HEADER_VALID) && s_t_header == 0) s_t_header = t_now;
             if (flags & IRQ_RX_DONE) {
                 ESP_LOGI(TAG, "timing: preamble->header %lld ms, header->done %lld ms",
@@ -1284,17 +1285,28 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
         }
         if (flags & IRQ_HEADER_ERR) s_stage_hdr_err++;
         if (flags & IRQ_CRC_ERR) s_stage_crc_err++;
+        if (flags & IRQ_TIMEOUT) s_stage_timeout++;
         if (flags & IRQ_RX_DONE) s_stage_rx_done++;
         {
             int64_t now = esp_timer_get_time();
             if (now >= s_stage_next) {
                 s_stage_next = now + 30 * 1000 * 1000;
-                ESP_LOGI(TAG, "stages: preamble %u -> header %u -> rx %u | hdr_err %u crc_err %u",
+                ESP_LOGI(TAG, "stages: preamble %u -> header %u -> rx %u | hdr_err %u crc_err %u timeout %u",
                          s_stage_preamble, s_stage_header, s_stage_rx_done,
-                         s_stage_hdr_err, s_stage_crc_err);
+                         s_stage_hdr_err, s_stage_crc_err, s_stage_timeout);
             }
         }
 #endif
+        if ((flags & IRQ_TIMEOUT) && !(flags & IRQ_RX_DONE)) {
+            /* Symbol timeout exits RX even when SetRx uses the continuous timeout value.
+             * The software flag must follow the chip, otherwise this receiver stays deaf. */
+            s_in_rx = false;
+#ifdef RX_STAGES
+            s_t_preamble = s_t_header = 0;
+#endif
+            if (!enter_rx()) break;
+            continue;
+        }
         if (!(flags & (IRQ_RX_DONE | IRQ_CRC_ERR | IRQ_HEADER_ERR))) {
             /*
              * Blocking, not delay_us. This poll runs for the whole of first_wait_ms and the
@@ -1313,6 +1325,9 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
         }
         uint8_t clear[2] = {IRQ_CLEAR_HI, IRQ_CLEAR_LO};
         if (flags & (IRQ_CRC_ERR | IRQ_HEADER_ERR)) {
+#ifdef RX_STAGES
+            s_t_preamble = s_t_header = 0;
+#endif
             cmd(CMD_CLEAR_IRQ_STATUS, clear, 2);
             break;
         }
@@ -1329,9 +1344,9 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
              * Counting HEADER_ERR answers "how many times did something fail", which is a
              * handful of events over a run and cannot separate two transmitters that are both
              * mostly working. The modem measures every packet it demodulates: RSSI says how
-             * loud it was and SNR says how clean, and a distorted transmitter shows a lower SNR
-             * at the same RSSI. That is a continuous number with a tight spread on every single
-             * packet, which is what comparing two transmitters needs.
+             * loud it was. SNR saturates near 8 dB on this bench, so equal readings at these
+             * strong levels do not establish equal modulation quality. It becomes informative
+             * closer to the receiver's sensitivity limit.
              *
              * Scaling is the datasheet's: RSSI in half-dBm, SNR in quarter-dB and signed.
              */
@@ -1355,6 +1370,11 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
             ESP_LOGI(TAG, "rx frame %u bytes, header %02X %02X %02X %02X %02X %02X %02X %02X",
                      (unsigned)n, frame[0], frame[1], frame[2], frame[3],
                      frame[4], frame[5], frame[6], frame[7]);
+#ifdef RX_RAW_FRAME
+            char hex[2 * 255 + 1];
+            for (size_t i = 0; i < n; ++i) snprintf(hex + 2 * i, 3, "%02X", frame[i]);
+            ESP_LOGI(TAG, "rx raw: %s", hex);
+#endif
 #endif
             /* Strip EBYTE's frame and undo the obfuscation, so the caller sees exactly the
              * bytes a module would have put on its UART. A frame that is not one is dropped

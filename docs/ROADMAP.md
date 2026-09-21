@@ -235,7 +235,8 @@ noise. A preamble-count peak names a *family of three*, and bandwidth has to com
 — here, from FCC filings that measure 548 kHz directly.
 
 **The layer above it, same day.** The PHY carries an EBYTE frame:
-`2C <channel> A0 01 00 00 00 <len>` followed by the payload **XOR 0x12**. Read off by varying one
+`2C <channel> (A0 XOR c) (01 XOR c) 00 00 00 <len>` followed by the payload **XOR 0x12**,
+where `c` is the XOR of the original payload (corrected 2026-09-21). Read off by varying one
 thing at a time — two payloads of equal length and different constant bytes to separate framing
 from payload, two lengths to get the overhead.
 

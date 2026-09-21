@@ -55,6 +55,14 @@ bench_result_t bench_parse_tx(const char *line, bench_tx_t *out) {
         unsigned bit;
         if (klen == 3 && memcmp(tok, "seq", 3) == 0) {
             if (!parse_uint(vs, ve, 10, &v)) return BENCH_BAD_TOKEN;
+            /*
+             * Eight digits, because that is how it rides in the payload: "%08lu" followed by
+             * filler to the requested length. A ninth digit writes nine characters where the
+             * caller subtracted eight, and "len - at" underflows a size_t into a memset of four
+             * billion bytes. Bounding it here rather than at the memset keeps the invariant at
+             * the boundary, where the rest of this parser keeps its invariants.
+             */
+            if (v > 99999999ul) return BENCH_OUT_OF_RANGE;
             bit = SEEN_SEQ;
             r.seq = (uint32_t)v;
         } else if (klen == 5 && memcmp(tok, "power", 5) == 0) {

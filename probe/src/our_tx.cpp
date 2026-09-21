@@ -1,14 +1,11 @@
 /*
  * The bridge's own SX1262 driver, compiled into the probe's environment.
  *
- * Everything the two transmitters say to the chip now matches: the same modulation, sync,
- * packet parameters, errata writes, PA settings and frame, verified against RadioLib's own SPI
- * trace. The reference reaches an E220 from this board and the bridge does not, so what is left
- * is not what the driver says but where it runs - ESP-IDF at 160 MHz with a scheduler, several
- * tasks and a Bluetooth stack, against a bare Arduino sketch at 240 MHz.
- *
- * This splits that in half. Same driver, the reference's environment. If it works here, the
- * environment is the culprit; if it fails here, our code is, and neither answer is a guess.
+ * This removes the bridge scheduler and Bluetooth from a driver experiment. The original
+ * comparison still sent incorrect payload-dependent EBYTE header bytes, so its failure did
+ * not isolate the bus or PHY. See docs/PHY-notes.md for the correction. Use heltec_bisect and
+ * bench/compare_drivers.py for interleaved comparisons with a module reference; this standalone
+ * periodic transmitter does not control link drift.
  */
 #include <Arduino.h>
 #include <esp_log.h>

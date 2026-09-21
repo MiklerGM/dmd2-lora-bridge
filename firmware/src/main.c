@@ -681,7 +681,7 @@ static void bench_port_open(void) {
 /* Collects one line. Returns its length, or -1 when nothing complete arrived in time. */
 static int bench_readline(char *out, size_t cap) {
     size_t at = 0;
-    const int64_t deadline = esp_timer_get_time() + 2 * 1000 * 1000;
+    int64_t deadline = esp_timer_get_time() + 2 * 1000 * 1000;
     while (at + 1 < cap && esp_timer_get_time() < deadline) {
         uint8_t c;
 #if SOC_USB_SERIAL_JTAG_SUPPORTED
@@ -690,6 +690,8 @@ static int bench_readline(char *out, size_t cap) {
         int n = uart_read_bytes(UART_NUM_0, &c, 1, pdMS_TO_TICKS(100));
 #endif
         if (n <= 0) continue;
+        /* An arriving line must not be cut at the end of an idle two-second window. */
+        deadline = esp_timer_get_time() + 2 * 1000 * 1000;
         if (c == '\n' || c == '\r') {
             if (at == 0) continue;   /* a bare terminator between lines */
             out[at] = '\0';

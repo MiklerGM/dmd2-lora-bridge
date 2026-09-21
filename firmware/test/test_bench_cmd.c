@@ -50,6 +50,10 @@ int main(void) {
     rejects("TX seq=1 len=9", BENCH_OUT_OF_RANGE);    /* 1 mod 4 - the receiver would drop it */
     assert(parsed("TX seq=1 len=8").len == 8);
     assert(parsed("TX seq=1 len=200").len == 200);
+    /* The sequence number goes out as eight digits and the filler is sized by subtracting
+     * those eight. A ninth made that subtraction underflow into a four-gigabyte memset. */
+    assert(parsed("TX seq=99999999").seq == 99999999);
+    rejects("TX seq=100000000", BENCH_OUT_OF_RANGE);
     printf("%-26s ok\n", "ranges");
 
     /* Sync is both registers exactly as written, four hex digits - not RadioLib's eight-bit
@@ -67,7 +71,7 @@ int main(void) {
     assert(parsed("TX seq=1 hdr=A504").hdr == 0xA504);
     assert(parsed("TX seq=1 hdr=0000").hdr == 0x0000);
     assert(parsed("TX seq=1 hdr=ffff").hdr == 0xFFFF);
-    assert(parsed("TX seq=1").hdr == -1);          /* absent means "number it as usual" */
+    assert(parsed("TX seq=1").hdr == -1);          /* absent means derive it from the payload */
     rejects("TX seq=1 hdr=A50", BENCH_BAD_TOKEN);
     rejects("TX seq=1 hdr=A5040", BENCH_BAD_TOKEN);
     rejects("TX seq=1 hdr=A5G4", BENCH_BAD_TOKEN);
