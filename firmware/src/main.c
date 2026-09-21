@@ -753,6 +753,46 @@ void app_main(void) {
     s_tx_queue = xQueueCreate(8, sizeof(tx_item_t));
     configASSERT(s_tx_queue != NULL);
 
+#ifdef PIN_BOARD_POWERON
+    /*
+     * One pin powers the board's peripherals. On a T-Deck that is the keyboard, the trackball,
+     * the backlight, the card slot and the audio chain - not the radio, which has its own
+     * supply - but it has to go up early all the same: bringing that much load up late browns
+     * the rail out and resets the chip.
+     */
+    gpio_config_t board_power = {
+        .pin_bit_mask = (1ULL << PIN_BOARD_POWERON),
+        .mode = GPIO_MODE_OUTPUT,
+    };
+    gpio_config(&board_power);
+    gpio_set_level((gpio_num_t)PIN_BOARD_POWERON, 1);
+#endif
+
+#ifdef BOARD_SPI_IDLE_HIGH
+    /*
+     * Chip selects of the other devices sharing the radio's SPI bus, parked high so that only
+     * the radio ever answers. Undriven they float, and a neighbour replies alongside it.
+     *
+     * That failure does not look like a bus problem, which is what makes it worth a comment:
+     * on a T-Deck every command came back 0xAA, which is not the all-ones of a floating line
+     * but real bytes from the wrong chip, and the low nibble even decoded as a believable chip
+     * mode. The radio looked present and confused rather than drowned out.
+     */
+    static const int idle_high[] = {BOARD_SPI_IDLE_HIGH};
+    for (size_t i = 0; i < sizeof(idle_high) / sizeof(idle_high[0]); i++) {
+        gpio_config_t cs = {
+            .pin_bit_mask = (1ULL << idle_high[i]),
+            .mode = GPIO_MODE_OUTPUT,
+        };
+        gpio_config(&cs);
+        gpio_set_level((gpio_num_t)idle_high[i], 1);
+    }
+#endif
+
+#if defined(PIN_BOARD_POWERON) || defined(BOARD_SPI_IDLE_HIGH)
+    vTaskDelay(pdMS_TO_TICKS(100));   /* let the rail settle before the radio is spoken to */
+#endif
+
     /* Before the radio, so a board that hangs in radio_init still shows it is alive. */
     led_init();
 

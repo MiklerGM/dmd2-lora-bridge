@@ -196,13 +196,23 @@ static bool xfer(const uint8_t *tx, uint8_t *rx, size_t len) {
         ok = wait_busy(100);
     }
 #ifdef SX_SPI_TRACE
-    /* Bench only: the same view RadioLib's RLB_SPI debug gives, so the two can be diffed. */
+    /*
+     * Bench only: the same view RadioLib's RLB_SPI debug gives, so the two can be diffed.
+     *
+     * Both directions, because the question this answers is usually "is the chip the one
+     * replying". Sending alone cannot tell a live radio from an empty bus: MISO reads all ones
+     * with nothing driving it and all zeroes with the chip held in reset, and either looks like
+     * a plausible status byte until you see it next to what went out.
+     */
     if (tx[0] != CMD_GET_IRQ_STATUS && tx[0] != 0xC0) {
-        char line[200];
-        size_t k = 0, show = len > 28 ? 28 : len;
-        for (size_t i = 0; i < show && k + 4 < sizeof(line); i++)
-            k += (size_t)snprintf(line + k, sizeof(line) - k, "%02X ", tx[i]);
-        ESP_LOGI(TAG, "SPI %s%s", line, len > show ? "..." : "");
+        char out[120], in[120];
+        size_t ko = 0, ki = 0, show = len > 20 ? 20 : len;
+        for (size_t i = 0; i < show && ko + 4 < sizeof(out); i++) {
+            ko += (size_t)snprintf(out + ko, sizeof(out) - ko, "%02X ", tx[i]);
+            ki += (size_t)snprintf(in + ki, sizeof(in) - ki, "%02X ", rx ? rx[i] : 0);
+        }
+        ESP_LOGI(TAG, "SPI ->%s%s  <-%s%s", out, len > show ? "..." : "",
+                 rx ? in : "(discarded)", rx && len > show ? "..." : "");
     }
 #endif
     return ok;
@@ -443,12 +453,19 @@ static bool configure(const radio_request_t *req) {
     uint8_t image[2] = {upper_band ? 0xE1 : 0xD7, upper_band ? 0xE9 : 0xDB};
     uint8_t irq[8] = {0xFF, 0xFF, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00};
 
-    s_cmd_error = false;
-
     /* Named steps, because "apply failed" on a bus that answers is otherwise a guess. */
 #define STEP(what, expr) do { if (!(expr)) { ESP_LOGW(TAG, "configure: %s failed", what); \
                                              return false; } } while (0)
     STEP("standby", set_standby());
+    /*
+     * Cleared after the first command, not before it. The status byte a command returns reports
+     * what the chip was doing *before* it, so the first one describes a chip this sequence has
+     * not touched yet - on a T-Deck, one that had been running someone else's firmware until a
+     * moment ago. Counting that against us failed every configuration on an otherwise healthy
+     * radio. Nothing is lost by skipping it: whether the standby above worked is reported by
+     * the status byte of the command after it, which is checked.
+     */
+    s_cmd_error = false;
     STEP("regulator", cmd(CMD_SET_REGULATOR_MODE, &reg, 1));
     STEP("tcxo", cmd(CMD_SET_DIO3_TCXO, tcxo, 4));
     STEP("calibrate", cmd(CMD_CALIBRATE, &calib, 1));
