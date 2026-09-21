@@ -39,8 +39,12 @@ from pathlib import Path
 # Runs on the receiving machine, fed in over ssh so nothing has to be installed there beyond
 # pyserial. Unbuffered, because a line that arrives after the run has been counted is lost.
 REMOTE_READER = """
-import sys, serial
+import sys, time, serial
 port = serial.Serial(sys.argv[1], 115200, timeout=0.5)
+port.dtr = False
+port.rts = True
+time.sleep(0.15)
+port.rts = False
 while True:
     line = port.readline()
     if line:
@@ -52,6 +56,21 @@ TXOK = re.compile(r"TXOK seq=(\d+)")
 TXFAIL = re.compile(r"TXFAIL seq=(\d+)")
 # The bridge logs "rx 38 bytes: 00000042AAAA..." - the payload starts with its sequence number.
 RX = re.compile(r"rx \d+ bytes: (\d{8})")
+
+
+def reset(port):
+    """Pulse the board's reset line: DTR low so it boots the application, then a dip on RTS.
+
+    Every run starts from a fresh receiver, and the point is not hygiene but evidence. A board
+    that has quietly stopped reporting looks exactly like one that heard nothing, and this bench
+    has now lost an hour to that twice. A reset puts the boot banner at the top of the captured
+    log, so afterwards there is a line in the record saying the receiver was alive and which
+    module it was carrying.
+    """
+    port.dtr = False
+    port.rts = True
+    time.sleep(0.15)
+    port.rts = False
 
 
 class Receiver(threading.Thread):
@@ -87,6 +106,7 @@ class Receiver(threading.Thread):
             return self.proc.stdout
         import serial
         self.port = serial.Serial(self.spec, 115200, timeout=0.5)
+        reset(self.port)
         return self.port
 
     def run(self):
@@ -122,7 +142,11 @@ class Transmitter:
         import serial
         self.name, self.path = name, path
         self.port = serial.Serial(path, 115200, timeout=0.2)
-        time.sleep(0.3)
+        # Same reason as the receivers, plus one of its own: a board left in the bootloader by
+        # the flash that put this firmware on it answers nothing, and a run where nothing was
+        # transmitted otherwise prints a tidy table of zeroes.
+        reset(self.port)
+        time.sleep(2.5)
         self.port.reset_input_buffer()
 
     def send(self, seq, extra, timeout=8.0):
@@ -213,6 +237,20 @@ def main():
     time.sleep(args.settle)
     for r in rxs:
         r.close()
+
+    for r in rxs:
+        banner = [l for l in r.lines if "bridge up" in l]
+        if banner:
+            print(f"{r.name}: {banner[-1].split('bridge up: ', 1)[-1].strip()}")
+        else:
+            print(f"{r.name}: WARNING - never printed a boot banner, so nothing here says it "
+                  f"was listening at all ({len(r.lines)} lines captured)")
+
+    if not sent:
+        print("\nnothing was transmitted: every packet was refused or unanswered, so there is "
+              "no measurement here. Check that the transmitters are running this firmware and "
+              "not sitting in the bootloader.")
+        return 1
 
     # ---- results ----------------------------------------------------------
     table = defaultdict(lambda: defaultdict(int))

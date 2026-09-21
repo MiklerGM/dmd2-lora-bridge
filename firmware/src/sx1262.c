@@ -664,6 +664,10 @@ radio_state_t radio_verify(const radio_request_t *req) {
 #endif
 }
 
+/* Byte 2 and 3 of every outgoing EBYTE frame; a module never sends the same value twice
+ * running, so neither does this. Four bits, wrapping, exactly as measured off the air. */
+static uint8_t s_frame_seq;
+
 bool radio_send(const uint8_t *data, size_t len) {
     if (!RADIO_TX_ENABLED) return false;
     if (len == 0 || len > 255 - EBYTE_HEADER_LEN) return false;
@@ -673,8 +677,18 @@ bool radio_send(const uint8_t *data, size_t len) {
     uint8_t frame[EBYTE_HEADER_LEN + 255];
     frame[0] = 0x2C;
     frame[1] = s_have_applied ? s_applied.channel : RADIO_DEFAULT_CHANNEL;
-    frame[2] = 0xA0;
-    frame[3] = 0x01;
+    /*
+     * A per-packet counter, which this driver used to send as the constant A0 01.
+     *
+     * Read off the air from two modules: every frame an E220 or an E22 transmits carries
+     * 0xA0 | n in byte 2 and n ^ 1 in byte 3, with n a four-bit value that changes from packet
+     * to packet. Fourteen consecutive frames obeyed it without exception. What the far end does
+     * with it is not documented here and was not guessable from a constant - the point is that
+     * a module never repeats one, and this backend repeated the same value forever.
+     */
+    frame[2] = (uint8_t)(0xA0 | (s_frame_seq & 0x0F));
+    frame[3] = (uint8_t)((s_frame_seq & 0x0F) ^ 1);
+    s_frame_seq++;
     frame[4] = frame[5] = frame[6] = 0x00;
     frame[7] = (uint8_t)len;
     for (size_t i = 0; i < len; i++) frame[EBYTE_HEADER_LEN + i] = data[i] ^ EBYTE_XOR;
@@ -988,6 +1002,18 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
         uint8_t frame[EBYTE_HEADER_LEN + 255];
         if (n > sizeof(frame)) n = sizeof(frame);
         if (n && buffer_read(st[1], frame, n)) {
+#ifdef RX_STAGES
+            /*
+             * The header exactly as it came off the air. This backend builds its own EBYTE frame
+             * because there is no module MCU to build one, and the only way to know whether it
+             * matches what a module really sends is to hold the two side by side. The check
+             * below looks at two bytes of the eight; a module's firmware need not be so
+             * forgiving, so the other six are worth seeing rather than assuming.
+             */
+            ESP_LOGI(TAG, "rx frame %u bytes, header %02X %02X %02X %02X %02X %02X %02X %02X",
+                     (unsigned)n, frame[0], frame[1], frame[2], frame[3],
+                     frame[4], frame[5], frame[6], frame[7]);
+#endif
             /* Strip EBYTE's frame and undo the obfuscation, so the caller sees exactly the
              * bytes a module would have put on its UART. A frame that is not one is dropped
              * rather than passed up half-understood. */
