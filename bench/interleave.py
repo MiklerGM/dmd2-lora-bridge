@@ -47,7 +47,12 @@ time.sleep(0.15)
 port.rts = False
 
 def to_port():
-    for line in sys.stdin.buffer:
+    # readline, not iteration: iterating a pipe reads ahead and holds a line back until the
+    # buffer fills, so a command sent now would leave minutes later, or never.
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            break
         port.write(line)
         port.flush()
 
@@ -114,9 +119,15 @@ class Node(threading.Thread):
         self.lock = threading.Lock()
         if ":" in spec:
             host, dev = spec.split(":", 1)
+            # The script is placed as a file first. Feeding it on stdin - which is how the
+            # read-only reader does it - hands the interpreter our only channel to the board:
+            # python consumes stdin as its program text and closes it, and every command written
+            # afterwards goes into a pipe nothing is reading.
             script = base64.b64encode(REMOTE_NODE.encode()).decode()
+            subprocess.run(["ssh", host, f"echo {script} | base64 -d > /tmp/bench_node.py"],
+                           check=True, stdout=subprocess.DEVNULL)
             self.proc = subprocess.Popen(
-                ["ssh", host, f"echo {script} | base64 -d | python3 -u - {dev}"],
+                ["ssh", host, f"python3 -u /tmp/bench_node.py {dev}"],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         else:
             import serial

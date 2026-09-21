@@ -383,6 +383,45 @@ The instrument costs packets if it is run too eagerly: each poll occupies the UA
 first version also flushed the input buffer, which drove reception to zero and briefly looked
 like a second bug. Poll about once a second, and never flush.
 
+## The whole matrix, in one run
+
+Four boards, each transmitting 24 packets in its turn while the other three listen, all
+interleaved so every pairing meets the same air in the same minutes. Raw result in
+`bench/results/matrix-4x4.json`.
+
+```
+             listening:   heltec        e22         tdeck        e220
+heltec transmits             -       3/24  12%†   22/24  92%    7/24  29%
+e22    transmits         24/24 100%      -        24/24 100%   24/24 100%
+tdeck  transmits         23/24  96%   6/24  25%       -         8/24  33%†
+e220   transmits         24/24 100%  24/24 100%   24/24 100%      -
+```
+
+† Those two pairs sit 10 cm apart; the receiver is overloaded, not strict, and the cell means
+nothing. The same trap read the other way would say the Heltec is worse than the T-Deck.
+
+Dropping them leaves the honest comparison, everything across a room:
+
+| | our receiver | a module's receiver |
+|---|---|---|
+| our transmitter | 92 %, 96 % | **29 %, 25 %** |
+| a module transmitting | 100 %, 100 % | 100 %, 100 % |
+
+This settles three things at once, in one run rather than an afternoon of them.
+
+**The front end is not it.** A T-Deck has none and reaches a module 25 % of the time; a Heltec
+V4.3 has a KCT8103L and reaches one 29 % of the time.
+
+**The chip is not it.** The E22 is the same SX1262 we drive, behind EBYTE's own firmware, and
+everything decodes it.
+
+**The receiving chip family is not it.** An LLCC68 in the E220 and an SX1262 in the E22 refuse
+us equally.
+
+Modules hear everything and are heard by everything. The one failing region of the matrix is
+our transmitter against a module's receiver, and it fails the same way for both of our boards
+against both parts.
+
 ## What a transmitter's own timing says about it
 
 The receiver timestamps the three stages instead of only counting them, so a transmitter's
