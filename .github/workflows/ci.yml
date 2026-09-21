@@ -57,6 +57,7 @@ jobs:
       - run: make check-firmware
       # One gcc invocation; it needs neither the Arduino framework nor a board.
       - run: make check-probe
+      - run: make check-bench
 
   # The probe's own build. Deliberately not in the release job's needs: it is diagnostic
   # scaffolding that will churn while the PHY is being hunted, and a broken probe must be

@@ -1,5 +1,5 @@
 # Everything that can be checked without a phone or a radio.
-check: check-android check-firmware check-probe
+check: check-android check-firmware check-probe check-bench
 
 check-android:
 	@cd android && ./gradlew --console=plain -q :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
@@ -14,6 +14,12 @@ check-firmware:
 # transmitter, but its payload recognizer is pure and must not be allowed to rot.
 check-probe:
 	@$(MAKE) -s -C probe test
+
+# The bench runner's scheduler, which decides the order two transmitters take turns in. It
+# needs no hardware and no pyserial, and it is the one part of that script that can be wrong
+# without anything looking wrong - an uneven schedule quietly biases every number it prints.
+check-bench:
+	@python3 bench/interleave.py --self-check
 
 # Build a debug APK named after the commit it came from, so which build is on the phone is
 # never in doubt.
