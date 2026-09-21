@@ -58,6 +58,7 @@
 #define REG_FREQ_ERROR    0x076B
 #define CMD_SET_RXTX_FALLBACK 0x93
 #define CMD_SET_CAD_PARAMS    0x88
+#define CMD_SET_SYMB_TIMEOUT  0xA0
 
 #ifdef TX_LIKE_RADIOLIB_ALL
 /* The reference clears 0x43FF, not every bit. The same thing on paper - and "the same thing on
@@ -649,6 +650,26 @@ static bool enter_rx(void) {
      * grow with the number of riders would, and only after a transmission.
      */
     if (!set_packet_params(255)) return false;
+#ifdef RX_SYMB_TIMEOUT
+    /*
+     * How many preamble symbols this receiver insists on before it will commit.
+     *
+     * At zero - which is the reset value, and what both this driver and RadioLib have always
+     * left it at - the modem accepts a packet the moment it detects a single symbol. Semtech
+     * recommends a non-zero value, so a module's firmware plausibly sets one, and that would
+     * make a module strictly harder to reach than either of our own receivers.
+     *
+     * That matters because our receiver has never been an independent witness: it runs the same
+     * configuration as our transmitter, so anything systematic about our signal is invisible to
+     * it by construction. Setting this turns it into a stricter judge, and if a strict version
+     * of our own receiver stops hearing us while it still hears a module, then the defect has
+     * been reproduced on hardware we can instrument - instead of inside a black box.
+     */
+    {
+        uint8_t sn = RX_SYMB_TIMEOUT;
+        if (!cmd(CMD_SET_SYMB_TIMEOUT, &sn, 1)) return false;
+    }
+#endif
     if (!cmd(CMD_CLEAR_IRQ_STATUS, clear, 2)) return false;
     fem_transmit(false);
     if (!cmd(CMD_SET_RX, rx, 3)) return false;
