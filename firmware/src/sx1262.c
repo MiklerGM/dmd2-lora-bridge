@@ -92,7 +92,19 @@
 #define PHY_BW_KHZ    500
 #endif
 #define PHY_CR_CODE   0x01   /* 4/5 */
-#define PHY_LDRO      0x01   /* forced on: the chip's own rule would leave it off here */
+/*
+ * Forced on: the chip's own rule would leave it off here, and every reference driver does leave
+ * it off at SF11/BW500, where the symbol is 4.096 ms against the 16 ms threshold. It is on
+ * because an E220's transmissions decode with the payload CRC passing against a receiver that
+ * has it on, and a mismatch garbles the payload rather than the header.
+ *
+ * Overridable for the bench, because that argument is about what a module TRANSMITS and this
+ * setting also governs what its receiver expects. Our own receiver is forced into the same
+ * non-standard mode, so a link between two of our boards says nothing about it either way.
+ */
+#ifndef PHY_LDRO
+#define PHY_LDRO      0x01
+#endif
 #define PHY_PREAMBLE  8
 #define PHY_SYNC_MSB  0x54   /* sync word 0x55 as the chip stores it: high nibble | 0x04 */
 #define PHY_SYNC_LSB  0x54   /* low nibble << 4 | 0x04 */
@@ -280,6 +292,26 @@ static bool reg_read(uint16_t addr, uint8_t *out, size_t n) {
  * precisely what it did here: 49 transmissions reported ok, an E220 half a metre away heard
  * none of them, and the same pair worked when RadioLib (which applies this) drove the radio.
  */
+#ifdef SX_REG_TRACE
+/*
+ * What the four registers the errata touch actually hold, at a named moment.
+ *
+ * This driver writes constants into three of them, on the argument that a read which quietly
+ * returned a status byte would otherwise be written straight back into a modem register. That
+ * argument is only as good as the reads, and nobody has ever looked: the reset values are
+ * unknown, so it is not known whether the constants preserve the bits the errata say to
+ * preserve or flatten them. Reading before the first write is the only moment the originals
+ * still exist - after it, a read-modify-write would be modifying our own constant.
+ */
+static void trace_regs(const char *when) {
+    uint8_t md = 0, cl = 0, iq = 0, oc = 0;
+    bool ok = reg_read(REG_TX_MODULATION, &md, 1) && reg_read(REG_TX_CLAMP, &cl, 1) &&
+              reg_read(REG_IQ_CONFIG, &iq, 1) && reg_read(REG_OCP, &oc, 1);
+    ESP_LOGI(TAG, "regs %-22s 0889=%02X 08D8=%02X 0736=%02X 08E7=%02X%s",
+             when, md, cl, iq, oc, ok ? "" : "  (a read failed)");
+}
+#endif
+
 static bool fix_modulation_quality(void) {
     /*
      * Errata 15.1 is not "clear bit 2" - it is "clear it at BW500, set it at every other
@@ -485,6 +517,9 @@ static bool configure(const radio_request_t *req) {
     STEP("packet type", cmd(CMD_SET_PACKET_TYPE, &pkt, 1));
     STEP("frequency", set_frequency(req->channel));
     STEP("modulation", set_modulation());
+#ifdef SX_REG_TRACE
+    trace_regs("after reset, untouched");
+#endif
     STEP("errata 15.1", fix_modulation_quality());
     STEP("errata 15.2", fix_pa_clamping());
     STEP("errata 15.4", fix_iq_polarity());
@@ -501,6 +536,9 @@ static bool configure(const radio_request_t *req) {
     STEP("ocp", set_ocp());
     /* Everything latched, only RxDone and TxDone on DIO1. */
     STEP("irq params", cmd(CMD_SET_DIO_IRQ_PARAMS, irq, 8));
+#ifdef SX_REG_TRACE
+    trace_regs("after configure");
+#endif
     /* Every step above reported a completed transfer; this asks whether the chip also accepted
      * them, so configured=1 means the radio agreed rather than that the bus worked. */
     STEP("no command was rejected", !s_cmd_error);
@@ -797,6 +835,9 @@ bool radio_send(const uint8_t *data, size_t len) {
         set_standby();
         reg_write(REG_LORA_SYNC_MSB, sw, 2);
     }
+#endif
+#ifdef SX_REG_TRACE
+    trace_regs("just before SetTx");
 #endif
     uint8_t clear[2] = {0xFF, 0xFF};
     uint8_t txbase[2] = {0x00, 0x00};
