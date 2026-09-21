@@ -422,6 +422,26 @@ Modules hear everything and are heard by everything. The one failing region of t
 our transmitter against a module's receiver, and it fails the same way for both of our boards
 against both parts.
 
+### Level, measured at the module that refuses us
+
+Read the maximum, not the median: the instrument polls every 250 ms against a 320 ms packet, so
+half the samples land in the silence between packets.
+
+| what the far E220 sees | peak level | decoded |
+|---|---|---|
+| silence | -75 dBm | - |
+| our Heltec, across the room | -50 dBm | 29 % |
+| an E22, across the room | -44 dBm | **100 %** |
+| our T-Deck, 10 cm away | -10 dBm | 33 % |
+
+**Six decibels apart, and one decodes always while the other decodes a quarter of the time.**
+At -50 dBm against a -78 floor there are twenty-eight decibels of margin, so being quieter is
+not the explanation and can be retired with a number rather than an argument.
+
+The last row is why only the across-the-room cells should be quoted. -10 dBm is at the input
+limit of these parts, so that cell is compromised too - in the other direction from the Heltec's
+near cell, and by an amount nobody has measured.
+
 ## What a transmitter's own timing says about it
 
 The receiver timestamps the three stages instead of only counting them, so a transmitter's
