@@ -25,6 +25,7 @@ A receiver is either a local device path or host:/dev/... reached over ssh.
 """
 
 import argparse
+import base64
 import itertools
 import json
 import re
@@ -34,6 +35,18 @@ import threading
 import time
 from collections import defaultdict
 from pathlib import Path
+
+# Runs on the receiving machine, fed in over ssh so nothing has to be installed there beyond
+# pyserial. Unbuffered, because a line that arrives after the run has been counted is lost.
+REMOTE_READER = """
+import sys, serial
+port = serial.Serial(sys.argv[1], 115200, timeout=0.5)
+while True:
+    line = port.readline()
+    if line:
+        sys.stdout.buffer.write(line)
+        sys.stdout.buffer.flush()
+"""
 
 TXOK = re.compile(r"TXOK seq=(\d+)")
 TXFAIL = re.compile(r"TXFAIL seq=(\d+)")
@@ -58,9 +71,18 @@ class Receiver(threading.Thread):
     def _open(self):
         if ":" in self.spec:
             host, dev = self.spec.split(":", 1)
-            # -tt so that killing ssh kills the remote cat rather than leaving it on the port.
+            # pyserial on the far end rather than stty and cat: cat delivered almost nothing
+            # here, and a reader that silently returns no bytes is indistinguishable from a
+            # receiver that heard nothing - which is the one confusion this bench cannot
+            # afford. Opening the port resets the board, so its boot banner lands at the top
+            # of the captured log and says out loud that the receiver is alive and which
+            # module it is.
+            script = base64.b64encode(REMOTE_READER.encode()).decode()
+            # -tt so that killing ssh takes the remote reader with it instead of leaving it
+            # holding the port.
             self.proc = subprocess.Popen(
-                ["ssh", "-tt", host, f"stty -F {dev} 115200 raw -echo && cat {dev}"],
+                ["ssh", "-tt", host,
+                 f"echo {script} | base64 -d | python3 -u - {dev}"],
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             return self.proc.stdout
         import serial
@@ -169,7 +191,9 @@ def main():
     rxs = [Receiver(*s.split("=", 1)) for s in args.rx]
     for r in rxs:
         r.start()
-    time.sleep(2.0)   # let the ssh sessions come up before anything is transmitted
+    # Long enough for an ssh session to come up and for a board that reset when its port was
+    # opened to finish booting. A receiver still booting is a receiver that misses packets.
+    time.sleep(6.0)
 
     print(f"{len(txs)} transmitters, {len(rxs)} receivers, {args.n} packets each")
     by_name = {t.name: t for t in txs}
