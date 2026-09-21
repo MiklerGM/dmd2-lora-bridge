@@ -200,8 +200,9 @@ def main():
     ap.add_argument("--n", type=int, default=100, help="packets per transmitter")
     ap.add_argument("--extra", default="", help="extra TX tokens, e.g. 'power=0 len=64'")
     ap.add_argument("--gap", type=float, default=0.4, help="seconds between packets")
-    ap.add_argument("--settle", type=float, default=3.0,
-                    help="seconds to wait at the end for the last packets to arrive")
+    ap.add_argument("--settle", type=float, default=35.0,
+                    help="seconds to wait at the end for the last packets and for a receiver "
+                         "to print its cumulative counters after them")
     ap.add_argument("--out", type=Path, help="write the raw result here as JSON")
     ap.add_argument("--self-check", action="store_true",
                     help="check the scheduler and exit; needs no hardware")
@@ -233,7 +234,11 @@ def main():
         time.sleep(args.gap)
     print()
 
-    print(f"waiting {args.settle}s for the last receptions")
+    # Long by default, and not only for packets still in the air. A receiver prints its
+    # cumulative stage counters on its own schedule, so a line captured before the last packet
+    # is a snapshot of the middle of the run - which is how one sweep came to report 19 packets
+    # received and 14 in the counters that were supposed to explain them.
+    print(f"waiting {args.settle}s for the last receptions and for the counters after them")
     time.sleep(args.settle)
     for r in rxs:
         r.close()

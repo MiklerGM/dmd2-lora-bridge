@@ -47,6 +47,7 @@
 #define CMD_WRITE_BUFFER         0x0E
 #define CMD_READ_BUFFER          0x1E
 #define CMD_GET_RX_BUFFER_STATUS 0x13
+#define CMD_GET_PACKET_STATUS    0x14
 
 #define REG_LORA_SYNC_MSB 0x0740
 #define REG_LORA_SYNC_LSB 0x0741
@@ -1016,6 +1017,28 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
         if (n > sizeof(frame)) n = sizeof(frame);
         if (n && buffer_read(st[1], frame, n)) {
 #ifdef RX_STAGES
+            /*
+             * How good the signal was, per packet, rather than how often a rare event fired.
+             *
+             * Counting HEADER_ERR answers "how many times did something fail", which is a
+             * handful of events over a run and cannot separate two transmitters that are both
+             * mostly working. The modem measures every packet it demodulates: RSSI says how
+             * loud it was and SNR says how clean, and a distorted transmitter shows a lower SNR
+             * at the same RSSI. That is a continuous number with a tight spread on every single
+             * packet, which is what comparing two transmitters needs.
+             *
+             * Scaling is the datasheet's: RSSI in half-dBm, SNR in quarter-dB and signed.
+             */
+            {
+                uint8_t ps[3] = {0, 0, 0};
+                if (cmd_read(CMD_GET_PACKET_STATUS, ps, 3)) {
+                    const int rssi = -(int)ps[0] / 2;
+                    const int snr4 = (int)(int8_t)ps[1];
+                    const int sig = -(int)ps[2] / 2;
+                    ESP_LOGI(TAG, "rx quality rssi %d dBm, snr %d.%02d dB, signal rssi %d dBm",
+                             rssi, snr4 / 4, (snr4 < 0 ? -snr4 : snr4) % 4 * 25, sig);
+                }
+            }
             /*
              * The header exactly as it came off the air. This backend builds its own EBYTE frame
              * because there is no module MCU to build one, and the only way to know whether it
