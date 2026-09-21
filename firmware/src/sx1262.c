@@ -136,6 +136,10 @@ static SemaphoreHandle_t s_lock;
 static radio_request_t s_applied;
 static bool s_have_applied;
 static bool s_in_rx;
+#ifdef BENCH_CMD
+/* Set for one packet by radio_bench_tx and consulted by radio_send; -1 means "leave alone". */
+static int s_once_preamble = -1, s_once_sync = -1;
+#endif
 #ifdef RX_STAGES
 static unsigned s_stage_preamble, s_stage_header, s_stage_rx_done, s_stage_hdr_err, s_stage_crc_err;
 static int64_t s_stage_next;
@@ -392,6 +396,8 @@ static uint16_t s_preamble = PHY_PREAMBLE;
 static bool set_packet_params(uint8_t payload_len) {
 #if defined(PREAMBLE_SWEEP) || defined(WIDE_SWEEP)
     const uint16_t pre = s_preamble;
+#elif defined(BENCH_CMD)
+    const uint16_t pre = s_once_preamble >= 0 ? (uint16_t)s_once_preamble : PHY_PREAMBLE;
 #else
     const uint16_t pre = PHY_PREAMBLE;
 #endif
@@ -740,6 +746,13 @@ bool radio_send(const uint8_t *data, size_t len) {
         reg_write(REG_OCP, &ocp, 1);
     }
 #endif
+#ifdef BENCH_CMD
+    if (s_once_sync >= 0) {
+        uint8_t sw[2] = {(uint8_t)(s_once_sync >> 8), (uint8_t)s_once_sync};
+        set_standby();
+        reg_write(REG_LORA_SYNC_MSB, sw, 2);
+    }
+#endif
     uint8_t clear[2] = {0xFF, 0xFF};
     uint8_t txbase[2] = {0x00, 0x00};
     uint8_t go[3] = {0x00, 0x00, 0x00};   /* no timeout */
@@ -1001,6 +1014,44 @@ bool radio_tx_dbm(int8_t out[4]) {
     (void)out;
     return false;
 }
+
+#ifdef BENCH_CMD
+#include "radio_bench.h"
+
+bool radio_bench_tx(const bench_tx_t *req, const uint8_t *payload, size_t len, uint32_t *air_us) {
+    /*
+     * Power goes through the configured request so the change is visible in the status line and
+     * survives into radio_verify, rather than being poked behind the bridge's back. Preamble and
+     * sync are per-packet and revert on their own, because they are properties of one
+     * transmission rather than of the radio's configuration.
+     */
+    if (req->power >= 0) {
+        radio_request_t want = s_have_applied ? s_applied : (radio_request_t){
+            .channel = RADIO_DEFAULT_CHANNEL, .power_level = RADIO_DEFAULT_POWER_LEVEL,
+            .lbt = false};
+        want.power_level = (uint8_t)req->power;
+        if (radio_apply(&want) != RADIO_OK) return false;
+    }
+    s_once_preamble = req->preamble;
+    s_once_sync = req->sync;
+    const int64_t t0 = esp_timer_get_time();
+    const bool ok = radio_send(payload, len);
+    if (air_us) *air_us = (uint32_t)(esp_timer_get_time() - t0);
+    s_once_preamble = -1;
+    s_once_sync = -1;
+    /* Put the sync word back, since the next packet is not this one's. */
+    if (req->sync >= 0) {
+        uint8_t sw[2] = {PHY_SYNC_MSB, PHY_SYNC_LSB};
+        if (bus_lock()) {
+            set_standby();
+            reg_write(REG_LORA_SYNC_MSB, sw, 2);
+            enter_rx();
+            bus_unlock();
+        }
+    }
+    return ok;
+}
+#endif
 
 size_t radio_identity(char *out, size_t out_len) {
     /* The chip has no firmware string to report. Naming the PHY is more use in a status line

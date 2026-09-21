@@ -650,6 +650,93 @@ static void rx_task(void *arg) {
     }
 }
 
+#ifdef BENCH_CMD
+#include <stdio.h>
+
+#include "radio_bench.h"
+#include "radio_bench.h"
+#include "esp_timer.h"
+#include "soc/soc_caps.h"
+#if SOC_USB_SERIAL_JTAG_SUPPORTED
+#include "driver/usb_serial_jtag.h"
+#else
+#include "driver/uart.h"
+#endif
+
+/*
+ * Read the port the host is actually on, chosen by what the chip has rather than by where the
+ * console happens to be pointed. On the S3 that is the native USB the board enumerates as
+ * /dev/ttyACM*; the console there defaults to UART0 with USB only as a *secondary* output,
+ * which is why logging always worked while stdin sat on a pin nothing is wired to. Reading the
+ * peripheral directly sidesteps that entirely, and needs no sdkconfig to be right.
+ */
+static void bench_port_open(void) {
+#if SOC_USB_SERIAL_JTAG_SUPPORTED
+    usb_serial_jtag_driver_config_t usb = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
+    usb_serial_jtag_driver_install(&usb);
+#else
+    uart_driver_install(UART_NUM_0, 512, 0, 0, NULL, 0);
+#endif
+}
+
+/* Collects one line. Returns its length, or -1 when nothing complete arrived in time. */
+static int bench_readline(char *out, size_t cap) {
+    size_t at = 0;
+    const int64_t deadline = esp_timer_get_time() + 2 * 1000 * 1000;
+    while (at + 1 < cap && esp_timer_get_time() < deadline) {
+        uint8_t c;
+#if SOC_USB_SERIAL_JTAG_SUPPORTED
+        int n = usb_serial_jtag_read_bytes(&c, 1, pdMS_TO_TICKS(100));
+#else
+        int n = uart_read_bytes(UART_NUM_0, &c, 1, pdMS_TO_TICKS(100));
+#endif
+        if (n <= 0) continue;
+        if (c == '\n' || c == '\r') {
+            if (at == 0) continue;   /* a bare terminator between lines */
+            out[at] = '\0';
+            return (int)at;
+        }
+        out[at++] = (char)c;
+    }
+    return -1;
+}
+
+/*
+ * One line in, one packet out.
+ *
+ * The sequence number leads the payload in decimal, so a reception names the transmission that
+ * produced it and nothing has to be reconstructed from timing. Digits and the filler are both
+ * inside the base64 alphabet the wire check enforces.
+ */
+static void bench_task(void *arg) {
+    (void)arg;
+    bench_port_open();
+    ESP_LOGI(TAG, "bench command ready: TX seq=<n> [power=] [preamble=] [sync=] [len=]");
+
+    char line[128];
+    for (;;) {
+        if (bench_readline(line, sizeof(line)) < 0) continue;
+        bench_tx_t req;
+        bench_result_t why = bench_parse_tx(line, &req);
+        if (why == BENCH_NOT_TX) continue;   /* not addressed to us */
+        if (why != BENCH_OK) {
+            ESP_LOGW(TAG, "TXERR %s", bench_result_str(why));
+            continue;
+        }
+        const size_t len = req.len >= 0 ? (size_t)req.len : 38;
+        char payload[201];
+        int at = snprintf(payload, sizeof(payload), "%08lu", (unsigned long)req.seq);
+        memset(payload + at, 'A', len - (size_t)at);
+        payload[len] = '\0';
+
+        uint32_t air = 0;
+        const bool ok = radio_bench_tx(&req, (const uint8_t *)payload, len, &air);
+        ESP_LOGI(TAG, "%s seq=%lu len=%u air=%lu", ok ? "TXOK" : "TXFAIL",
+                 (unsigned long)req.seq, (unsigned)len, (unsigned long)air);
+    }
+}
+#endif
+
 void app_main(void) {
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -710,6 +797,9 @@ void app_main(void) {
     }
 
     bridge_state_t started = state_snapshot();
+#ifdef BENCH_CMD
+    xTaskCreate(bench_task, "bench", 4096, NULL, 4, NULL);
+#endif
     ESP_LOGI(TAG, "bridge up: proto=%d radio=%s mode=%s ch=%u power_level=%u online=%d",
              BRIDGE_PROTO, radio_name(), BRIDGE_MODE, started.req.channel,
              started.req.power_level, (int)started.online);

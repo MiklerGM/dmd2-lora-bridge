@@ -45,4 +45,33 @@ bool radio_tx_dbm(int8_t out[4]) { return e220_tx_dbm(out); }
 /* Whichever of the two parts answered at init. */
 const char *radio_name(void) { return e220_part_name(); }
 
+#ifdef BENCH_CMD
+#include "esp_log.h"
+#include "esp_timer.h"
+
+#include "radio_bench.h"
+
+bool radio_bench_tx(const bench_tx_t *req, const uint8_t *payload, size_t len, uint32_t *air_us) {
+    /*
+     * The module owns its own PHY, so preamble symbols and sync registers are not ours to set.
+     * Refusing is the point: a bench that silently ignored them would report a sweep over
+     * settings that never changed, which is the failure mode this whole interface exists to
+     * remove.
+     */
+    if (req->preamble >= 0 || req->sync >= 0) {
+        ESP_LOGW("e220", "preamble and sync are fixed in the module's firmware");
+        return false;
+    }
+    if (req->power >= 0) {
+        e220_config_t hw = e220_config_for(&(radio_request_t){
+            .channel = RADIO_DEFAULT_CHANNEL, .power_level = (uint8_t)req->power, .lbt = false});
+        if (e220_apply(&hw) != E220_OK) return false;
+    }
+    const int64_t t0 = esp_timer_get_time();
+    const bool ok = e220_write(payload, len);
+    if (air_us) *air_us = (uint32_t)(esp_timer_get_time() - t0);
+    return ok;
+}
+#endif
+
 #endif /* RADIO_BACKEND_E220 */
