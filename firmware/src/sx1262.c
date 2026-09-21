@@ -668,6 +668,11 @@ radio_state_t radio_verify(const radio_request_t *req) {
  * running, so neither does this. Four bits, wrapping, exactly as measured off the air. */
 static uint8_t s_frame_seq;
 
+#ifdef BENCH_CMD
+/* Set for one packet by radio_bench_tx; -1 means "number it as usual". */
+static int s_once_hdr = -1;
+#endif
+
 bool radio_send(const uint8_t *data, size_t len) {
     if (!RADIO_TX_ENABLED) return false;
     if (len == 0 || len > 255 - EBYTE_HEADER_LEN) return false;
@@ -686,9 +691,17 @@ bool radio_send(const uint8_t *data, size_t len) {
      * with it is not documented here and was not guessable from a constant - the point is that
      * a module never repeats one, and this backend repeated the same value forever.
      */
-    frame[2] = (uint8_t)(0xA0 | (s_frame_seq & 0x0F));
-    frame[3] = (uint8_t)((s_frame_seq & 0x0F) ^ 1);
-    s_frame_seq++;
+#ifdef BENCH_CMD
+    if (s_once_hdr >= 0) {
+        frame[2] = (uint8_t)(s_once_hdr >> 8);
+        frame[3] = (uint8_t)s_once_hdr;
+    } else
+#endif
+    {
+        frame[2] = (uint8_t)(0xA0 | (s_frame_seq & 0x0F));
+        frame[3] = (uint8_t)((s_frame_seq & 0x0F) ^ 1);
+        s_frame_seq++;
+    }
     frame[4] = frame[5] = frame[6] = 0x00;
     frame[7] = (uint8_t)len;
     for (size_t i = 0; i < len; i++) frame[EBYTE_HEADER_LEN + i] = data[i] ^ EBYTE_XOR;
@@ -1089,11 +1102,13 @@ bool radio_bench_tx(const bench_tx_t *req, const uint8_t *payload, size_t len, u
     }
     s_once_preamble = req->preamble;
     s_once_sync = req->sync;
+    s_once_hdr = req->hdr;
     const int64_t t0 = esp_timer_get_time();
     const bool ok = radio_send(payload, len);
     if (air_us) *air_us = (uint32_t)(esp_timer_get_time() - t0);
     s_once_preamble = -1;
     s_once_sync = -1;
+    s_once_hdr = -1;
     /* Put the sync word back, since the next packet is not this one's. */
     if (req->sync >= 0) {
         uint8_t sw[2] = {PHY_SYNC_MSB, PHY_SYNC_LSB};

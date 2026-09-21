@@ -27,6 +27,7 @@ static bool parse_uint(const char *p, const char *end, int base, unsigned long *
 #define SEEN_PREAMBLE 4u
 #define SEEN_SYNC 8u
 #define SEEN_LEN 16u
+#define SEEN_HDR 32u
 
 bench_result_t bench_parse_tx(const char *line, bench_tx_t *out) {
     const char *p = line;
@@ -34,7 +35,7 @@ bench_result_t bench_parse_tx(const char *line, bench_tx_t *out) {
     if (strncmp(p, "TX", 2) != 0 || (p[2] != ' ' && p[2] != '\0')) return BENCH_NOT_TX;
     p += 2;
 
-    bench_tx_t r = {.seq = 0, .power = -1, .preamble = -1, .sync = -1, .len = -1};
+    bench_tx_t r = {.seq = 0, .power = -1, .preamble = -1, .sync = -1, .len = -1, .hdr = -1};
     unsigned seen = 0;
 
     while (*p) {
@@ -80,6 +81,13 @@ bench_result_t bench_parse_tx(const char *line, bench_tx_t *out) {
             if (v < 8 || v > 200 || v % 4 == 1) return BENCH_OUT_OF_RANGE;
             bit = SEEN_LEN;
             r.len = (int)v;
+        } else if (klen == 3 && memcmp(tok, "hdr", 3) == 0) {
+            /* Both bytes as they go on the air: A504 is 0xA5 into byte 2 and 0x04 into byte 3.
+             * No rule is enforced on the pair - the point of this key is to send pairs the
+             * backend would never choose, including ones a module would never send. */
+            if (ve - vs != 4 || !parse_uint(vs, ve, 16, &v)) return BENCH_BAD_TOKEN;
+            bit = SEEN_HDR;
+            r.hdr = (int)v;
         } else {
             return BENCH_UNKNOWN_KEY;
         }

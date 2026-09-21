@@ -61,6 +61,19 @@ int main(void) {
     rejects("TX seq=1 sync=54g4", BENCH_BAD_TOKEN);
     printf("%-26s ok\n", "sync is a register pair");
 
+    /* The frame header override is a raw byte pair and deliberately takes values no module
+     * would send: its whole purpose is asking whether the far end looks at these two bytes. So
+     * the shape is checked and the content is not. */
+    assert(parsed("TX seq=1 hdr=A504").hdr == 0xA504);
+    assert(parsed("TX seq=1 hdr=0000").hdr == 0x0000);
+    assert(parsed("TX seq=1 hdr=ffff").hdr == 0xFFFF);
+    assert(parsed("TX seq=1").hdr == -1);          /* absent means "number it as usual" */
+    rejects("TX seq=1 hdr=A50", BENCH_BAD_TOKEN);
+    rejects("TX seq=1 hdr=A5040", BENCH_BAD_TOKEN);
+    rejects("TX seq=1 hdr=A5G4", BENCH_BAD_TOKEN);
+    rejects("TX seq=1 hdr=A504 hdr=A504", BENCH_DUPLICATE);
+    printf("%-26s ok\n", "frame header override");
+
     /* Keys are found at token boundaries, so a value that looks like one is still a value. And
      * an oversized number is rejected rather than narrowed into something plausible. */
     rejects("TX xseq=1", BENCH_UNKNOWN_KEY);

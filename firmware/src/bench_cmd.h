@@ -26,6 +26,15 @@ typedef struct {
     int      preamble; /* symbols, or -1 */
     int      sync;     /* the two sync registers as 0xMMLL, or -1 */
     int      len;      /* payload bytes, or -1 for the default */
+    /*
+     * Bytes 2 and 3 of the EBYTE frame as 0xAABB, or -1 to let the backend number them.
+     *
+     * A module never repeats the pair, and the rule it follows - byte 3 is the low nibble of
+     * byte 2 with bit 0 flipped - was read off the air rather than documented. Being able to
+     * put an exact captured pair back on the air is how you find out whether the far end looks
+     * at these two bytes at all, which no amount of sending correct-looking ones can answer.
+     */
+    int      hdr;
 } bench_tx_t;
 
 typedef enum {
@@ -39,7 +48,8 @@ typedef enum {
 } bench_result_t;
 
 /*
- * Parses "TX seq=417 power=2 preamble=16 sync=5454 len=38". Only seq is required; an omitted
+ * Parses "TX seq=417 power=2 preamble=16 sync=5454 len=38 hdr=A504". Only seq is required; an
+ * omitted
  * key leaves that setting as the radio already has it.
  *
  * *out is written only when the whole line is good.
