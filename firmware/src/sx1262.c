@@ -512,6 +512,37 @@ static bool clear_irq(void) {
     return cmd(CMD_CLEAR_IRQ_STATUS, c, 2);
 }
 
+#ifdef TX_REPLAY_RADIOLIB
+#include "radiolib_replay.h"
+
+/*
+ * Replay a captured table through our own transfer routine. The buffer write carries our frame
+ * rather than the captured one, and the transmission is waited out where the reference waited.
+ */
+static bool replay(const uint8_t *tbl, const uint8_t *frame, size_t flen) {
+    uint8_t tx[300], rx[300];
+    for (size_t i = 0; tbl[i];) {
+        size_t n = tbl[i++];
+        if (n > sizeof(tx)) return false;
+        memcpy(tx, &tbl[i], n);
+        i += n;
+        if (tx[0] == CMD_WRITE_BUFFER && frame) {
+            if (2 + flen > sizeof(tx)) return false;
+            memcpy(&tx[2], frame, flen);
+            n = 2 + flen;
+        }
+        if (tx[0] == CMD_SET_TX) fem_transmit(true);
+        if (!xfer(tx, rx, n)) return false;
+        if (tx[0] == CMD_SET_TX) {
+            /* Where the reference sat waiting on its interrupt pin, saying nothing. */
+            vTaskDelay(pdMS_TO_TICKS(400));
+            fem_transmit(false);
+        }
+    }
+    return true;
+}
+#endif
+
 static bool configure(const radio_request_t *req) {
     uint8_t reg = 0x01;                      /* DC-DC, as the Heltec board is wired */
     /* The voltage comes from SX_TCXO_MV rather than a literal, which is what that macro always
@@ -535,6 +566,12 @@ static bool configure(const radio_request_t *req) {
     uint8_t image[2] = {upper_band ? 0xE1 : 0xD7, upper_band ? 0xE9 : 0xDB};
     uint8_t irq[8] = {0xFF, 0xFF, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00};
 
+#ifdef TX_REPLAY_RADIOLIB
+    (void)reg; (void)tcxo; (void)pkt; (void)fallback; (void)calib; (void)image; (void)irq;
+    (void)sync; (void)base; (void)rfsw; (void)upper_band;
+    ESP_LOGW(TAG, "TX_REPLAY_RADIOLIB: replaying the reference's captured init");
+    return replay(RL_INIT, NULL, 0);
+#endif
     /* Named steps, because "apply failed" on a bus that answers is otherwise a guess. */
 #define STEP(what, expr) do { if (!(expr)) { ESP_LOGW(TAG, "configure: %s failed", what); \
                                              return false; } } while (0)
@@ -850,6 +887,15 @@ bool radio_send(const uint8_t *data, size_t len) {
     frame[7] = (uint8_t)len;
     for (size_t i = 0; i < len; i++) frame[EBYTE_HEADER_LEN + i] = data[i] ^ EBYTE_XOR;
     size_t total = EBYTE_HEADER_LEN + len;
+
+#ifdef TX_REPLAY_RADIOLIB
+    {
+        const bool rok = replay(RL_PACKET, frame, total);
+        ESP_LOGI(TAG, "replayed packet of %u bytes -> %s", (unsigned)total, rok ? "ok" : "failed");
+        bus_unlock();
+        return rok;
+    }
+#endif
 
 #ifdef WIDE_SWEEP
     /*
