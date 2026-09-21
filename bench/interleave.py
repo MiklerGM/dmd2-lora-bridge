@@ -38,6 +38,27 @@ from pathlib import Path
 
 # Runs on the receiving machine, fed in over ssh so nothing has to be installed there beyond
 # pyserial. Unbuffered, because a line that arrives after the run has been counted is lost.
+REMOTE_NODE = """
+import sys, time, threading, serial
+port = serial.Serial(sys.argv[1], 115200, timeout=0.5)
+port.dtr = False
+port.rts = True
+time.sleep(0.15)
+port.rts = False
+
+def to_port():
+    for line in sys.stdin.buffer:
+        port.write(line)
+        port.flush()
+
+threading.Thread(target=to_port, daemon=True).start()
+while True:
+    line = port.readline()
+    if line:
+        sys.stdout.buffer.write(line)
+        sys.stdout.buffer.flush()
+"""
+
 REMOTE_READER = """
 import sys, time, serial
 port = serial.Serial(sys.argv[1], 115200, timeout=0.5)
@@ -71,6 +92,92 @@ def reset(port):
     port.rts = True
     time.sleep(0.15)
     port.rts = False
+
+
+class Node(threading.Thread):
+    """One board, one connection, both roles.
+
+    A matrix needs every board to transmit in its turn and listen the rest of the time, and two
+    connections to one serial port fight over it - which this bench has already lost an hour to,
+    twice. So a node owns its port, a reader thread collects everything the board says, and
+    transmitting is writing a line and waiting for that thread to see the acknowledgement.
+    """
+
+    daemon = True
+
+    def __init__(self, name, spec):
+        super().__init__()
+        self.name, self.spec = name, spec
+        self.seen, self.lines = {}, []
+        self.stop = threading.Event()
+        self.proc, self.port = None, None
+        self.lock = threading.Lock()
+        if ":" in spec:
+            host, dev = spec.split(":", 1)
+            script = base64.b64encode(REMOTE_NODE.encode()).decode()
+            self.proc = subprocess.Popen(
+                ["ssh", host, f"echo {script} | base64 -d | python3 -u - {dev}"],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        else:
+            import serial
+            self.port = serial.Serial(spec, 115200, timeout=0.5)
+            reset(self.port)
+        self.start()
+
+    def run(self):
+        stream = self.proc.stdout if self.proc else self.port
+        while not self.stop.is_set():
+            try:
+                raw = stream.readline()
+            except Exception:
+                break
+            if not raw:
+                continue
+            line = raw.decode("utf-8", "replace").rstrip()
+            with self.lock:
+                self.lines.append(line)
+            m = RX.search(line)
+            if m:
+                self.seen.setdefault(int(m.group(1)), time.time())
+
+    def write(self, text):
+        data = text.encode()
+        if self.proc:
+            self.proc.stdin.write(data)
+            self.proc.stdin.flush()
+        else:
+            self.port.write(data)
+            self.port.flush()
+
+    def send(self, seq, extra, timeout=12.0):
+        """True once the board says the packet left. A refusal is not a lost packet."""
+        with self.lock:
+            mark = len(self.lines)
+        self.write(f"TX seq={seq} {extra}\n")
+        end = time.time() + timeout
+        while time.time() < end:
+            with self.lock:
+                fresh = self.lines[mark:]
+            for line in fresh:
+                if TXOK.search(line) and str(seq) in line:
+                    return True
+                if TXFAIL.search(line) or "TXERR" in line:
+                    print(f"  ! {self.name} refused seq={seq}: {line.strip()}")
+                    return False
+            time.sleep(0.05)
+        print(f"  ! {self.name} never answered for seq={seq}")
+        return False
+
+    def close(self):
+        self.stop.set()
+        if self.proc:
+            self.proc.terminate()
+        self.join(timeout=3.0)
+        if self.port:
+            try:
+                self.port.close()
+            except Exception:
+                pass
 
 
 class Receiver(threading.Thread):
@@ -192,6 +299,64 @@ def self_check():
     print("schedule: all checks pass")
 
 
+def matrix(args):
+    """Every board transmits in its turn; every other board listens. One run, all pairings.
+
+    Measuring pairings one at a time cannot be compared: the link drifts by more between two
+    runs than most of the differences worth seeing. Here every pairing meets the same air in
+    the same minutes, and a row can be read against its neighbours honestly.
+    """
+    nodes = [Node(*spec.split("=", 1)) for spec in args.node]
+    print(f"{len(nodes)} boards, {args.n} packets each, every pairing in one run")
+    time.sleep(6.0)   # ssh sessions up, and any board that reset on open finished booting
+
+    by_name = {n.name: n for n in nodes}
+    schedule = [by_name[x] for x in build_schedule([n.name for n in nodes], args.n)]
+    sent, counter = {}, itertools.count(1)
+    for i, tx in enumerate(schedule, 1):
+        seq = next(counter)
+        if tx.send(seq, args.extra):
+            sent[seq] = tx.name
+        print(f"\r{i}/{len(schedule)} packets, {len(sent)} away ", end="", flush=True)
+        time.sleep(args.gap)
+    print()
+
+    print(f"waiting {args.settle}s for the last receptions")
+    time.sleep(args.settle)
+    for n in nodes:
+        n.close()
+
+    table = defaultdict(lambda: defaultdict(int))
+    totals = defaultdict(int)
+    for seq, who in sent.items():
+        totals[who] += 1
+        for n in nodes:
+            if seq in n.seen:
+                table[who][n.name] += 1
+
+    w = max(len(n.name) for n in nodes) + 2
+    print("\nshare decoded: rows transmit, columns listen")
+    print(" " * w + "".join(f"{n.name:>14}" for n in nodes) + "     sent")
+    for tx in nodes:
+        row = ""
+        for rx in nodes:
+            if rx is tx:
+                row += f"{'-':>14}"     # a board does not hear itself
+                continue
+            got, total = table[tx.name][rx.name], totals[tx.name]
+            row += f"{got:>5}/{total:<3}{(100.0 * got / total if total else 0):>3.0f}%"
+        print(f"{tx.name:<{w}}{row}{totals[tx.name]:>9}")
+
+    if args.out:
+        args.out.write_text(json.dumps({
+            "sent": sent,
+            "seen": {n.name: sorted(n.seen) for n in nodes},
+            "log": {n.name: n.lines for n in nodes},
+        }, indent=1))
+        print(f"\nraw result in {args.out}")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -204,13 +369,18 @@ def main():
                     help="seconds to wait at the end for the last packets and for a receiver "
                          "to print its cumulative counters after them")
     ap.add_argument("--out", type=Path, help="write the raw result here as JSON")
+    ap.add_argument("--node", action="append", metavar="NAME=[HOST:]PORT",
+                    help="a board that both transmits in its turn and listens the rest of the "
+                         "time; give several and every pairing is measured in one run")
     ap.add_argument("--self-check", action="store_true",
                     help="check the scheduler and exit; needs no hardware")
     args = ap.parse_args()
     if args.self_check:
         return self_check()
+    if args.node:
+        return matrix(args)
     if not args.tx or not args.rx:
-        ap.error("at least one --tx and one --rx are required")
+        ap.error("at least one --tx and one --rx are required, or use --node")
 
     txs = [Transmitter(*s.split("=", 1)) for s in args.tx]
     rxs = [Receiver(*s.split("=", 1)) for s in args.rx]
