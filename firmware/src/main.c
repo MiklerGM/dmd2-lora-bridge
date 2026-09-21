@@ -808,7 +808,20 @@ void app_main(void) {
                  : initial == RADIO_BUSY ? "bus busy" : "no answer");
     }
 
+#ifdef BENCH_NO_BLE
+    /*
+     * Bench: no Bluetooth at all.
+     *
+     * The one transmitter that reaches an E220 from this board is a bare sketch that does
+     * nothing but transmit. This firmware is a bridge, so it advertises the whole time - a
+     * 2.4 GHz burst every hundred milliseconds, through the same supply, across the three
+     * hundred milliseconds a packet spends in the air. That moves nothing an RSSI or an SNR
+     * reading would show and everything a correlator would.
+     */
+    ESP_LOGW(TAG, "BENCH_NO_BLE: bluetooth is not started");
+#else
     ble_nus_init(on_ble_line, on_ble_revoke, on_ble_bonds_cleared);
+#endif
 
     gpio_config_t pair_pin = {
         .pin_bit_mask = (1ULL << PIN_PAIR_BUTTON),

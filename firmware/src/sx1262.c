@@ -57,6 +57,17 @@
 #define REG_IQ_CONFIG     0x0736
 #define REG_FREQ_ERROR    0x076B
 #define CMD_SET_RXTX_FALLBACK 0x93
+#define CMD_SET_CAD_PARAMS    0x88
+
+#ifdef TX_LIKE_RADIOLIB_ALL
+/* The reference clears 0x43FF, not every bit. The same thing on paper - and "the same thing on
+ * paper" is what this hunt keeps disproving, so it is measured instead. */
+#define IRQ_CLEAR_HI 0x43
+#define IRQ_CLEAR_LO 0xFF
+#else
+#define IRQ_CLEAR_HI 0xFF
+#define IRQ_CLEAR_LO 0xFF
+#endif
 
 #define IRQ_TX_DONE      (1u << 0)
 #define IRQ_RX_DONE      (1u << 1)
@@ -217,7 +228,11 @@ static bool xfer(const uint8_t *tx, uint8_t *rx, size_t len) {
      * with nothing driving it and all zeroes with the chip held in reset, and either looks like
      * a plausible status byte until you see it next to what went out.
      */
+#ifdef SX_SPI_TRACE_ALL
+    if (1) {
+#else
     if (tx[0] != CMD_GET_IRQ_STATUS && tx[0] != 0xC0) {
+#endif
         char out[120], in[120];
         size_t ko = 0, ki = 0, show = len > 20 ? 20 : len;
         for (size_t i = 0; i < show && ko + 4 < sizeof(out); i++) {
@@ -441,6 +456,11 @@ static uint16_t s_preamble = PHY_PREAMBLE;
 #endif
 
 static bool set_packet_params(uint8_t payload_len) {
+#ifdef TX_LIKE_RADIOLIB_ALL
+    /* The reference treats SetPacketParams as something that can clear erratum 15.4 and
+     * rewrites 0x0736 immediately before every one; we wrote it once, at configure. */
+    fix_iq_polarity();
+#endif
 #if defined(PREAMBLE_SWEEP) || defined(WIDE_SWEEP)
     const uint16_t pre = s_preamble;
 #elif defined(BENCH_CMD)
@@ -486,6 +506,11 @@ static bool set_power(uint8_t level) {
 #endif
 }
 
+static bool clear_irq(void) {
+    uint8_t c[2] = {IRQ_CLEAR_HI, IRQ_CLEAR_LO};
+    return cmd(CMD_CLEAR_IRQ_STATUS, c, 2);
+}
+
 static bool configure(const radio_request_t *req) {
     uint8_t reg = 0x01;                      /* DC-DC, as the Heltec board is wired */
     /* The voltage comes from SX_TCXO_MV rather than a literal, which is what that macro always
@@ -522,9 +547,33 @@ static bool configure(const radio_request_t *req) {
      * the status byte of the command after it, which is checked.
      */
     s_cmd_error = false;
+#ifdef TX_LIKE_RADIOLIB_ALL
+    /*
+     * The order the working reference on this board uses, taken from its own SPI trace: packet
+     * type, fallback, CAD and the interrupt masks all go in before the calibration, and the
+     * regulator afterwards. Ours put the regulator first and calibrated straight after the
+     * TCXO. Nothing in the datasheet says either is wrong, which is exactly why it is worth one
+     * measurement rather than another argument.
+     */
+    {
+        uint8_t cad[7] = {0x03, 0x16, 0x0A, 0x00, 0x00, 0x00, 0x00};
+        uint8_t noirq[8] = {0};
+        STEP("tcxo", cmd(CMD_SET_DIO3_TCXO, tcxo, 4));
+        STEP("buffer base", cmd(CMD_SET_BUFFER_BASE, base, 2));
+        STEP("packet type", cmd(CMD_SET_PACKET_TYPE, &pkt, 1));
+        STEP("fallback mode", cmd(CMD_SET_RXTX_FALLBACK, &fallback, 1));
+        STEP("cad params", cmd(CMD_SET_CAD_PARAMS, cad, 7));
+        STEP("clear irq", clear_irq());
+        STEP("irq params off", cmd(CMD_SET_DIO_IRQ_PARAMS, noirq, 8));
+        STEP("calibrate", cmd(CMD_CALIBRATE, &calib, 1));
+        delay_us(5000);
+        STEP("regulator", cmd(CMD_SET_REGULATOR_MODE, &reg, 1));
+    }
+#else
     STEP("regulator", cmd(CMD_SET_REGULATOR_MODE, &reg, 1));
     STEP("tcxo", cmd(CMD_SET_DIO3_TCXO, tcxo, 4));
     STEP("calibrate", cmd(CMD_CALIBRATE, &calib, 1));
+#endif
     delay_us(5000);
     /* Not covered by the calibrate-all above. An earlier comment here claimed 0x6B/0x6F was the
      * 863-870 row; that is the 470-510 one, and the code was briefly wrong to match. */
@@ -537,7 +586,9 @@ static bool configure(const radio_request_t *req) {
      * 28 dB down - and only transmission suffers, because CPS is a don't-care while receiving.
      */
     STEP("dio2 rf switch", cmd(CMD_SET_DIO2_RF_SWITCH, &rfsw, 1));
+#ifndef TX_LIKE_RADIOLIB_ALL
     STEP("packet type", cmd(CMD_SET_PACKET_TYPE, &pkt, 1));
+#endif
     STEP("frequency", set_frequency(req->channel));
     STEP("modulation", set_modulation());
 #ifdef SX_REG_TRACE
@@ -546,7 +597,9 @@ static bool configure(const radio_request_t *req) {
     STEP("errata 15.1", fix_modulation_quality());
     STEP("errata 15.2", fix_pa_clamping());
     STEP("errata 15.4", fix_iq_polarity());
+#ifndef TX_LIKE_RADIOLIB_ALL
     STEP("fallback mode", cmd(CMD_SET_RXTX_FALLBACK, &fallback, 1));
+#endif
     STEP("packet params", set_packet_params(255));
     STEP("sync word", reg_write(REG_LORA_SYNC_MSB, sync, 2));
     STEP("buffer base", cmd(CMD_SET_BUFFER_BASE, base, 2));
@@ -586,7 +639,7 @@ static bool enter_rx(void) {
      */
     return true;
 #endif
-    uint8_t clear[2] = {0xFF, 0xFF};
+    uint8_t clear[2] = {IRQ_CLEAR_HI, IRQ_CLEAR_LO};
     uint8_t rx[3] = {0xFF, 0xFF, 0xFF};   /* continuous */
     /*
      * Put the payload length back to the maximum. SetPacketParams' length field is "the size to
@@ -870,15 +923,26 @@ bool radio_send(const uint8_t *data, size_t len) {
 #ifdef SX_REG_TRACE
     trace_regs("just before SetTx");
 #endif
-    uint8_t clear[2] = {0xFF, 0xFF};
+    uint8_t clear[2] = {IRQ_CLEAR_HI, IRQ_CLEAR_LO};
     uint8_t txbase[2] = {0x00, 0x00};
     uint8_t go[3] = {0x00, 0x00, 0x00};   /* no timeout */
+#ifdef TX_LIKE_RADIOLIB_ALL
+    /* The reference re-issues the masks before every packet, asking for TxDone and timeout
+     * only rather than latching everything. */
+    {
+        uint8_t txirq[8] = {0x02, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00};
+        set_standby();
+        cmd(CMD_SET_DIO_IRQ_PARAMS, txirq, 8);
+    }
+#endif
     bool ok = set_standby() && set_packet_params((uint8_t)total) &&
               cmd(CMD_SET_BUFFER_BASE, txbase, 2) &&
               buffer_write(frame, total) && cmd(CMD_CLEAR_IRQ_STATUS, clear, 2);
     if (ok) {
+#ifndef TX_LIKE_RADIOLIB_ALL
         uint8_t noerr[2] = {0x00, 0x00};
         cmd(0x07 /* ClearDeviceErrors */, noerr, 2);
+#endif
 #ifdef TCXO_SETTLE_TEST
         /*
          * STDBY_RC powers the TCXO down, so every SetTx restarts it and waits only the 5 ms in
@@ -932,6 +996,23 @@ bool radio_send(const uint8_t *data, size_t len) {
         const uint32_t symbols = PHY_PREAMBLE + 20u +
                                  (8u * (uint32_t)total * 5u) / (4u * (PHY_SF - 2u));
         int64_t deadline = esp_timer_get_time() + (int64_t)symbols * sym_us + 500 * 1000;
+#ifdef TX_QUIET_WAIT
+        /*
+         * Say nothing while the packet is on the air.
+         *
+         * The loop below asks the chip for its interrupt flags every two milliseconds, which
+         * over a 315 ms transmission is about a hundred and fifty SPI transactions - clocking
+         * the bus, waking BUSY and burning the core in a busy wait - all of it happening a few
+         * millimetres from a radio that is mid-chirp. The working reference issues nothing at
+         * all between SetTx and the end of the packet; that silence is the largest thing left
+         * between the two, and it never appeared in a command diff because this driver's own
+         * SPI trace filters GetIrqStatus out.
+         *
+         * Sleeping through the air time leaves the loop to confirm what it finds on the first
+         * look, so the deadline and the failure paths below are unchanged.
+         */
+        vTaskDelay(pdMS_TO_TICKS(((uint32_t)symbols * sym_us) / 1000u + 20u));
+#endif
         while (ok) {
             uint8_t irq[2] = {0, 0};
             if (!cmd_read(CMD_GET_IRQ_STATUS, irq, 2)) { ok = false; break; }
@@ -1077,7 +1158,7 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
             vTaskDelay(1);
             continue;
         }
-        uint8_t clear[2] = {0xFF, 0xFF};
+        uint8_t clear[2] = {IRQ_CLEAR_HI, IRQ_CLEAR_LO};
         if (flags & (IRQ_CRC_ERR | IRQ_HEADER_ERR)) {
             cmd(CMD_CLEAR_IRQ_STATUS, clear, 2);
             break;
