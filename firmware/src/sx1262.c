@@ -103,7 +103,19 @@
 #define PHY_BW_CODE   0x06   /* 500 kHz */
 #define PHY_BW_KHZ    500
 #endif
-#define PHY_CR_CODE   0x01   /* 4/5 */
+/*
+ * Coding rate. 4/5 because that is what this project recorded for the module - but the note
+ * that recorded it also argued the value does not matter, since the explicit header carries it
+ * to the receiver. That is true of whether a packet decodes and false of how well it survives:
+ * 4/8 is twice the redundancy, and the datasheet is explicit that the gain shows up in
+ * interference. The channel an E220 sits in here has a floor around -80 dBm, which is some
+ * thirty decibels above thermal, so interference is the regime.
+ *
+ * Overridable so that can be measured rather than assumed. 0x01 = 4/5 … 0x04 = 4/8.
+ */
+#ifndef PHY_CR_CODE
+#define PHY_CR_CODE   0x01
+#endif
 /*
  * Forced on: the chip's own rule would leave it off here, and every reference driver does leave
  * it off at SF11/BW500, where the symbol is 4.096 ms against the 16 ms threshold. It is on
@@ -168,6 +180,7 @@ static int s_once_preamble = -1, s_once_sync = -1;
 #ifdef RX_STAGES
 static unsigned s_stage_preamble, s_stage_header, s_stage_rx_done, s_stage_hdr_err, s_stage_crc_err;
 static int64_t s_stage_next;
+static int64_t s_t_preamble, s_t_header;
 #endif
 
 #define LOCK_WAIT_MS 2000
@@ -204,7 +217,22 @@ static bool wait_busy(uint32_t timeout_ms) {
 static bool xfer(const uint8_t *tx, uint8_t *rx, size_t len) {
     if (!wait_busy(100)) return false;
     spi_transaction_t t = {.length = len * 8, .tx_buffer = tx, .rx_buffer = rx};
+#ifdef SX_SOFT_CS
+    /*
+     * Drive the select line ourselves, the way the working reference does, instead of letting
+     * the controller do it. Same waveform on paper; the controller raises it on the last clock
+     * edge, while a software line stays low a moment longer. With the reference's exact bytes
+     * failing through our transport and succeeding through its own, the electrical details of
+     * the transport are what is left.
+     */
+    gpio_set_level((gpio_num_t)PIN_SX_NSS, 0);
+    esp_rom_delay_us(1);
+#endif
     bool ok = spi_device_polling_transmit(s_spi, &t) == ESP_OK;
+#ifdef SX_SOFT_CS
+    esp_rom_delay_us(1);
+    gpio_set_level((gpio_num_t)PIN_SX_NSS, 1);
+#endif
     /*
      * BUSY has to be low again before the next command, and it rises a moment *after* NSS does -
      * so sampling it only on the way in samples the gap, and the chip silently discards whatever
@@ -415,6 +443,20 @@ static void fem_power(bool on) {
 static void fem_transmit(bool tx) {
 #if PIN_FEM_VCTRL >= 0
     gpio_set_level((gpio_num_t)PIN_FEM_CTX, tx);
+#ifdef FEM_SETTLE_MS
+    /*
+     * Let the front end settle before a carrier appears.
+     *
+     * This driver used to flip the part from its receive path to its transmit path and start
+     * transmitting microseconds later. The working reference on this board flips it, waits, and
+     * then spends eight more SPI transactions preparing the packet - so by the time it says
+     * SetTx the amplifier has been switched over for something like ten milliseconds. An
+     * amplifier whose bias is still settling puts out corrupt first symbols, and corrupt first
+     * symbols are the signature already measured here: packets lost at the header, never a CRC
+     * error.
+     */
+    if (tx) vTaskDelay(pdMS_TO_TICKS(FEM_SETTLE_MS));
+#endif
     delay_us(1000);
 #else
     (void)tx;
@@ -772,9 +814,20 @@ void radio_init(void) {
     spi_device_interface_config_t dev = {
         .clock_speed_hz = 2 * 1000 * 1000,
         .mode = 0,
+#ifdef SX_SOFT_CS
+        .spics_io_num = -1,
+#else
         .spics_io_num = PIN_SX_NSS,
+#endif
         .queue_size = 1,
     };
+#ifdef SX_SOFT_CS
+    {
+        gpio_config_t nss = {.pin_bit_mask = (1ULL << PIN_SX_NSS), .mode = GPIO_MODE_OUTPUT};
+        gpio_config(&nss);
+        gpio_set_level((gpio_num_t)PIN_SX_NSS, 1);
+    }
+#endif
     ESP_ERROR_CHECK(spi_bus_add_device(SPI2_HOST, &dev, &s_spi));
 
     gpio_set_level((gpio_num_t)PIN_SX_RST, 0);
@@ -890,7 +943,18 @@ bool radio_send(const uint8_t *data, size_t len) {
 
 #ifdef TX_REPLAY_RADIOLIB
     {
+        /*
+         * TX_REPLAY_VERBATIM keeps the reference's own buffer as well as its commands - the
+         * same header bytes and the same payload - so nothing of ours is left in the
+         * transmission at all. Without it the replay substitutes our frame, which is how the
+         * first replay came to prove something narrower than it claimed: it showed the command
+         * stream was not at fault while quietly carrying our frame inside it.
+         */
+#ifdef TX_REPLAY_VERBATIM
+        const bool rok = replay(RL_PACKET, NULL, 0);
+#else
         const bool rok = replay(RL_PACKET, frame, total);
+#endif
         ESP_LOGI(TAG, "replayed packet of %u bytes -> %s", (unsigned)total, rok ? "ok" : "failed");
         bus_unlock();
         return rok;
@@ -1189,6 +1253,28 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
          * Preamble and header-valid are consumed as they are seen, because they latch early and
          * would otherwise be counted again on every poll of the same packet.
          */
+        {
+            /*
+             * When each stage happened, not only how often.
+             *
+             * Header-valid to rx-done is the payload's time on the air and nothing else, so it
+             * counts payload symbols directly: at SF11/BW500 a 46-byte frame is 258 ms at
+             * CR 4/5, 303 at 4/6, 348 at 4/7 and 393 at 4/8. That reads a transmitter's coding
+             * rate off the air without asking it. Preamble-detected to header-valid does the
+             * same for preamble length. Both were argued about for a day; this poll is 10 ms
+             * and the steps to tell apart are 45.
+             */
+            const int64_t t_now = esp_timer_get_time();
+            if ((flags & IRQ_PREAMBLE) && s_t_preamble == 0) s_t_preamble = t_now;
+            if ((flags & IRQ_HEADER_VALID) && s_t_header == 0) s_t_header = t_now;
+            if (flags & IRQ_RX_DONE) {
+                ESP_LOGI(TAG, "timing: preamble->header %lld ms, header->done %lld ms",
+                         (s_t_header && s_t_preamble) ? (s_t_header - s_t_preamble) / 1000 : -1,
+                         s_t_header ? (t_now - s_t_header) / 1000 : -1);
+                s_t_preamble = 0;
+                s_t_header = 0;
+            }
+        }
         if (flags & (IRQ_PREAMBLE | IRQ_HEADER_VALID)) {
             uint8_t eat[2] = {(uint8_t)((flags & (IRQ_PREAMBLE | IRQ_HEADER_VALID)) >> 8),
                               (uint8_t)(flags & (IRQ_PREAMBLE | IRQ_HEADER_VALID))};

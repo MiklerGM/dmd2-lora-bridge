@@ -323,6 +323,35 @@ The instrument costs packets if it is run too eagerly: each poll occupies the UA
 first version also flushed the input buffer, which drove reception to zero and briefly looked
 like a second bug. Poll about once a second, and never flush.
 
+## What a transmitter's own timing says about it
+
+The receiver timestamps the three stages instead of only counting them, so a transmitter's
+coding rate and preamble length can be read off the air rather than asked for. Header-valid to
+rx-done is the payload and nothing else - at SF11/BW500 a 46-byte frame is 258 ms at CR 4/5,
+303 at 4/6, 348 at 4/7, 393 at 4/8 - and preamble-detected to header-valid measures the
+preamble. Measured on one receiver, both transmitters interleaved:
+
+| transmitter | preamble to header | header to done |
+|---|---|---|
+| this driver | 80 ms | **220 ms** |
+| an E22 module | 120 ms | **220 ms** |
+
+**The coding rates are the same.** That closes a hypothesis worth naming, because it was
+arrived at honestly: a module's packets do arrive about 210 ms later in an interleaved schedule
+than ours, which looks like a longer packet, and CR 4/8 would have accounted for 135 ms of it.
+It is not that. Most of the 210 ms is the module's own UART and handling latency. Transmitting
+at CR 4/8 was tried anyway and changed nothing at an E220 - 1 of 24, against 23 of 24 for the
+module beside it.
+
+The preamble genuinely differs: 40 ms is about ten symbols, so a module sends roughly twice our
+eight. It is not the cause either. Preambles of 8, 12 and 20 all decode at an E220 about one
+time in sixteen, and RadioLib reaches the same receiver five times more often while sending the
+same eight symbols we do.
+
+This also withdraws an earlier note here claiming the module's preamble is *shorter* than ours.
+That came from the ambient-RSSI instrument, which polls about once a second and cannot see a
+300 ms burst at all.
+
 ## RadioLib on the same board reaches an E220; this driver does not
 
 Measured 2026-09-21, one Heltec V4.3, one bench, the two builds minutes apart.
