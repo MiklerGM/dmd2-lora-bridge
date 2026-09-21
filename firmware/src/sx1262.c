@@ -962,7 +962,19 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
         }
 #endif
         if (!(flags & (IRQ_RX_DONE | IRQ_CRC_ERR | IRQ_HEADER_ERR))) {
-            delay_us(2000);
+            /*
+             * Blocking, not delay_us. This poll runs for the whole of first_wait_ms and the
+             * task loops straight back into it, so a busy wait here never lets the scheduler
+             * run anything else: the idle task on this core is starved and the watchdog fires
+             * every five seconds forever. That is worth more than tidy logs - a core spinning
+             * flat out draws current and makes noise a few centimetres from the receiver, and
+             * this firmware is being compared against ones that do not do it.
+             *
+             * One tick, because the tick is 100 Hz and anything under it rounds to no delay at
+             * all. Granularity costs nothing: the modem latches these flags until they are
+             * cleared, so a slower poll reads the same events a little later.
+             */
+            vTaskDelay(1);
             continue;
         }
         uint8_t clear[2] = {0xFF, 0xFF};

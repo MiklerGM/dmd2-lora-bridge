@@ -654,7 +654,6 @@ static void rx_task(void *arg) {
 #include <stdio.h>
 
 #include "radio_bench.h"
-#include "radio_bench.h"
 #include "esp_timer.h"
 #include "soc/soc_caps.h"
 #if SOC_USB_SERIAL_JTAG_SUPPORTED
