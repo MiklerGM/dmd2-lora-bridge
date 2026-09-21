@@ -323,6 +323,52 @@ The instrument costs packets if it is run too eagerly: each poll occupies the UA
 first version also flushed the input buffer, which drove reception to zero and briefly looked
 like a second bug. Poll about once a second, and never flush.
 
+## RadioLib on the same board reaches an E220; this driver does not
+
+Measured 2026-09-21, one Heltec V4.3, one bench, the two builds minutes apart.
+
+| transmitter on that board | E220 decoded | our own SX1262 receiver |
+|---|---|---|
+| the probe, driven by RadioLib | ~22 in 200 s, about one in five | 63 |
+| this driver | **0 of 30** | 28 of 30 |
+
+Both send the same frame at the same PHY through the same front end into the same two receivers,
+one of them in another room. So the difference is in this driver's register sequence and nothing
+else, and a working reference now exists on the hardware. What remains is a diff of two SPI
+traces rather than a search through the physics.
+
+The same day ruled out a regression in our own history: the firmware from `3e10b41`, the commit
+that recorded 22.0 % over 2211 trials, was rebuilt and reflashed. It sent about 80 packets in 240
+seconds, our receiver took 70 of them and the E220 took none. Nothing changed here since is
+responsible.
+
+### Two measurements from that day that do not mean what they look like
+
+**A receiver ten centimetres away proves nothing.** An E22 at that range decoded nothing from
+this driver - and nothing from RadioLib either, which decodes fine at room distance. It is
+overloaded, not strict. Any conclusion of the form "it fails even in contact, so the failure is
+categorical" is void.
+
+**The modem's SNR estimate saturates.** At -58 dBm this driver reads 7.50 dB and an E22 reads
+7.38 dB, which says only that both are above the estimator's ceiling. It cannot compare two
+transmitters until the signal is near the sensitivity limit.
+
+### What the errata registers actually hold
+
+Read on hardware rather than argued about, at three moments:
+
+```
+untouched        0889=04  08D8=C8  0736=0D  08E7=18
+after configure  0889=00  08D8=3E  0736=0D  08E7=38
+before SetTx     0889=0A  08D8=3E  0736=0D  08E7=38
+```
+
+A read-modify-write from those reset values gives exactly the constants this driver writes, and
+bit 2 of 0x0889 is still clear at transmit time, as erratum 15.1 requires at 500 kHz. Errata
+15.1, 15.2 and 15.4 are all correctly applied here. LDRO was tested too, which a link between
+two of our own boards could never do because both ends are forced into the same non-standard
+mode: with it off our own receiver loses us, as it must, and an EBYTE still decodes nothing.
+
 ## SX1262 transmit into an E220: measured, still unexplained
 
 An SX1262 receives an E220 perfectly and transmits to one badly. Both directions carry the same
