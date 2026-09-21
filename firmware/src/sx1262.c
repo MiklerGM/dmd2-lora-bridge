@@ -354,7 +354,11 @@ static bool fix_iq_polarity(void) {
  * read as a finding when it was noise. Correct by the part number, not by measurement.
  */
 static bool set_ocp(void) {
+#ifdef TX_PA_LIKE_RADIOLIB
+    uint8_t v = 0x18;   /* bench: what the working reference actually leaves here */
+#else
     uint8_t v = 0x38;
+#endif
     return reg_write(REG_OCP, &v, 1);
 }
 
@@ -457,10 +461,29 @@ static bool set_packet_params(uint8_t payload_len) {
 static bool set_power(uint8_t level) {
     /* SX1262 PA, then the drive level. The OCP default suits this configuration. */
     const uint8_t i = level & 0x03;
+#ifdef TX_PA_LIKE_RADIOLIB
+    /*
+     * Bench: the exact analogue settings RadioLib leaves on this board, taken from its own SPI
+     * trace rather than from its tables. It is the one transmitter known to reach an E220 from
+     * this hardware, and these three values are all that differ from ours - paDutyCycle and
+     * hpMax, the drive level, and the over-current limit, which this driver deliberately raised
+     * to the SX1262's datasheet figure while the working reference leaves it at 60 mA.
+     *
+     * One level for all four, because the question is not how power maps but whether this
+     * corner of the chip is why nothing decodes.
+     */
+    (void)i;
+    (void)POWER_PA;
+    uint8_t pa[4] = {0x01, 0x04, 0x00, 0x01};
+    if (!cmd(CMD_SET_PA_CONFIG, pa, 4)) return false;
+    uint8_t tx[2] = {0x14, 0x04};
+    return cmd(CMD_SET_TX_PARAMS, tx, 2);
+#else
     uint8_t pa[4] = {POWER_PA[i].duty, POWER_PA[i].hp_max, 0x00 /* SX1262 */, 0x01};
     if (!cmd(CMD_SET_PA_CONFIG, pa, 4)) return false;
     uint8_t tx[2] = {(uint8_t)POWER_PA[i].pa_val, 0x04 /* 200 us ramp */};
     return cmd(CMD_SET_TX_PARAMS, tx, 2);
+#endif
 }
 
 static bool configure(const radio_request_t *req) {
@@ -555,6 +578,14 @@ static bool configure(const radio_request_t *req) {
 }
 
 static bool enter_rx(void) {
+#ifdef TX_ONLY_BENCH
+    /*
+     * Bench: never leave standby. The working reference on this board is transmit-only, and
+     * sitting in continuous receive between packets is the largest structural difference left
+     * between its SPI sequence and ours. Useless for the bridge, which has to listen.
+     */
+    return true;
+#endif
     uint8_t clear[2] = {0xFF, 0xFF};
     uint8_t rx[3] = {0xFF, 0xFF, 0xFF};   /* continuous */
     /*
