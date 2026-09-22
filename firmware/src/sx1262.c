@@ -1508,7 +1508,7 @@ bool radio_bench_tx(const bench_tx_t *req, const uint8_t *payload, size_t len, u
      * something changes it, and nothing between here and SetTx does.
      */
     const uint8_t chan = s_have_applied ? s_applied.channel : RADIO_DEFAULT_CHANNEL;
-    if (req->foff && bus_lock()) {
+    if (req->foff != BENCH_FOFF_NONE && bus_lock()) {
         s_freq_offset_hz = (int32_t)req->foff * 1000;
         set_standby();
         set_frequency(chan);
@@ -1520,7 +1520,7 @@ bool radio_bench_tx(const bench_tx_t *req, const uint8_t *payload, size_t len, u
     s_once_preamble = -1;
     s_once_sync = -1;
     s_once_hdr = -1;
-    if (req->foff && bus_lock()) {
+    if (req->foff != BENCH_FOFF_NONE && bus_lock()) {
         s_freq_offset_hz = 0;
         set_standby();
         set_frequency(chan);

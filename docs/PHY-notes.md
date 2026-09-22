@@ -33,6 +33,60 @@ threshold:
 - Anything short of that is reported as flat, and closes frequency across the swept range
   rather than being quoted as a trend.
 
+### Result: flat, and frequency is closed
+
+`2026-09-22-freq-sweep.json`, seed 20260922, 24 packets per arm, E220 the delivery oracle and
+the T-Deck listening alongside it:
+
+| kHz off channel | -40 | -16 | -8 | 0 | +8 | +16 | +40 | E22 |
+|---|---|---|---|---|---|---|---|---|
+| E220 | 1/24 | 0/24 | 2/24 | 4/24 | 5/24 | 2/24 | 3/24 | **24/24** |
+| T-Deck | 22/24 | 19/24 | 20/24 | 19/24 | 24/24 | 23/24 | 20/24 | 24/24 |
+
+The best offset beats the centre by four points against a declared twenty, with no shape across
+the sweep and the reference at the ceiling throughout. **Deliberately transmitting up to 40 kHz
+off channel neither helps nor hurts**, which is what the datasheet says should happen and is now
+measured rather than assumed. The 8.4 kHz between us and the module is not what the module
+refuses, and frequency is closed across this range.
+
+The T-Deck row is the other half of the answer: it decoded 147 of the same 168 transmissions,
+including every arm 40 kHz off, so the offsets were transmitted and were receivable.
+
+### What the sweep did to the absolute rate, which is a separate question
+
+Pooled over its seven arms this run delivered **17/168 = 10 %** to the E220, against a pooled
+23 % before it. The arms are comparable to each other, which is what the criterion was about;
+the block is not comparable to earlier runs, and one thing changed for all of it. Every packet
+here is preceded by a standby and a SetRfFrequency about 100 ms before SetTx - the air figure
+goes from 331 ms to 427 ms - because a centre arm that skipped what the offsets pay would have
+differed from its own sweep by something other than frequency.
+
+So this run cannot say whether that costs anything. It is worth its own within-run comparison:
+`foff=0` against a line with no `foff` at all is exactly that difference and nothing else, and a
+handle that reliably makes delivery worse is as useful as one that makes it better.
+
+
+## 2026-09-22: two of the proposed controls, bounded from data already on disk
+
+Both are still worth running; neither can be the explanation, and the bounds belong next to the
+proposals so that an evening is not spent rediscovering them.
+
+**The 30 s health probe.** `rx_task()` calls `e220_verify()`, which enters configuration mode,
+flushes UART input and returns - an interruption of reception, and one captured escaping onto
+the air. In `matrix-4x4.json` the two EBYTE logs span 108 s, so that probe fired about four
+times per receiver during the run. Both EBYTE receivers took **24/24** from the other EBYTE
+transmitter across it, and neither log contains a status transition. Zero losses in 24 paired
+trials bounds the blanking at roughly 3.5 s per firing at 95 %, hence about three points of the
+gap at the very most. The escaping configuration frame remains a real fault in the bridge and
+should be fixed on its own merits; it is not what refuses us.
+
+**The bare SX1262 next to the target.** In the same run the E220's neighbour is in continuous
+RX while the Heltec transmits, and is not in RX at all while the T-Deck transmits - it is the
+transmitter then. The E220 took 7/24 and 8/24 from the two. Removing a listening SX1262 from
+beside the target changed nothing measurable, which bounds that contribution well below the
+gap. It is not a clean isolation, because the transmitter changes with it, so a deliberate
+sleep/RX alternation would still say more than this does.
+
 ## 2026-09-22: limits of the current diagnosis
 
 The separated-room loss is reproducible. Its location inside the EBYTE receiver is still

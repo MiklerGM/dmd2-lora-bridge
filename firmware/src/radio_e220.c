@@ -58,7 +58,7 @@ bool radio_bench_tx(const bench_tx_t *req, const uint8_t *payload, size_t len, u
      * settings that never changed, which is the failure mode this whole interface exists to
      * remove.
      */
-    if (req->preamble >= 0 || req->sync >= 0 || req->hdr >= 0 || req->foff) {
+    if (req->preamble >= 0 || req->sync >= 0 || req->hdr >= 0 || req->foff != BENCH_FOFF_NONE) {
         ESP_LOGW("e220", "preamble, sync, the frame header and the frequency are the module's own");
         return false;
     }

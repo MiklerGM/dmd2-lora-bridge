@@ -36,7 +36,7 @@ bench_result_t bench_parse_tx(const char *line, bench_tx_t *out) {
     if (strncmp(p, "TX", 2) != 0 || (p[2] != ' ' && p[2] != '\0')) return BENCH_NOT_TX;
     p += 2;
 
-    bench_tx_t r = {.seq = 0, .power = -1, .preamble = -1, .sync = -1, .len = -1, .hdr = -1, .foff = 0};
+    bench_tx_t r = {.seq = 0, .power = -1, .preamble = -1, .sync = -1, .len = -1, .hdr = -1, .foff = BENCH_FOFF_NONE};
     unsigned seen = 0;
 
     while (*p) {

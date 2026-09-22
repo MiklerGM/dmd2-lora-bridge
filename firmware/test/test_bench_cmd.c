@@ -84,7 +84,9 @@ int main(void) {
     assert(parsed("TX seq=1 foff=-8").foff == -8);
     assert(parsed("TX seq=1 foff=8").foff == 8);
     assert(parsed("TX seq=1 foff=0").foff == 0);
-    assert(parsed("TX seq=1").foff == 0);          /* absent means the channel itself */
+    /* Absent is not zero: zero still pays the 100 ms the offsets pay, so a centre arm and
+     * an arm that never mentioned frequency are two different transmissions. */
+    assert(parsed("TX seq=1").foff == BENCH_FOFF_NONE);
     assert(parsed("TX seq=1 foff=-125").foff == -125);
     rejects("TX seq=1 foff=126", BENCH_OUT_OF_RANGE);
     rejects("TX seq=1 foff=-126", BENCH_OUT_OF_RANGE);

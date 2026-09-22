@@ -36,7 +36,10 @@ typedef struct {
      */
     int      hdr;
     /*
-     * Transmit this packet this many kHz off the channel, or 0 for the channel itself.
+     * Transmit this packet this many kHz off the channel, or BENCH_FOFF_NONE if the line did
+     * not ask. Absent and zero are deliberately different: zero still takes the standby and
+     * SetRfFrequency the offsets take, which costs 100 ms of the transmission. A centre arm
+     * that skipped that would differ from its own sweep by something other than frequency.
      *
      * The only frequency evidence so far is that instantaneous RSSI rises in the right channel,
      * which at BW500 tolerates a quarter-megahertz of error, and a one-hertz step. Neither is a
@@ -45,6 +48,8 @@ typedef struct {
      */
     int      foff;
 } bench_tx_t;
+
+#define BENCH_FOFF_NONE 32767
 
 typedef enum {
     BENCH_OK,

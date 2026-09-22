@@ -734,8 +734,10 @@ static void bench_task(void *arg) {
         const bool ok = radio_bench_tx(&req, (const uint8_t *)payload, len, &air);
         /* The offset is echoed rather than assumed: a sweep whose label and setting can drift
          * apart is how two of the compiled sweeps came to measure something else. */
-        ESP_LOGI(TAG, "%s seq=%lu len=%u foff=%d air=%lu", ok ? "TXOK" : "TXFAIL",
-                 (unsigned long)req.seq, (unsigned)len, req.foff, (unsigned long)air);
+        char foff[8] = "-";
+        if (req.foff != BENCH_FOFF_NONE) snprintf(foff, sizeof(foff), "%d", req.foff);
+        ESP_LOGI(TAG, "%s seq=%lu len=%u foff=%s air=%lu", ok ? "TXOK" : "TXFAIL",
+                 (unsigned long)req.seq, (unsigned)len, foff, (unsigned long)air);
     }
 }
 #endif
