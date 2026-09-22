@@ -712,7 +712,7 @@ static int bench_readline(char *out, size_t cap) {
 static void bench_task(void *arg) {
     (void)arg;
     bench_port_open();
-    ESP_LOGI(TAG, "bench command ready: TX seq=<n> [power=] [preamble=] [sync=] [len=]");
+    ESP_LOGI(TAG, "bench command ready: TX seq=<n> [power=] [preamble=] [sync=] [len=] [hdr=] [foff=]");
 
     char line[128];
     for (;;) {
@@ -732,8 +732,10 @@ static void bench_task(void *arg) {
 
         uint32_t air = 0;
         const bool ok = radio_bench_tx(&req, (const uint8_t *)payload, len, &air);
-        ESP_LOGI(TAG, "%s seq=%lu len=%u air=%lu", ok ? "TXOK" : "TXFAIL",
-                 (unsigned long)req.seq, (unsigned)len, (unsigned long)air);
+        /* The offset is echoed rather than assumed: a sweep whose label and setting can drift
+         * apart is how two of the compiled sweeps came to measure something else. */
+        ESP_LOGI(TAG, "%s seq=%lu len=%u foff=%d air=%lu", ok ? "TXOK" : "TXFAIL",
+                 (unsigned long)req.seq, (unsigned)len, req.foff, (unsigned long)air);
     }
 }
 #endif

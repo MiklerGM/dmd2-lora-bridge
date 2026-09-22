@@ -78,6 +78,21 @@ int main(void) {
     rejects("TX seq=1 hdr=A504 hdr=A504", BENCH_DUPLICATE);
     printf("%-26s ok\n", "frame header override");
 
+    /* The only signed key, and the only one whose value is not parsed by parse_uint alone: a
+     * sweep that has to run on both sides of the channel is worthless if the sign is dropped,
+     * and a bare minus must not become zero kHz wearing a label that says otherwise. */
+    assert(parsed("TX seq=1 foff=-8").foff == -8);
+    assert(parsed("TX seq=1 foff=8").foff == 8);
+    assert(parsed("TX seq=1 foff=0").foff == 0);
+    assert(parsed("TX seq=1").foff == 0);          /* absent means the channel itself */
+    assert(parsed("TX seq=1 foff=-125").foff == -125);
+    rejects("TX seq=1 foff=126", BENCH_OUT_OF_RANGE);
+    rejects("TX seq=1 foff=-126", BENCH_OUT_OF_RANGE);
+    rejects("TX seq=1 foff=-", BENCH_BAD_TOKEN);
+    rejects("TX seq=1 foff=--8", BENCH_BAD_TOKEN);
+    rejects("TX seq=1 foff=8 foff=8", BENCH_DUPLICATE);
+    printf("%-26s ok\n", "frequency offset is signed");
+
     /* Keys are found at token boundaries, so a value that looks like one is still a value. And
      * an oversized number is rejected rather than narrowed into something plausible. */
     rejects("TX xseq=1", BENCH_UNKNOWN_KEY);

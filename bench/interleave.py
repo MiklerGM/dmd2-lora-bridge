@@ -28,6 +28,7 @@ import argparse
 import base64
 import itertools
 import json
+import random
 import re
 import subprocess
 import sys
@@ -45,23 +46,32 @@ port.dtr = False
 port.rts = True
 time.sleep(0.15)
 port.rts = False
+stop = threading.Event()
 
 def to_port():
     # readline, not iteration: iterating a pipe reads ahead and holds a line back until the
     # buffer fills, so a command sent now would leave minutes later, or never.
-    while True:
-        line = sys.stdin.buffer.readline()
-        if not line:
-            break
-        port.write(line)
-        port.flush()
+    try:
+        while True:
+            line = sys.stdin.buffer.readline()
+            if not line:
+                break
+            port.write(line)
+            port.flush()
+    finally:
+        stop.set()
 
 threading.Thread(target=to_port, daemon=True).start()
-while True:
-    line = port.readline()
-    if line:
-        sys.stdout.buffer.write(line)
-        sys.stdout.buffer.flush()
+try:
+    while not stop.is_set():
+        # Forward available chunks: pyserial.readline reads byte by byte and can stall
+        # a large diagnostic record long enough to exhaust the board's USB TX buffer.
+        chunk = port.read(port.in_waiting or 1)
+        if chunk:
+            sys.stdout.buffer.write(chunk)
+            sys.stdout.buffer.flush()
+finally:
+    port.close()
 """
 
 REMOTE_READER = """
@@ -78,10 +88,18 @@ while True:
         sys.stdout.buffer.flush()
 """
 
-TXOK = re.compile(r"TXOK seq=(\d+)")
-TXFAIL = re.compile(r"TXFAIL seq=(\d+)")
+TX_REPLY = re.compile(r"\bTX(OK|FAIL) seq=(\d+)\b")
 # The bridge logs "rx 38 bytes: 00000042AAAA..." - the payload starts with its sequence number.
 RX = re.compile(r"rx \d+ bytes: (\d{8})")
+
+
+def tx_result(line, seq):
+    for match in TX_REPLY.finditer(line):
+        if int(match[2]) == seq:
+            return match[1] == "OK"
+    if "TXERR" in line:
+        return False
+    return None
 
 
 def reset(port):
@@ -170,11 +188,11 @@ class Node(threading.Thread):
             with self.lock:
                 fresh = self.lines[mark:]
             for line in fresh:
-                if TXOK.search(line) and str(seq) in line:
-                    return True
-                if TXFAIL.search(line) or "TXERR" in line:
+                result = tx_result(line, seq)
+                if result is False:
                     print(f"  ! {self.name} refused seq={seq}: {line.strip()}")
-                    return False
+                if result is not None:
+                    return result
             time.sleep(0.05)
         print(f"  ! {self.name} never answered for seq={seq}")
         return False
@@ -182,7 +200,20 @@ class Node(threading.Thread):
     def close(self):
         self.stop.set()
         if self.proc:
-            self.proc.terminate()
+            # EOF asks the remote process to close its serial port before ssh exits.
+            try:
+                self.proc.stdin.close()
+            except BrokenPipeError:
+                pass
+            try:
+                self.proc.wait(timeout=3.0)
+            except subprocess.TimeoutExpired:
+                self.proc.terminate()
+                try:
+                    self.proc.wait(timeout=3.0)
+                except subprocess.TimeoutExpired:
+                    self.proc.kill()
+                    self.proc.wait(timeout=3.0)
         self.join(timeout=3.0)
         if self.port:
             try:
@@ -274,20 +305,34 @@ class Transmitter:
         end, buf = time.time() + timeout, ""
         while time.time() < end:
             buf += self.port.read(4096).decode("utf-8", "replace")
-            if TXOK.search(buf) and str(seq) in buf:
-                return True
-            if TXFAIL.search(buf) or "TXERR" in buf:
-                print(f"  ! {self.name} refused seq={seq}: {buf.strip().splitlines()[-1:]}")
-                return False
+            # A read may stop partway through seq=10; do not accept its prefix as seq=1.
+            lines = buf.split("\n")
+            buf = lines.pop()
+            for line in lines:
+                result = tx_result(line, seq)
+                if result is False:
+                    print(f"  ! {self.name} refused seq={seq}: {line.strip()}")
+                if result is not None:
+                    return result
         print(f"  ! {self.name} never answered for seq={seq}")
         return False
 
 
-def build_schedule(names, n):
-    """The order to transmit in: ABBA rounds, exactly n packets per transmitter."""
+def build_schedule(names, n, rng=None):
+    """The order to transmit in: ABBA rounds, exactly n packets per arm.
+
+    With an rng the order within each round is shuffled before it is mirrored. The palindrome is
+    what cancels linear drift and stays either way; the shuffle is what stops one arm always
+    following the same predecessor. A fixed order guarantees that, and no gap length removes it:
+    under ABBA our packets arrive at a receiver that has just decoded the reference packet, and
+    the reference arrives at one that has just heard nothing.
+    """
     out, quota = [], defaultdict(int)
     while any(quota[x] < n for x in names):
-        for name in names + list(reversed(names)):
+        half = list(names)
+        if rng is not None:
+            rng.shuffle(half)
+        for name in half + half[::-1]:
             if quota[name] < n:
                 out.append(name)
                 quota[name] += 1
@@ -295,7 +340,7 @@ def build_schedule(names, n):
 
 
 def self_check():
-    """Runs without a board: the scheduler is the only part here that can be wrong quietly."""
+    """Check scheduling and acknowledgement matching without a board."""
     for n in (1, 2, 3, 7, 100):
         for names in (["a", "b"], ["a", "b", "c"]):
             s = build_schedule(names, n)
@@ -307,7 +352,35 @@ def self_check():
     assert build_schedule(["a", "b"], 1) == ["a", "b"]
     # An odd quota must not overshoot just because rounds come in pairs.
     assert build_schedule(["a", "b"], 3) == ["a", "b", "b", "a", "a", "b"]
+    # Shuffling the order within a round must not cost the quota or the mirror, which are the
+    # two properties the whole design rests on.
+    for seed in (1, 2, 20260922):
+        names = ["a", "b", "c", "d"]
+        s = build_schedule(names, 6, random.Random(seed))
+        assert len(s) == 24, (seed, len(s))
+        for x in names:
+            assert s.count(x) == 6, (seed, x, s.count(x))
+        for i in range(0, 24, 8):
+            assert s[i:i + 8] == s[i:i + 8][::-1], (seed, s[i:i + 8])
     print("schedule: all checks pass")
+
+    # A late reply for another packet must neither confirm nor reject this transmission.
+    from types import SimpleNamespace
+    for chunks, expected in (
+        ([b"TXOK seq=10\nTXFAIL seq=1\n"], False),
+        ([b"TXFAIL seq=10\nTXOK seq=1\n"], True),
+        ([b"TXOK seq=7 air=1\nTXFAIL seq=1\n"], False),
+        ([b"TXOK seq=1", b"0\nTXFAIL seq=1\n"], False),
+    ):
+        node = SimpleNamespace(name="check", lock=threading.Lock(), lines=[])
+        node.write = lambda _: node.lines.extend(b"".join(chunks).decode().splitlines())
+        assert Node.send(node, 1, "", timeout=0.2) is expected, chunks
+        replies = iter(chunks)
+        port = SimpleNamespace(write=lambda _: None, flush=lambda: None,
+                               read=lambda _: next(replies, b""))
+        tx = SimpleNamespace(name="check", port=port)
+        assert Transmitter.send(tx, 1, "", timeout=0.2) is expected, chunks
+    print("acknowledgements: all checks pass")
 
 
 def matrix(args):
@@ -322,7 +395,8 @@ def matrix(args):
     time.sleep(6.0)   # ssh sessions up, and any board that reset on open finished booting
 
     by_name = {n.name: n for n in nodes}
-    schedule = [by_name[x] for x in build_schedule([n.name for n in nodes], args.n)]
+    rng = random.Random(args.seed) if args.seed is not None else None
+    schedule = [by_name[x] for x in build_schedule([n.name for n in nodes], args.n, rng)]
     sent, counter = {}, itertools.count(1)
     for i, tx in enumerate(schedule, 1):
         seq = next(counter)
@@ -360,6 +434,8 @@ def matrix(args):
 
     if args.out:
         args.out.write_text(json.dumps({
+            "arms": {name: {"tx": tx.name, "extra": extra} for name, tx, extra in arms},
+            "seed": args.seed,
             "sent": sent,
             "seen": {n.name: sorted(n.seen) for n in nodes},
             "log": {n.name: n.lines for n in nodes},
@@ -374,7 +450,17 @@ def main():
     ap.add_argument("--tx", action="append", metavar="NAME=PORT")
     ap.add_argument("--rx", action="append", metavar="NAME=[HOST:]PORT")
     ap.add_argument("--n", type=int, default=100, help="packets per transmitter")
-    ap.add_argument("--extra", default="", help="extra TX tokens, e.g. 'power=0 len=64'")
+    ap.add_argument("--extra", default="", help="extra TX tokens for every arm, "
+                                                "e.g. 'power=0 len=64'")
+    ap.add_argument("--arm", action="append", metavar="NAME=TX[:TOKENS]",
+                    help="one schedule arm: a transmitter plus the TX tokens that define it, "
+                         "e.g. 'low=heltec:foff=-40'. Repeatable, and several arms may share a "
+                         "transmitter - that is how a setting is swept against an in-run "
+                         "reference. Without any, each --tx is one arm.")
+    ap.add_argument("--seed", type=int, help="shuffle the arm order within each palindromic "
+                                             "round. Recorded in --out; without it the order is "
+                                             "fixed, so every arm has the same predecessor "
+                                             "every round.")
     ap.add_argument("--gap", type=float, default=0.4, help="seconds between packets")
     ap.add_argument("--settle", type=float, default=35.0,
                     help="seconds to wait at the end for the last packets and for a receiver "
@@ -384,7 +470,7 @@ def main():
                     help="a board that both transmits in its turn and listens the rest of the "
                          "time; give several and every pairing is measured in one run")
     ap.add_argument("--self-check", action="store_true",
-                    help="check the scheduler and exit; needs no hardware")
+                    help="check scheduling and acknowledgements; needs no hardware")
     args = ap.parse_args()
     if args.self_check:
         return self_check()
@@ -394,6 +480,17 @@ def main():
         ap.error("at least one --tx and one --rx are required, or use --node")
 
     txs = [Transmitter(*s.split("=", 1)) for s in args.tx]
+    by_name = {t.name: t for t in txs}
+    if args.arm:
+        arms = []
+        for spec in args.arm:
+            name, _, rest = spec.partition("=")
+            txname, _, tokens = rest.partition(":")
+            if txname not in by_name:
+                ap.error(f"--arm {name}: no --tx named {txname!r}")
+            arms.append((name, by_name[txname], " ".join((args.extra, tokens.strip())).strip()))
+    else:
+        arms = [(t.name, t, args.extra) for t in txs]
     rxs = [Receiver(*s.split("=", 1)) for s in args.rx]
     for r in rxs:
         r.start()
@@ -401,16 +498,20 @@ def main():
     # opened to finish booting. A receiver still booting is a receiver that misses packets.
     time.sleep(6.0)
 
-    print(f"{len(txs)} transmitters, {len(rxs)} receivers, {args.n} packets each")
-    by_name = {t.name: t for t in txs}
-    schedule = [by_name[n] for n in build_schedule([t.name for t in txs], args.n)]
+    print(f"{len(arms)} arms on {len(txs)} transmitters, {len(rxs)} receivers, "
+          f"{args.n} packets each, seed {args.seed}")
+    for name, tx, extra in arms:
+        print(f"  {name}: {tx.name} {extra or '(no extra tokens)'}")
+    rng = random.Random(args.seed) if args.seed is not None else None
+    arm_by_name = {a[0]: a for a in arms}
+    schedule = [arm_by_name[n] for n in build_schedule([a[0] for a in arms], args.n, rng)]
 
-    sent = {}                      # seq -> transmitter name
+    sent = {}                      # seq -> arm name
     counter = itertools.count(1)
-    for i, tx in enumerate(schedule, 1):
+    for i, (name, tx, extra) in enumerate(schedule, 1):
         seq = next(counter)
-        if tx.send(seq, args.extra):
-            sent[seq] = tx.name
+        if tx.send(seq, extra):
+            sent[seq] = name
         print(f"\r{i}/{len(schedule)} packets, {len(sent)} away ", end="", flush=True)
         time.sleep(args.gap)
     print()
@@ -447,20 +548,22 @@ def main():
             if seq in rx.seen:
                 table[who][rx.name] += 1
 
-    width = max(len(t.name) for t in txs) + 2
+    width = max(len(a[0]) for a in arms) + 2
     print()
-    print("decoded, by transmitter and receiver")
+    print("decoded, by arm and receiver")
     print(" " * width + "  ".join(f"{r.name:>12}" for r in rxs) + "     sent")
-    for tx in txs:
+    for name, _tx, _extra in arms:
         row = ""
         for rx in rxs:
-            got, n = table[tx.name][rx.name], totals[tx.name]
+            got, n = table[name][rx.name], totals[name]
             pct = 100.0 * got / n if n else 0.0
             row += f"{got:>5}/{n:<3} {pct:>3.0f}%"
-        print(f"{tx.name:<{width}}{row}     {totals[tx.name]}")
+        print(f"{name:<{width}}{row}     {totals[name]}")
 
     if args.out:
         args.out.write_text(json.dumps({
+            "arms": {name: {"tx": tx.name, "extra": extra} for name, tx, extra in arms},
+            "seed": args.seed,
             "sent": sent,
             "seen": {r.name: sorted(r.seen) for r in rxs},
             "log": {r.name: r.lines for r in rxs},

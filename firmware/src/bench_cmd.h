@@ -35,6 +35,15 @@ typedef struct {
      * at these two bytes at all, which no amount of sending correct-looking ones can answer.
      */
     int      hdr;
+    /*
+     * Transmit this packet this many kHz off the channel, or 0 for the channel itself.
+     *
+     * The only frequency evidence so far is that instantaneous RSSI rises in the right channel,
+     * which at BW500 tolerates a quarter-megahertz of error, and a one-hertz step. Neither is a
+     * sweep. A module that reaches every receiver sits about 8.4 kHz from where we transmit, so
+     * the offset between us and the part that refuses us has been measured but never varied.
+     */
+    int      foff;
 } bench_tx_t;
 
 typedef enum {
@@ -48,9 +57,8 @@ typedef enum {
 } bench_result_t;
 
 /*
- * Parses "TX seq=417 power=2 preamble=16 sync=5454 len=38 hdr=A504". Only seq is required; an
- * omitted
- * key leaves that setting as the radio already has it.
+ * Parses "TX seq=417 power=2 preamble=16 sync=5454 len=38 hdr=A504 foff=-8". Only seq is
+ * required; an omitted key leaves that setting as the radio already has it.
  *
  * *out is written only when the whole line is good.
  */

@@ -480,9 +480,13 @@ static bool set_standby(void) {
     return cmd(CMD_SET_STANDBY, &a, 1);
 }
 
+/* Bench only, and zero everywhere else: see bench_tx_t::foff. */
+static int32_t s_freq_offset_hz;
+
 static bool set_frequency(uint8_t channel) {
     /* 850.125 MHz + channel, in the chip's 2^25/32 MHz steps. */
-    uint64_t hz = 850125000ull + (uint64_t)channel * 1000000ull;
+    uint64_t hz = (uint64_t)((int64_t)(850125000ll + (int64_t)channel * 1000000ll) +
+                             s_freq_offset_hz);
     uint32_t frf = (uint32_t)((hz << 25) / 32000000ull);
     uint8_t a[4] = {(uint8_t)(frf >> 24), (uint8_t)(frf >> 16), (uint8_t)(frf >> 8), (uint8_t)frf};
     return cmd(CMD_SET_RF_FREQUENCY, a, 4);
@@ -1498,12 +1502,31 @@ bool radio_bench_tx(const bench_tx_t *req, const uint8_t *payload, size_t len, u
     s_once_preamble = req->preamble;
     s_once_sync = req->sync;
     s_once_hdr = req->hdr;
+    /*
+     * Frequency is the one setting radio_send does not touch, so it is moved here and moved
+     * back afterwards rather than being made a per-packet argument. SetRfFrequency holds until
+     * something changes it, and nothing between here and SetTx does.
+     */
+    const uint8_t chan = s_have_applied ? s_applied.channel : RADIO_DEFAULT_CHANNEL;
+    if (req->foff && bus_lock()) {
+        s_freq_offset_hz = (int32_t)req->foff * 1000;
+        set_standby();
+        set_frequency(chan);
+        bus_unlock();
+    }
     const int64_t t0 = esp_timer_get_time();
     const bool ok = radio_send(payload, len);
     if (air_us) *air_us = (uint32_t)(esp_timer_get_time() - t0);
     s_once_preamble = -1;
     s_once_sync = -1;
     s_once_hdr = -1;
+    if (req->foff && bus_lock()) {
+        s_freq_offset_hz = 0;
+        set_standby();
+        set_frequency(chan);
+        enter_rx();
+        bus_unlock();
+    }
     /* Put the sync word back, since the next packet is not this one's. */
     if (req->sync >= 0) {
         uint8_t sw[2] = {PHY_SYNC_MSB, PHY_SYNC_LSB};

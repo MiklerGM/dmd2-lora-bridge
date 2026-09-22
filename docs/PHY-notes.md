@@ -5,6 +5,123 @@ gathered while waiting for hardware. Source: EBYTE *E220-900T22S User Manual* (o
 cdebyte.com). The E220-900T30x DMD uses shares this PHY register model; only the power
 table differs (30/27/24/21 dBm instead of 22/17/13/10).
 
+## 2026-09-22: a frequency sweep, declared before it was run
+
+Frequency has never actually been swept. What exists is an instantaneous-RSSI check, which at
+BW500 accepts a quarter-megahertz of error and therefore only says we are in the right channel,
+and a one-hertz step. The narrowband capture then measured something that makes the gap worth
+closing properly: **the module that reaches every receiver transmits about 8.4 kHz from where we
+do.** That offset between us and the part that refuses us has been measured and never varied.
+
+Theory says it should not matter - a LoRa receiver is specified to acquire within a quarter of
+its bandwidth, which here is 125 kHz, and 8.4 kHz is 1.7 % of it. Against that, an acquisition
+limit rather than a signal-to-noise one is the only mechanism proposed so far that fits the
+whole profile at once: re-rolled per transmission, flat across the valid part of the power
+sweep, indifferent to payload and cadence, invisible to a receiver that shares our nominal
+frequency, and equally fatal to RadioLib on the same crystal.
+
+`foff=<signed kHz>` transmits one packet off channel, bounded at a quarter of the bandwidth.
+The sweep is nine offsets on the Heltec plus an E22 arm in the same rounds, with the schedule
+order shuffled inside each palindrome from a recorded seed.
+
+Declared before the first packet, so that a shape found afterwards cannot choose its own
+threshold:
+
+- A frequency effect is claimed only if some offset arm beats the `foff=0` arm by at least
+  20 points within the run, the E22 reference stays at or above 90 %, and the whole thing
+  reproduces under a second seed.
+- Anything short of that is reported as flat, and closes frequency across the swept range
+  rather than being quoted as a trend.
+
+## 2026-09-22: limits of the current diagnosis
+
+The separated-room loss is reproducible. Its location inside the EBYTE receiver is still
+unknown. Rechecking the saved `matrix-4x4.json` packet by packet gives 35 missing EBYTE
+deliveries from our transmitters; **32 of those same packets were fully decoded by the
+adjacent bare SX1262**. The final bare-receiver counters contain only three header errors
+between them. Their counters cannot establish that EBYTE's missing packets died at its
+header. EBYTE UART silence also includes module framing/filtering and the bridge's UART
+receive path. The corrected XOR header remains necessary, but does not settle that boundary.
+
+Several stronger statements below should therefore be read more narrowly:
+
+- Repeating an identical payload disproves a deterministic payload blacklist; it does not
+  establish independent per-transmission randomness, or place that randomness in the TX.
+- The valid power sweep is evidence against a simple amplitude threshold. A comparison
+  spanning 40 dB cannot use the near-pair cells already declared invalid through overload.
+- An EBYTE control at 100% is valuable but is at the ceiling: it does not prove conditions
+  were constant for the weaker DUT link. A null cadence result does not close every kind
+  of receiver recovery or history dependence.
+- The fixed four-node palindrome also assigns different predecessors to different trial
+  positions. A history test needs balanced, randomized predecessors and recorded timing;
+  comparing another pair of long runs would retain the drift problem.
+
+There is an actual observation-path concern, independent of any RF hypothesis: every 30 s
+`rx_task()` calls `e220_verify()`, which enters configuration mode, flushes UART input and
+returns to normal mode. That is an interruption of reception, despite not writing NVM.
+The earlier captured `C1 00 08` air frame shows that this path has misbehaved on hardware.
+A future receive-only control should keep the module in normal mode after boot and record
+raw UART bytes before the wire-payload filter, with AUX timestamps on its existing wire.
+AUX activity alone is not proof that a LoRa packet was decoded.
+
+### A new observation point without additional hardware
+
+T-Deck can act as a narrowband power sampler: GFSK RX at 39 kHz bandwidth, reading instantaneous
+RSSI every 100 us with actual timestamps saved. A chirp crossing the passband makes a pulse.
+This observes timing before the LoRa demodulator, while the adjacent E220 still judges delivery.
+It is not an IQ recording and cannot measure phase noise or certify the full transmitted waveform.
+The instrument, qualification criteria and raw data are documented in
+[`bench/results/README.md`](../bench/results/README.md#2026-09-22-narrowband-rssi-observation).
+
+The central-frequency pilot passed the criteria fixed beforehand: six-pulse preamble trains
+with fitted periods 4087--4102 us in all eight Heltec and all eight E22 captures, none in two
+quiet windows. E220 received Heltec 2/8 and E22 8/8. Every window contains 10000 samples;
+the maximum interval was 105 us, with no skipped slots.
+
+After aligning the E22 trace by its additional twelve preamble symbols, thirteen dominant
+pulses in the observed start-of-packet interval have corresponding peaks in every trace.
+Two consecutive E22 peaks occur about 0.13 ms earlier; the other eleven median differences
+are within 34 us. That pair's displacement is consistent in scale with the previously recorded
+E22 frequency offset: opposite-slope chirps would differ by approximately
+`2 * 8430 / (500000 / 0.004096) = 138 us`. This is a consistency check, not a fresh CFO
+measurement or an explanation for lost packets. The central slice alone cannot identify chirp
+direction. For Heltec's two accepted versus six rejected packets, no gross timing difference
+is visible; that sample is too small to exclude a subtler effect.
+
+The follow-up interleaves -100 and +100 kHz **receiver** offsets with both transmitters.
+Both offsets pass the same qualification: Heltec 7/8 and 8/8, E22 8/8 at each, no quiet
+chains. The failed Heltec qualification is an early unrelated burst before the packet,
+which E220 received; the predetermined rule excludes it from alignment, not delivery counts.
+E220 delivered Heltec 3/16 and E22 16/16 in this run.
+
+The two suspected reverse chirps shift by 3.267--3.286 ms between the two slices, matching
+the expected 3.2768 ms relative to the preamble grid. Both sources have that pair and the
+same following strong timing landmarks; E22 retains its approximately 0.13 ms lead on the
+pair. Seven selected landmarks are present in every one of the 47 qualified transmissions
+across center and offset runs. Accepted and rejected Heltec packets do not separate on these
+coarse timing features, but accepted counts remain small. The short final SFD portion can
+fall outside these frequency slices, and RF phase is not observed: **this does not prove
+the entire SFD or signal identical**. The exploratory overlay and its reproducible script
+are in [`bench/results`](../bench/results/2026-09-22-waveform-review.png).
+
+The next controls worth running on this bench, without moving boards, are:
+
+1. Keep the target EBYTE in normal RX after boot, omit periodic configuration reads, and
+   log raw UART before application filtering. Compare against the ordinary health-check
+   path in short interleaved blocks with an EBYTE transmitter in every block.
+2. Put the bare SX1262 next to that target alternately in RX and sleep. It is 10 cm from
+   the target throughout every matrix trial; its electrical/RF contribution has not been
+   isolated by the distant-TX power sweep. This tests a possible observer contribution,
+   not a demonstrated interference source.
+3. Balance and randomize the preceding transmitter/target's own TX history, with recorded
+   timing jitter, while retaining paired EBYTE control packets. Longer fixed gaps alone
+   do not test that interaction.
+
+For a delivery-improvement claim in these proposed controls, require at least a 20-point
+within-run difference reproduced with a second independent schedule seed, and assess
+uncertainty by time blocks rather than treating every packet as an independent trial.
+That is a proposed decision rule, not a significance claim for the present small captures.
+
 ## 2026-09-21 correction: bytes 2–3 are payload-dependent, not a counter
 
 The counter interpretation introduced in `2a0f975` is wrong. With `c` equal to the XOR of

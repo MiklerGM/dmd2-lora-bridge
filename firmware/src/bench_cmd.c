@@ -28,6 +28,7 @@ static bool parse_uint(const char *p, const char *end, int base, unsigned long *
 #define SEEN_SYNC 8u
 #define SEEN_LEN 16u
 #define SEEN_HDR 32u
+#define SEEN_FOFF 64u
 
 bench_result_t bench_parse_tx(const char *line, bench_tx_t *out) {
     const char *p = line;
@@ -35,7 +36,7 @@ bench_result_t bench_parse_tx(const char *line, bench_tx_t *out) {
     if (strncmp(p, "TX", 2) != 0 || (p[2] != ' ' && p[2] != '\0')) return BENCH_NOT_TX;
     p += 2;
 
-    bench_tx_t r = {.seq = 0, .power = -1, .preamble = -1, .sync = -1, .len = -1, .hdr = -1};
+    bench_tx_t r = {.seq = 0, .power = -1, .preamble = -1, .sync = -1, .len = -1, .hdr = -1, .foff = 0};
     unsigned seen = 0;
 
     while (*p) {
@@ -96,6 +97,17 @@ bench_result_t bench_parse_tx(const char *line, bench_tx_t *out) {
             if (ve - vs != 4 || !parse_uint(vs, ve, 16, &v)) return BENCH_BAD_TOKEN;
             bit = SEEN_HDR;
             r.hdr = (int)v;
+        } else if (klen == 4 && memcmp(tok, "foff", 4) == 0) {
+            /* Signed, in kHz: the interesting offsets are on both sides of the channel. The
+             * bound is a quarter of the 500 kHz bandwidth, past which a LoRa receiver is not
+             * expected to acquire at all and a null result would say nothing. */
+            const char *ds = vs;
+            bool neg = (ds < ve && *ds == '-');
+            if (neg) ds++;
+            if (!parse_uint(ds, ve, 10, &v)) return BENCH_BAD_TOKEN;
+            if (v > 125) return BENCH_OUT_OF_RANGE;
+            bit = SEEN_FOFF;
+            r.foff = neg ? -(int)v : (int)v;
         } else {
             return BENCH_UNKNOWN_KEY;
         }
