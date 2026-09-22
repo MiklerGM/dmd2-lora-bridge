@@ -453,6 +453,26 @@ The same shape is what makes the remaining candidates narrow. Whatever it is, it
 afresh for each transmission, it does not care how loud the packet arrives or what is in it,
 and it is invisible to a receiver running our own configuration.
 
+### A fourth finding that evaporated
+
+Two candidates were tried with the right shape - both act at the very start of a transmission,
+where this link loses its headers and never fails a CRC, and both are re-run on every packet.
+
+Locking the synthesiser first, with SetFs and 20 ms of settle before SetTx: 7 of 32, 22 %.
+Nothing.
+
+Stretching the PA ramp from 200 us to 3.4 ms: **12 of 32, 38 %** in the first run, against 22.5 %
+for that same cell pooled over every earlier run. Fifteen points, about one chance in fifty of
+being noise. It was not reported as a finding, because the threshold had been set at 40 %
+beforehand and three findings had already evaporated here.
+
+It evaporated too. With the slow ramp on both boards: 10 of 40 and 7 of 40. Pooled over all
+three runs, 29 of 112 - 26 % against a baseline of 23 %, which is nothing.
+
+Worth writing down as a method note rather than only a result. A single run of 32 produced a
+fifteen-point jump at p = 0.02 that does not exist, and had it been believed, the next day
+would have gone into refining a ramp time.
+
 ### Level, measured at the module that refuses us
 
 Read the maximum, not the median: the instrument polls every 250 ms against a 320 ms packet, so

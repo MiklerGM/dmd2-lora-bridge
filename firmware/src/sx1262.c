@@ -59,6 +59,7 @@
 #define REG_FREQ_ERROR    0x076B
 #define CMD_SET_RXTX_FALLBACK 0x93
 #define CMD_SET_CAD_PARAMS    0x88
+#define CMD_SET_FS            0xC1
 #define CMD_SET_SYMB_TIMEOUT  0xA0
 
 #ifdef TX_LIKE_RADIOLIB_ALL
@@ -552,7 +553,12 @@ static bool set_power(uint8_t level) {
 #else
     uint8_t pa[4] = {POWER_PA[i].duty, POWER_PA[i].hp_max, 0x00 /* SX1262 */, 0x01};
     if (!cmd(CMD_SET_PA_CONFIG, pa, 4)) return false;
-    uint8_t tx[2] = {(uint8_t)POWER_PA[i].pa_val, 0x04 /* 200 us ramp */};
+    /* Ramp time. 0x04 is 200 us; the field runs to 0x07, 3.4 ms. A gentler ramp is a cleaner
+     * spectrum over exactly the part of the packet where this link loses its headers. */
+#ifndef TX_RAMP_CODE
+#define TX_RAMP_CODE 0x04
+#endif
+    uint8_t tx[2] = {(uint8_t)POWER_PA[i].pa_val, TX_RAMP_CODE};
     return cmd(CMD_SET_TX_PARAMS, tx, 2);
 #endif
 }
@@ -1140,6 +1146,20 @@ bool radio_send(const uint8_t *data, size_t len) {
             cmd(CMD_SET_STANDBY, &xosc, 1);
             vTaskDelay(pdMS_TO_TICKS(TX_KEEP_XOSC));
         }
+#endif
+#ifdef TX_FS_SETTLE_MS
+        /*
+         * Lock the synthesiser before the carrier instead of during it.
+         *
+         * SetTx runs the frequency synthesis itself, so the loop is still pulling in while the
+         * first symbols go out - and it is re-run on every transmission, which is the shape of
+         * this fault: random packet to packet, indifferent to level across forty decibels and
+         * to the payload, invisible to a receiver sharing our configuration. SetFs puts the
+         * chip in that state deliberately and leaves it there to settle. The working reference
+         * does not do this either, and reaches a module about as rarely as we do.
+         */
+        cmd(CMD_SET_FS, NULL, 0);
+        vTaskDelay(pdMS_TO_TICKS(TX_FS_SETTLE_MS));
 #endif
         ok = cmd(CMD_SET_TX, go, 3);
         /*
