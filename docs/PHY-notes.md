@@ -66,6 +66,29 @@ So this run cannot say whether that costs anything. It is worth its own within-r
 handle that reliably makes delivery worse is as useful as one that makes it better.
 
 
+## 2026-09-22: standby and SetRfFrequency before SetTx, declared before it was run
+
+The sweep left one difference between its block and every earlier run: each packet in it is
+preceded by a standby and a SetRfFrequency, and `air` rises from 331 ms to 427 ms. Ninety-six
+milliseconds is far more than two SPI commands cost, so the chip is in a different state when
+SetTx arrives, and that state is the family of hypothesis this investigation keeps returning
+to - what the oscillator and the synthesiser are doing as the first symbols go out.
+
+`foff=0` against a line carrying no `foff` at all is that difference and nothing else. Both
+arms run on the Heltec against an E22 arm in the same rounds, 100 packets each.
+
+Declared before the first packet:
+
+- A difference is claimed only at **15 points or more within the run**, with the E22 reference
+  at or above 90 %, reproduced under a second seed.
+- Fifteen rather than the usual twenty because the twenty-point rule exists for cross-run
+  comparison at small n, where drift of sd ~0.10 swamps it. This is within one run against an
+  in-run reference at 100 packets per arm, where the standard deviation of the difference at
+  these rates is about five points. Below fifteen it is reported as no difference, and the
+  10 % block stays an artefact of cross-run comparison rather than becoming a finding.
+- A difference in either direction counts. A handle that reliably makes delivery worse is worth
+  as much as one that makes it better, and this bench has not found one of either yet.
+
 ## 2026-09-22: two of the proposed controls, bounded from data already on disk
 
 Both are still worth running; neither can be the explanation, and the bounds belong next to the
