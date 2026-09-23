@@ -60,6 +60,41 @@ module received the packet and -73 dBm when it did not, for our lost G and B pac
 alike - as if the module averages the channel over a couple of seconds and leaves out time it
 spent receiving.
 
+### Result of run 1: valid, underpowered, no verdict
+
+`2026-09-23-pair-run1.json`, seed 20260926. The new E220 had its larger antenna back on, swapped
+after the declaration was committed and before the first packet.
+
+| T-Deck packets, n = 200 | E22 | new E220 | Heltec |
+|---|---|---|---|
+| delivered | 4 | 36 | 175 |
+| reference delivered, n = 200 | 197 | 200 | 200 |
+
+Valid by every declared criterion (reference at or above 98.5 %, all banners, every
+transmission acknowledged, reference at -49 dBm on the new E220). But the E22 delivered only 4
+of our packets against the 8 the rule needs, so by the declaration **there is no verdict**. None
+of those four reached the new E220 as well (0.7 expected if independent). That leans towards
+independence but is not a result: 0 of 4 does not exclude P(B|A) = 0.6.
+
+The declared replication was not run. The same design would most likely be underpowered again:
+the E22 took 2 % of the T-Deck's packets here and 10 % in the earlier reverse run. The better
+pair for this question is two identical E220s with comparable rates, and that is a new
+experiment with its own declaration.
+
+Descriptive, not part of the decision:
+
+- **A second E220 unit, and a transmitter without a front end, show the same stage:** register 1
+  moved for none of the 164 T-Deck packets the new E220 lost (reference at -49 dBm, T-Deck at
+  -60 dBm), and none of them produced AUX activity or UART output.
+- The two EBYTE parts differ a lot on the same air: E22 2 %, E220 18 %.
+- The Heltec again lost our packets only at the header (`hdr_err` 25 for 25 misses) and its
+  outcome was independent of the new E220's (33 both, 31.5 expected) and of the E22's (2 both,
+  3.5 expected).
+- The ambient-noise difference did **not** appear: -83 dBm after lost T-Deck packets, -82 after
+  delivered ones and after the reference. Here our packet arrived at -60 dBm rather than the
+  Heltec's -39, and the averaging guess above predicted about 3 dB. Not reproduced; the guess
+  about how the register averages should not be relied on.
+
 ## 2026-09-23: what the saved runs already say, and where inside the E220 our packets stop
 
 ### Re-reading the raw files (exploratory, no new packets)
