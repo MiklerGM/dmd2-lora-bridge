@@ -17,4 +17,10 @@
  */
 bool radio_bench_tx(const bench_tx_t *req, const uint8_t *payload, size_t len, uint32_t *air_us);
 
+/*
+ * SX1262 only: move the whole radio this many Hz off the channel and resume receiving there,
+ * until told otherwise. It moves transmission too - a later TX without foff goes out offset.
+ */
+bool radio_bench_tune(int32_t hz);
+
 #endif

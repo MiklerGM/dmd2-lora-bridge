@@ -734,6 +734,15 @@ static void bench_task(void *arg) {
             continue;
         }
 #endif
+#ifdef RADIO_BACKEND_SX1262
+        if (strncmp(line, "TUNE ", 5) == 0) {
+            char *end;
+            long hz = strtol(line + 5, &end, 10);
+            const bool ok = end != line + 5 && *end == '\0' && radio_bench_tune((int32_t)hz);
+            ESP_LOGI(TAG, "TUNE %ld %s", hz, ok ? "ok" : "FAILED");
+            continue;
+        }
+#endif
         bench_tx_t req;
         bench_result_t why = bench_parse_tx(line, &req);
         if (why == BENCH_NOT_TX) continue;   /* not addressed to us */

@@ -949,6 +949,11 @@ radio_state_t radio_verify(const radio_request_t *req) {
 #ifdef BENCH_CMD
 /* Set for one packet by radio_bench_tx; -1 means derive the header from the payload. */
 static int s_once_hdr = -1;
+/* Set for one packet by radio_bench_tx; -1 means untouched. See bench_tx_t. */
+static int s_once_ldo = -1, s_once_txmod = -1;
+/* What the chip said just before SetTx, logged once the packet is out. */
+static bool s_seen_reg_ok;
+static uint8_t s_seen_txmod;
 #endif
 
 bool radio_send(const uint8_t *data, size_t len) {
@@ -1129,6 +1134,21 @@ bool radio_send(const uint8_t *data, size_t len) {
          * time a packet goes out.
          */
         fix_modulation_quality();
+#ifdef BENCH_CMD
+        /* Still in STDBY_RC from the chain above, which SetRegulatorMode requires. After the
+         * erratum write, so txmod=1 is what goes out rather than being overwritten. */
+        if (s_once_ldo >= 0) {
+            uint8_t reg = s_once_ldo ? 0x00 : 0x01;
+            s_seen_reg_ok = cmd(CMD_SET_REGULATOR_MODE, &reg, 1);
+        }
+        if (s_once_txmod >= 0) {
+            uint8_t m = 0;
+            reg_read(REG_TX_MODULATION, &m, 1);
+            m = s_once_txmod ? (uint8_t)(m | 0x04) : (uint8_t)(m & ~0x04);
+            reg_write(REG_TX_MODULATION, &m, 1);
+            reg_read(REG_TX_MODULATION, &s_seen_txmod, 1);
+        }
+#endif
 #ifdef WIDE_SWEEP
         /* Column 3: hold the oscillator up and let it settle before transmitting. Column 2:
          * throw the front end over to transmit long before the carrier appears, so any switching
@@ -1502,6 +1522,8 @@ bool radio_bench_tx(const bench_tx_t *req, const uint8_t *payload, size_t len, u
     s_once_preamble = req->preamble;
     s_once_sync = req->sync;
     s_once_hdr = req->hdr;
+    s_once_ldo = req->ldo;
+    s_once_txmod = req->txmod;
     /*
      * Frequency is the one setting radio_send does not touch, so it is moved here and moved
      * back afterwards rather than being made a per-packet argument. SetRfFrequency holds until
@@ -1520,6 +1542,22 @@ bool radio_bench_tx(const bench_tx_t *req, const uint8_t *payload, size_t len, u
     s_once_preamble = -1;
     s_once_sync = -1;
     s_once_hdr = -1;
+    s_once_ldo = s_once_txmod = -1;
+    /* The regulator has no readback, so its command status is the evidence; the modulation bit
+     * is read back. Logged after the packet so nothing sits between the write and SetTx. */
+    if (req->ldo >= 0 || req->txmod >= 0) {
+        ESP_LOGI(TAG, "txcfg seq=%lu ldo=%d reg_cmd=%s txmod=%d 0889=%02X", (unsigned long)req->seq,
+                 req->ldo, req->ldo >= 0 ? (s_seen_reg_ok ? "ok" : "FAILED") : "-", req->txmod,
+                 req->txmod >= 0 ? s_seen_txmod : 0);
+    }
+    /* Back to DC-DC, which the next packet and receive assume. ldo=0 pays this too. */
+    if (req->ldo >= 0 && bus_lock()) {
+        uint8_t reg = 0x01;
+        set_standby();
+        cmd(CMD_SET_REGULATOR_MODE, &reg, 1);
+        enter_rx();
+        bus_unlock();
+    }
     if (req->foff != BENCH_FOFF_NONE && bus_lock()) {
         s_freq_offset_hz = 0;
         set_standby();
@@ -1537,6 +1575,18 @@ bool radio_bench_tx(const bench_tx_t *req, const uint8_t *payload, size_t len, u
             bus_unlock();
         }
     }
+    return ok;
+}
+#endif
+
+#ifdef BENCH_CMD
+bool radio_bench_tune(int32_t hz) {
+    /* The same bound as foff, in Hz: past a quarter of the bandwidth nothing is expected to lock. */
+    if (hz < -125000 || hz > 125000 || !bus_lock()) return false;
+    s_freq_offset_hz = hz;
+    const uint8_t chan = s_have_applied ? s_applied.channel : RADIO_DEFAULT_CHANNEL;
+    const bool ok = set_standby() && set_frequency(chan) && enter_rx();
+    bus_unlock();
     return ok;
 }
 #endif

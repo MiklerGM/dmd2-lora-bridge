@@ -95,6 +95,16 @@ int main(void) {
     rejects("TX seq=1 foff=8 foff=8", BENCH_DUPLICATE);
     printf("%-26s ok\n", "frequency offset is signed");
 
+    /* The two switches: a value that silently became the other one would run the control as the
+     * test arm, and absent must stay distinct from 0 because 0 still pays the standby. */
+    r = parsed("TX seq=1 ldo=1 txmod=0");
+    assert(r.ldo == 1 && r.txmod == 0);
+    r = parsed("TX seq=1");
+    assert(r.ldo == -1 && r.txmod == -1);
+    rejects("TX seq=1 txmod=2", BENCH_OUT_OF_RANGE);
+    rejects("TX seq=1 ldo=1 ldo=0", BENCH_DUPLICATE);
+    printf("%-26s ok\n", "ldo and txmod are switches");
+
     /* Keys are found at token boundaries, so a value that looks like one is still a value. And
      * an oversized number is rejected rather than narrowed into something plausible. */
     rejects("TX xseq=1", BENCH_UNKNOWN_KEY);

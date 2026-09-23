@@ -47,6 +47,12 @@ typedef struct {
      * the offset between us and the part that refuses us has been measured but never varied.
      */
     int      foff;
+    /* 1: this packet with the LDO regulator instead of DC-DC; 0: the same standby and command,
+     * with DC-DC, so a control arm pays what the test arm pays. -1: untouched. */
+    int      ldo;
+    /* 1/0: bit 2 of 0x0889 set/cleared just before SetTx, after erratum 15.1 has been applied,
+     * so 1 transmits against the erratum. -1: untouched. */
+    int      txmod;
 } bench_tx_t;
 
 #define BENCH_FOFF_NONE 32767
@@ -62,7 +68,7 @@ typedef enum {
 } bench_result_t;
 
 /*
- * Parses "TX seq=417 power=2 preamble=16 sync=5454 len=38 hdr=A504 foff=-8". Only seq is
+ * Parses "TX seq=417 power=2 preamble=16 sync=5454 len=38 hdr=A504 foff=-8 ldo=1 txmod=0". Only seq is
  * required; an omitted key leaves that setting as the radio already has it.
  *
  * *out is written only when the whole line is good.
