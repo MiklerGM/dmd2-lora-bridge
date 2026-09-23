@@ -5,6 +5,61 @@ gathered while waiting for hardware. Source: EBYTE *E220-900T22S User Manual* (o
 cdebyte.com). The E220-900T30x DMD uses shares this PHY register model; only the power
 table differs (30/27/24/21 dBm instead of 22/17/13/10).
 
+## 2026-09-23: do two EBYTE receivers lose the same packets? Declared before running
+
+Two findings leave a fork. The T-Deck and the E220 lose our packets independently of each
+other, which says the dice are rolled per reception - but those are two different receivers
+with different settings. And the E220 loses our packets before it registers a reception at all.
+Two *EBYTE* receivers side by side separate the branches:
+
+- If they lose the **same** packets, the outcome is fixed by the transmission: something in our
+  signal varies packet to packet in a way EBYTE's receivers see and ours barely does. The search
+  moves to what changes between our transmissions (oscillator start, PLL lock, SetTx timing).
+- If they lose packets **independently**, our signal is steadily marginal for them and each
+  reception is a fresh draw. The search moves to a constant difference of configuration or
+  hardware.
+
+**Bench, reverse direction, nothing moved between rooms.** A second E220 (E220-900T30, product
+block `00 00 10 1E 0B 00 00`, on an ESP32 with a CP2102, `/dev/ttyUSB2`, `BENCH_OBSERVE` build)
+lies 5 cm from the E22 with the antennas parallel; the Heltec is about 1 m away on the same
+line. All three only receive. In the other room the T-Deck transmits our packets and the E220
+there is the reference transmitter. Two receivers 5 cm apart are each other's neighbour - the
+same arrangement as the T-Deck and E220 pair, noted rather than controlled.
+
+Same-room placement is not a valid receiver position for a transmitter: the new E220, 1 m from
+the E22 and the Heltec, read them at -7 to -12 dBm with either of two antennas. From the other
+room the reference arrives at about -46 dBm.
+
+**Arms.** `tdeck` - an ordinary packet; `e220` - the reference, sent immediately before every
+T-Deck packet (`--precede e220`), so the new E220's register 1 holds a known reference value
+before each of ours. 200 T-Deck packets, 200 reference packets, gap 0.8 s, seed recorded, the
+new E220 queried after every packet. Fixed size; stopped early only for invalidity. Replicated
+once under a second seed if valid; a verdict is claimed only if both runs give the same one.
+
+**Decision**, `bench/analyze_pair.py`, over T-Deck packets, A = delivered at the E22, B =
+delivered at the new E220:
+
+- *underpowered* if either receiver delivered fewer than 8 - no verdict;
+- *same packets* if P(B|A) >= 0.6 and P(A|B) >= 0.6;
+- *near independent* if P(B|A) <= P(B) + 0.2 and P(A|B) <= P(A) + 0.2;
+- *partial* otherwise, reported as a hypothesis for the next experiment.
+
+A Mantel-Haenszel odds ratio over blocks of 25 T-Deck packets is reported with it: drift that
+both receivers share would inflate the conditional shares, and a "same packets" verdict whose
+block-stratified odds ratio falls below 3 is reported as possibly drift, not as a verdict.
+
+**Invalid** if the reference reaches either EBYTE receiver below 90 %; any receiver lacks a boot
+banner or a board drops out; the median reference level on the new E220's register 1 is above
+-40 dBm (overload); fewer than 95 % of transmissions are acknowledged.
+
+**Descriptive only:** the Heltec's view of the same packets (its stage counters and outcome
+against each EBYTE receiver), and the new E220's register 1 and ambient-noise reading after each
+packet. That last one is itself an exploratory finding from runs 1 and 2 below, not declared
+beforehand: 0.8 s after a packet the E220's ambient-noise register reads -78/-79 dBm when the
+module received the packet and -73 dBm when it did not, for our lost G and B packets and for S
+alike - as if the module averages the channel over a couple of seconds and leaves out time it
+spent receiving.
+
 ## 2026-09-23: what the saved runs already say, and where inside the E220 our packets stop
 
 ### Re-reading the raw files (exploratory, no new packets)
