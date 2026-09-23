@@ -729,6 +729,10 @@ static void bench_task(void *arg) {
             e220_query_rssi();
             continue;
         }
+        if (strcmp(line, "SLEEP") == 0 || strcmp(line, "WAKE") == 0) {
+            ESP_LOGI(TAG, "%s %s", line, e220_bench_sleep(line[0] == 'S') ? "ok" : "FAILED");
+            continue;
+        }
 #endif
         bench_tx_t req;
         bench_result_t why = bench_parse_tx(line, &req);

@@ -128,4 +128,11 @@ void e220_observe_init(void);
  * (register 1) - the one thing the module will say about a reception it did not output.
  */
 void e220_query_rssi(void);
+
+/*
+ * Bench: M0=M1=1 (the E220's deep sleep, where it only takes configuration) or back to normal.
+ * Turns the radio off without touching the ESP32, so a neighbour's effect on another receiver can
+ * be switched in blocks. While asleep the RSSI query and transmission refuse to run.
+ */
+bool e220_bench_sleep(bool sleep);
 #endif

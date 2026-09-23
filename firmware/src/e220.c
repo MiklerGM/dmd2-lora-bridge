@@ -66,6 +66,9 @@ static void uart_unlock(void) { xSemaphoreGive(s_uart_lock); }
 static bool wait_aux(uint32_t timeout_ms);
 #ifdef BENCH_OBSERVE
 static void log_hex(const char *what, const uint8_t *b, size_t n);
+/* Held in M0=M1=1 by the bench. There a C0 prefix is a register write to flash, so nothing that
+ * talks to the module in normal mode may run until it is woken. */
+static bool s_asleep;
 #endif
 
 /* E220 mode table (differs from the E22!): M1 M0 = 1 1 is configuration. */
@@ -392,6 +395,12 @@ size_t e220_read_firmware(char *out, size_t out_len) {
 }
 
 bool e220_write(const uint8_t *data, size_t len) {
+#ifdef BENCH_OBSERVE
+    if (s_asleep) {
+        ESP_LOGW(TAG, "write: module is asleep, packet dropped");
+        return false;
+    }
+#endif
     if (!uart_lock()) {
         ESP_LOGW(TAG, "write: uart busy, packet dropped");
         return false;
@@ -534,6 +543,10 @@ void e220_query_rssi(void) {
     static const uint8_t req[6] = {0xC0, 0xC1, 0xC2, 0xC3, 0x00, 0x02};
     uint8_t resp[5] = {0};
     int got = -1;
+    if (s_asleep) {
+        ESP_LOGI(TAG, "RSSIQ asleep");
+        return;
+    }
     if (uart_lock()) {
         /* Not into a module that is still putting a packet out. */
         if (wait_aux(500) &&
@@ -549,5 +562,15 @@ void e220_query_rssi(void) {
     /* dBm = -(256 - value), per the manual. */
     ESP_LOGI(TAG, "RSSIQ t=%lld got=%d raw=%s noise=%d last=%d", (long long)esp_timer_get_time(),
              got, hex, ok ? -(256 - resp[3]) : 0, ok ? -(256 - resp[4]) : 0);
+}
+
+bool e220_bench_sleep(bool sleep) {
+    if (!uart_lock()) return false;
+    const bool ok = sleep ? e220_mode_config() : e220_mode_normal();
+    /* A failed wake leaves it marked asleep: the guard stays on until normal mode is confirmed. */
+    if (sleep) s_asleep = true;
+    else if (ok) s_asleep = false;
+    uart_unlock();
+    return ok;
 }
 #endif

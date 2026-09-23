@@ -5,6 +5,45 @@ gathered while waiting for hardware. Source: EBYTE *E220-900T22S User Manual* (o
 cdebyte.com). The E220-900T30x DMD uses shares this PHY register model; only the power
 table differs (30/27/24/21 dBm instead of 22/17/13/10).
 
+## 2026-09-23: does the listening neighbour cost the E22 our packets? Declared before running
+
+Every target receiver on this bench has had an SX1262 or another module within 10 cm of it, and
+that has never been switched off in a controlled way. The one hint: the local E22 took the
+T-Deck's packets 6/24 and 5/48 on 2026-09-21 with the Heltec 10 cm away, and 4/200 today with
+the second E220 5 cm away - 11/72 against 4/200. Those are different days and the boards were
+rearranged in between, so it is a reason to test, not a result.
+
+The second E220 can switch its own radio off: `SLEEP` puts it in M0=M1=1 (the E220's deep
+sleep, configuration only), `WAKE` returns it to normal (`BENCH_OBSERVE` build). While it is
+asleep its RSSI query and transmission refuse to run, since in that mode a `C0` prefix is a
+flash write.
+
+**Question.** Does the E22 deliver more (or fewer) of the T-Deck's packets while the E220 5 cm
+away is asleep than while it listens?
+
+**Design.** Reverse direction as in the pair run: the T-Deck transmits ordinary packets, each
+preceded by a reference packet from the remote E220; the E22, the second E220 and the Heltec
+receive. The second E220 alternates asleep/awake in blocks of 10 T-Deck packets, ABBA over
+blocks, the first state drawn from the seed (`--toggle e220b --block 10`), with 1 s after each
+switch. 400 T-Deck packets, 400 reference packets, fixed size. No register queries in this run.
+Replicated once under a second seed if valid; an effect is claimed only if both runs show it
+in the same direction.
+
+**Decision**, `bench/analyze_neighbour.py`: an *effect* if E22 delivery asleep minus awake is at
+least 8 points in either direction and a sign-flip test over adjacent block pairs gives
+p < 0.05; otherwise *no effect detected at this sensitivity*, with the difference and its
+interval reported.
+
+**Invalid** if the reference reaches the E22 below 90 % in either state; if the second E220
+receives any reference packet while asleep (the switch did not take) or under 90 % while awake;
+if any switch is not confirmed or a board drops out.
+
+**Descriptive only:** the Heltec's delivery by state (it is 1 m away, so a second, weaker
+neighbour relation), and the second E220's delivery while awake.
+
+**Instrument check first**, not used for conclusions: 2 blocks of 2 packets to see the switch
+take effect on the air.
+
 ## 2026-09-23: do two EBYTE receivers lose the same packets? Declared before running
 
 Two findings leave a fork. The T-Deck and the E220 lose our packets independently of each

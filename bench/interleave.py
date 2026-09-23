@@ -198,21 +198,25 @@ class Node(threading.Thread):
         print(f"  ! {self.name} never answered for seq={seq}")
         return False
 
-    def query(self, timeout=3.0):
-        """Ask a BENCH_OBSERVE receiver for its RSSI registers; returns the reply line or None."""
+    def command(self, text, expect, timeout=3.0):
+        """Send a console command; returns the first new line containing expect, or None."""
         with self.lock:
             mark = len(self.lines)
-        self.write("RSSI\n")
+        self.write(text + "\n")
         end = time.time() + timeout
         while time.time() < end:
             with self.lock:
                 fresh = self.lines[mark:]
             for line in fresh:
-                if "RSSIQ" in line:
+                if expect in line:
                     return line
             time.sleep(0.02)
-        print(f"  ! {self.name} did not answer RSSI")
+        print(f"  ! {self.name} did not answer {text}")
         return None
+
+    def query(self):
+        """Ask a BENCH_OBSERVE receiver for its RSSI registers; returns the reply line or None."""
+        return self.command("RSSI", "RSSIQ")
 
     def close(self):
         self.stop.set()
@@ -483,6 +487,11 @@ def main():
     ap.add_argument("--precede", metavar="ARM",
                     help="send this arm before every packet of every other arm, so each of "
                          "those follows the same known predecessor; --n counts the others")
+    ap.add_argument("--toggle", metavar="NAME",
+                    help="a --rx receiver running BENCH_OBSERVE that sleeps (M0=M1=1) and wakes in "
+                         "blocks of --block packets of the other arms, ABBA, first state from "
+                         "--seed; used to switch a neighbour off")
+    ap.add_argument("--block", type=int, default=10)
     ap.add_argument("--probe", action="append", metavar="NAME",
                     help="a --rx receiver running BENCH_OBSERVE: after every packet and --gap, "
                          "ask it for its RSSI registers and record the reply")
@@ -517,13 +526,15 @@ def main():
     else:
         arms = [(t.name, t, args.extra) for t in txs]
     probed = set(args.probe or [])
-    rxs = [(Node if s.split("=", 1)[0] in probed else Receiver)(*s.split("=", 1)) for s in args.rx]
+    writable = probed | ({args.toggle} if args.toggle else set())
+    rxs = [(Node if s.split("=", 1)[0] in writable else Receiver)(*s.split("=", 1)) for s in args.rx]
     for r in rxs:
         if isinstance(r, Receiver):
             r.start()
-    probes = [r for r in rxs if isinstance(r, Node)]
-    if len(probes) != len(probed):
-        ap.error("every --probe must name a --rx")
+    probes = [r for r in rxs if r.name in probed]
+    toggle = next((r for r in rxs if r.name == args.toggle), None)
+    if len(probes) != len(probed) or (args.toggle and not toggle):
+        ap.error("every --probe and --toggle must name a --rx")
     # Long enough for an ssh session to come up and for a board that reset when its port was
     # opened to finish booting. A receiver still booting is a receiver that misses packets.
     time.sleep(6.0)
@@ -533,6 +544,9 @@ def main():
     for name, tx, extra in arms:
         print(f"  {name}: {tx.name} {extra or '(no extra tokens)'}")
     rng = random.Random(args.seed) if args.seed is not None else None
+    # Drawn before the schedule so a seed fixes both. ABBA over blocks cancels a linear trend.
+    first = (rng or random.Random()).random() < 0.5
+    states = ["SLEEP", "WAKE"] if first else ["WAKE", "SLEEP"]
     arm_by_name = {a[0]: a for a in arms}
     names = [a[0] for a in arms]
     if args.precede:
@@ -547,9 +561,22 @@ def main():
 
     sent = {}                      # seq -> arm name
     tx_times, probe = {}, {}       # seq -> [sent, answered]; seq -> {receiver: reply}
+    neighbour, state = {}, None    # seq -> the toggled receiver's state when it went out
+    per_block = args.block * (2 if args.precede else 1)
     counter = itertools.count(1)
     for i, (name, tx, extra) in enumerate(schedule, 1):
+        if toggle and (i - 1) % per_block == 0:
+            b = (i - 1) // per_block
+            want = states[[0, 1, 1, 0][b % 4]]
+            reply = toggle.command(want, f"{want} ", timeout=8.0)
+            if reply is None or "FAILED" in reply:
+                print(f"\n  ! {toggle.name} did not confirm {want}; stopping")
+                break
+            state = want
+            time.sleep(1.0)
         seq = next(counter)
+        if toggle:
+            neighbour[seq] = state
         t0 = time.time()
         if tx.send(seq, extra):
             sent[seq] = name
@@ -566,6 +593,8 @@ def main():
     # received and 14 in the counters that were supposed to explain them.
     print(f"waiting {args.settle}s for the last receptions and for the counters after them")
     time.sleep(args.settle)
+    if toggle and state != "WAKE":
+        toggle.command("WAKE", "WAKE ", timeout=8.0)   # never leave a module asleep
     for r in rxs + [t for t in txs if isinstance(t, Node)]:
         r.close()
 
@@ -614,6 +643,7 @@ def main():
             "log_t": {r.name: r.times for r in rxs},
             "tx_times": tx_times,
             "probe": probe,
+            "neighbour": neighbour,
             "argv": sys.argv,
         }, indent=1))
         print(f"\nraw result in {args.out}")
