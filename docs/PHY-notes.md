@@ -80,6 +80,39 @@ rules in `bench/analyze_pair.py` restricted to those packets (A = E22, B = new E
 deliveries each or no verdict; *same packets* if P(B|A) and P(A|B) are both at least 0.6; *near
 independent* if each is at most its marginal plus 0.2; *partial* otherwise).
 
+### Result of run 2: no neighbour effect again, and the two EBYTE receivers fail independently
+
+`2026-09-23-neighbour-run2.json`, seed 20260928. Valid.
+
+| T-Deck packets | neighbour asleep | neighbour listening |
+|---|---|---|
+| E22 delivered | 48/200 (24 %) | 61/200 (30.5 %) |
+| reference at the E22 | 198/200 | 198/200 |
+| reference at the neighbour (switch check) | 0/200 | 200/200 |
+
+Asleep minus awake -6.5 points, interval -15.2 to +2.2, p = 0.17: **no effect detected**, as in
+run 1. Both runs lean the same way - the E22 slightly *worse* with its neighbour asleep - but
+neither reaches the declared threshold, and it is not claimed. What the two runs do bound is the
+hypothesis that prompted them: switching a listening module off 5 cm from the target does not
+recover the lost packets.
+
+**The declared pair test** (awake blocks, 200 T-Deck packets): the E22 delivered 61, the new E220
+36, both 12 against 11.0 if independent; P(B|A) = 0.20 against P(B) = 0.18, P(A|B) = 0.33 against
+P(A) = 0.31; Mantel-Haenszel odds ratio 1.16. **Near independent.** Run 1's awake blocks, not
+declared, say the same (11 against 8.5).
+
+So two EBYTE receivers 5 cm apart, of the two chip families, do not lose the same transmissions
+of ours. Which packets fail is not fixed by the transmission: our signal is steadily marginal
+for these receivers and each reception is a fresh draw. That points away from anything that
+varies from one of our transmissions to the next (oscillator start, PLL lock, SetTx timing) and
+towards a constant difference of configuration or hardware. Two identical E220s would be the
+cleaner form of the test; it has not been run.
+
+Also in this run: the Heltec took 361/400 of the T-Deck's packets, lost all 39 misses at the
+header (`hdr_err` 39), and was independent of both EBYTE receivers (102 both against 98.4; 31
+against 32.6). The E22's share of the T-Deck's packets in the same arrangement today: 2 %, 14 %,
+27 % in three consecutive runs, with its reference at 98-100 % each time.
+
 ## 2026-09-23: do two EBYTE receivers lose the same packets? Declared before running
 
 Two findings leave a fork. The T-Deck and the E220 lose our packets independently of each
