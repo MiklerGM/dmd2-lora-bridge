@@ -60,10 +60,22 @@ standby and SetRfFrequency can account for, and the board echoes back the offset
 remaining risk is confined to the frf arithmetic or the command itself being wrong, in which
 case every arm was the same transmission and "flat" would be true and empty.
 
-So the sweep is not finished. The repeat runs with `SX_FREQ_ERROR=1` on the receiving T-Deck,
-which logs RegFreqError per reception: the -40 arm must read about -40 kHz there before the flat
-result is worth anything. Until then this is a result about seven arms that were probably
-different, not a closed question.
+### Confirmed on the air, so frequency is closed
+
+The T-Deck was rebuilt with `SX_FREQ_ERROR=1`, which logs RegFreqError per reception, and ten
+packets were sent across the same offsets. What it measured:
+
+| asked | -40 | -8 | 0 | +8 | +40 |
+|---|---|---|---|---|---|
+| RegFreqError | -40584 Hz | -8092 Hz | -36 Hz | +8147 Hz | +40635 Hz |
+
+The offsets are real, the magnitudes are what was asked, and `foff=0` is the channel to within
+36 Hz. The seven arms were seven different transmissions and all of them were delivered at the
+same rate, so **frequency is closed across +/-40 kHz** rather than probably closed.
+
+The zero arm is worth keeping for its own sake: our two SX1262 boards agree with each other to
+within 36 Hz, while the EBYTE part sits about 8.4 kHz away from both. The carriers are not
+drifting apart, and a sweep two hundred times that separation changed nothing.
 
 ### What the sweep did to the absolute rate, which is a separate question
 
