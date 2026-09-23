@@ -49,8 +49,21 @@ off channel neither helps nor hurts**, which is what the datasheet says should h
 measured rather than assumed. The 8.4 kHz between us and the module is not what the module
 refuses, and frequency is closed across this range.
 
-The T-Deck row is the other half of the answer: it decoded 147 of the same 168 transmissions,
-including every arm 40 kHz off, so the offsets were transmitted and were receivable.
+The T-Deck row shows the transmissions were receivable: it decoded 147 of the same 168.
+
+**What this run does not establish is that the offsets reached the air.** The T-Deck decoding
+them proves nothing either way - 40 kHz is a fraction of what a BW500 receiver acquires through,
+so it would decode an arm whose offset was silently dropped exactly as well. Neither receiver
+was built with `SX_FREQ_ERROR`, so no log here measures the carrier. What is established is that
+the code path ran: `air` rises from 331 ms to 427 ms whenever `foff` is present, which only the
+standby and SetRfFrequency can account for, and the board echoes back the offset it parsed. The
+remaining risk is confined to the frf arithmetic or the command itself being wrong, in which
+case every arm was the same transmission and "flat" would be true and empty.
+
+So the sweep is not finished. The repeat runs with `SX_FREQ_ERROR=1` on the receiving T-Deck,
+which logs RegFreqError per reception: the -40 arm must read about -40 kHz there before the flat
+result is worth anything. Until then this is a result about seven arms that were probably
+different, not a closed question.
 
 ### What the sweep did to the absolute rate, which is a separate question
 
