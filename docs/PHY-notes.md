@@ -44,6 +44,42 @@ neighbour relation), and the second E220's delivery while awake.
 **Instrument check first**, not used for conclusions: 2 blocks of 2 packets to see the switch
 take effect on the air.
 
+### Result of run 1: no effect detected, and the hint was run-to-run spread
+
+`2026-09-23-neighbour-run1.json`, seed 20260927; the instrument check is
+`2026-09-23-neighbour-check.json` (the switch took: asleep 0/2 references, awake 2/2).
+
+| T-Deck packets | neighbour asleep | neighbour listening |
+|---|---|---|
+| E22 delivered | 23/200 (11.5 %) | 31/200 (15.5 %) |
+| reference at the E22 | 196/200 | 200/200 |
+| reference at the neighbour (switch check) | 0/200 | 200/200 |
+
+Valid. Asleep minus awake is **-4 points**, approximate 95 % interval -10.7 to +2.7, sign-flip
+p = 0.19 over 20 block pairs: **no effect detected at this sensitivity**. Putting the neighbour to
+sleep does not raise the E22's delivery by more than about three points.
+
+The first version of `analyze_neighbour.py` grouped runs of equal state instead of the switching
+blocks, so ABBA's adjacent same-state blocks merged and pairs came out 10 against 20 packets
+(p = 0.63 then). Corrected to fixed blocks of 10 before anything else was read; the declared
+difference and the verdict do not depend on it.
+
+The hint that prompted this was spread between runs: in the same arrangement the E22 took 4/200
+an hour earlier and 54/400 here.
+
+Exploratory, not declared for this run: with both EBYTE receivers listening, on the same 200
+T-Deck packets the E22 delivered 31 and the new E220 55, 11 of them both against 8.5 expected if
+independent (P(B|A) = 0.36, P(B) = 0.28). The Heltec was independent of each (51 both against
+48.7; 49 against 49.0) and again lost our packets only at the header (38 `hdr_err`, 39 misses).
+
+### Declared before run 2
+
+Run 2 repeats the design under seed 20260928. In addition, its awake blocks - 200 T-Deck packets
+with both EBYTE receivers listening - are the declared test of the pair question above, by the
+rules in `bench/analyze_pair.py` restricted to those packets (A = E22, B = new E220; at least 8
+deliveries each or no verdict; *same packets* if P(B|A) and P(A|B) are both at least 0.6; *near
+independent* if each is at most its marginal plus 0.2; *partial* otherwise).
+
 ## 2026-09-23: do two EBYTE receivers lose the same packets? Declared before running
 
 Two findings leave a fork. The T-Deck and the E220 lose our packets independently of each

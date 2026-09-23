@@ -58,10 +58,12 @@ def decide(pairs, min_hits=8):
     return out
 
 
-def analyse(run, arm, a, b, ref, block):
+def analyse(run, arm, a, b, ref, block, state=None):
     sent = {int(k): v for k, v in run["sent"].items()}
     seen = {k: {int(x) for x in v} for k, v in run["seen"].items()}
-    seqs = sorted(s for s, w in sent.items() if w == arm)
+    # Only packets sent while a --toggle receiver was in this state, when asked for.
+    nb = {int(k): v for k, v in run.get("neighbour", {}).items()}
+    seqs = sorted(s for s, w in sent.items() if w == arm and (state is None or nb.get(s) == state))
     pairs = [(s in seen[a], s in seen[b]) for s in seqs]
     res = decide(pairs)
     blocks = [table(pairs[i:i + block]) for i in range(0, len(pairs), block)]
@@ -69,7 +71,7 @@ def analyse(run, arm, a, b, ref, block):
     mh = mantel_haenszel(blocks)
     res["MH_odds_ratio"] = None if mh is None else round(mh, 2)
     if ref:
-        refs = [s for s, w in sent.items() if w == ref]
+        refs = [s for s, w in sent.items() if w == ref and (state is None or nb.get(s) == state)]
         res["ref"] = {rx: f"{sum(s in seen[rx] for s in refs)}/{len(refs)}" for rx in seen}
     res["arm_at_each_rx"] = {rx: f"{sum(s in seen[rx] for s in seqs)}/{len(seqs)}" for rx in seen}
     return res
@@ -94,11 +96,13 @@ def main():
     ap.add_argument("--b", default="e220b")
     ap.add_argument("--ref", default="e220")
     ap.add_argument("--block", type=int, default=25)
+    ap.add_argument("--state", choices=["SLEEP", "WAKE"], help="only packets sent in this --toggle state")
     ap.add_argument("--self-check", action="store_true")
     args = ap.parse_args()
     if args.self_check:
         return self_check()
-    print(json.dumps(analyse(json.load(open(args.run)), args.arm, args.a, args.b, args.ref, args.block), indent=1))
+    print(json.dumps(analyse(json.load(open(args.run)), args.arm, args.a, args.b, args.ref, args.block,
+                             args.state), indent=1))
 
 
 if __name__ == "__main__":

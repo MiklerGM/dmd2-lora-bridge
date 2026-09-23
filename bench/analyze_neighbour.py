@@ -10,18 +10,24 @@ each state, so the test flips signs within pairs rather than treating packets as
 """
 
 import argparse
-import itertools
 import json
 import math
 import random
 import sys
 
 
-def blocks(seqs, state):
-    """Consecutive runs of one state -> [(state, [seq...])]."""
+def blocks(seqs, state, size):
+    """The switching blocks as run: consecutive groups of `size` tested packets, each one state.
+
+    Not runs of equal state - ABBA puts two blocks of one state side by side, and merging them
+    would pair a 10-packet block with a 20-packet one.
+    """
     out = []
-    for st, grp in itertools.groupby(seqs, key=lambda s: state[s]):
-        out.append((st, list(grp)))
+    for i in range(0, len(seqs), size):
+        grp = seqs[i:i + size]
+        states = {state[s] for s in grp}
+        assert len(states) == 1, f"block at {grp[0]} spans a switch"
+        out.append((states.pop(), grp))
     return out
 
 
@@ -35,7 +41,7 @@ def paired_permutation(diffs, trials=200_000, seed=1):
     return hits / trials
 
 
-def analyse(run, arm, rx, ref, neighbour):
+def analyse(run, arm, rx, ref, neighbour, size):
     sent = {int(k): v for k, v in run["sent"].items()}
     seen = {k: {int(x) for x in v} for k, v in run["seen"].items()}
     state = {int(k): v for k, v in run["neighbour"].items()}
@@ -49,7 +55,7 @@ def analyse(run, arm, rx, ref, neighbour):
                    f"ref@{rx}": f"{sum(s in seen[rx] for s in r)}/{len(r)}",
                    f"ref@{neighbour}": f"{sum(s in seen[neighbour] for s in r)}/{len(r)}",
                    "others": {k: sum(s in v for s in t) for k, v in seen.items() if k != rx}}
-    bl = blocks(tested, state)
+    bl = blocks(tested, state, size)
     diffs = []
     for i in range(0, len(bl) - 1, 2):
         (a, sa), (b, sb) = bl[i], bl[i + 1]
@@ -83,8 +89,9 @@ def analyse(run, arm, rx, ref, neighbour):
 def self_check():
     assert paired_permutation([0, 0, 0]) == 1.0
     assert paired_permutation([3] * 12) < 0.001
-    st = {1: "SLEEP", 2: "SLEEP", 3: "WAKE", 4: "WAKE", 5: "WAKE", 6: "SLEEP"}
-    assert [b[0] for b in blocks(sorted(st), st)] == ["SLEEP", "WAKE", "SLEEP"]
+    st = {1: "SLEEP", 2: "SLEEP", 3: "WAKE", 4: "WAKE", 5: "WAKE", 6: "WAKE", 7: "SLEEP", 8: "SLEEP"}
+    # ABBA: the two WAKE blocks stay two blocks, so every pair is one block of each state.
+    assert [b[0] for b in blocks(sorted(st), st, 2)] == ["SLEEP", "WAKE", "WAKE", "SLEEP"]
     print("analyze_neighbour: self-check passes")
 
 
@@ -95,11 +102,13 @@ def main():
     ap.add_argument("--rx", default="e22")
     ap.add_argument("--ref", default="e220")
     ap.add_argument("--neighbour", default="e220b")
+    ap.add_argument("--block", type=int, default=10, help="tested packets per switching block")
     ap.add_argument("--self-check", action="store_true")
     args = ap.parse_args()
     if args.self_check:
         return self_check()
-    print(json.dumps(analyse(json.load(open(args.run)), args.arm, args.rx, args.ref, args.neighbour), indent=1))
+    print(json.dumps(analyse(json.load(open(args.run)), args.arm, args.rx, args.ref, args.neighbour,
+                             args.block), indent=1))
 
 
 if __name__ == "__main__":
