@@ -503,7 +503,8 @@ def main():
     if not args.tx or not args.rx:
         ap.error("at least one --tx and one --rx are required, or use --node")
 
-    txs = [Transmitter(*s.split("=", 1)) for s in args.tx]
+    # A transmitter on another machine is driven through the same ssh node a matrix uses.
+    txs = [(Node if ":" in s.split("=", 1)[1] else Transmitter)(*s.split("=", 1)) for s in args.tx]
     by_name = {t.name: t for t in txs}
     if args.arm:
         arms = []
@@ -565,7 +566,7 @@ def main():
     # received and 14 in the counters that were supposed to explain them.
     print(f"waiting {args.settle}s for the last receptions and for the counters after them")
     time.sleep(args.settle)
-    for r in rxs:
+    for r in rxs + [t for t in txs if isinstance(t, Node)]:
         r.close()
 
     for r in rxs:
