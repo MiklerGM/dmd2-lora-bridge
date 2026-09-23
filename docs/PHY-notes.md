@@ -5,6 +5,100 @@ gathered while waiting for hardware. Source: EBYTE *E220-900T22S User Manual* (o
 cdebyte.com). The E220-900T30x DMD uses shares this PHY register model; only the power
 table differs (30/27/24/21 dBm instead of 22/17/13/10).
 
+## 2026-09-23: what the saved runs already say, and where inside the E220 our packets stop
+
+### Re-reading the raw files (exploratory, no new packets)
+
+- **Our own receiver loses our packets only at the header.** The T-Deck's final `hdr_err`
+  equals the number of our packets it missed in every run that logged counters after the
+  timestamp fix: 58 of 58 (`2026-09-23-standby-setfreq`), 21 of 21 (`-freq-sweep`), 4 of 4
+  (`-native-fixed`). `crc_err` is 0 throughout, and E22 packets produced no header errors.
+  The failure there is at sync/SFD/header, never at preamble detection or in the payload.
+- **The two remote receivers fail independently on the same transmission.** Our packets that
+  the E220 delivered but the T-Deck lost: 11 against 12.5 expected under independence
+  (`standby-setfreq`, n = 200); pooled over seven runs, P(E220 | T-Deck ok) = 0.22 and
+  P(E220 | T-Deck lost) = 0.13. A single per-transmission defect with two receiver thresholds
+  would nest the losses; it does not. This does not show that the two receivers lose packets
+  by the same mechanism.
+- **Within the 200-packet run the E220 outcome looks like an independent draw.** Blocks of
+  25: 2, 5, 7, 5, 6, 6, 6, 6; runs test z = +1.4 (no clustering). By predecessor, pooled over
+  seven runs: after a delivered E22 packet 43/189 = 23 %, after our lost packet 83/424 = 20 %,
+  after our delivered packet 19/108 = 18 %. T-Deck frequency error, RSSI and SNR of the same
+  packet do not differ between E220-delivered and E220-lost packets.
+- **The bridge filter dropped nothing but three-byte frames.** Across every saved log the only
+  `rx dropped` lines are 3-byte frames heard by both remote receivers at once (29 s, 69 s,
+  149 s after boot): the configuration read of the EBYTE *transmitter's* health probe leaking
+  onto the air. No malformed or prefix-damaged payload reached either bridge.
+
+### Declared before the first packet: the E220's "last received RSSI" register
+
+With REG1 bit 5 set - which the stock template this bridge writes already sets - an E220
+answers `C0 C1 C2 C3 00 02` in normal mode with register 0 (ambient noise) and register 1,
+documented as the RSSI of the last received data. It is the only thing the module will say
+about a reception it did not put on its UART. `-DBENCH_OBSERVE` (E220 bridge only) adds a
+`RSSI` bench command for that read, logs every UART chunk as raw hex before any check and
+every AUX low pulse with its start and width, and removes the 30 s health probe so the module
+stays in normal mode after boot.
+
+**Question.** For our packets the E220 does not output, does the module register a reception
+(register 1 moves to our packet's level), and does anything reach its AUX or UART?
+
+**Arms**, all on the Heltec at power level 3, each packet immediately preceded by an E22
+packet (`--precede ref`) so register 1 holds a known E22 value before it; the three Heltec
+arms are shuffled inside palindromic rounds, seed recorded; the E220 is queried 0.8 s after
+every packet:
+
+- `G` - an ordinary packet.
+- `B` - `hdr=0000`: bytes 2-3 can never be valid (valid pairs XOR to A1). The PHY is identical
+  to G, so the radio demodulates B exactly as often as G; the module's firmware rejects it
+  after demodulation (0 of 90 such frames ever arrived). Positive control: does register 1
+  move for a packet the radio received and the firmware refused?
+- `S` - `sync=4444`: the radio cannot sync (0 % into an E22 in the sync sweep). Does register 1
+  move on a preamble alone?
+- `ref` - the E22, 150 packets, one before each Heltec packet.
+
+**Size and stopping.** 50 packets per Heltec arm, 150 reference packets, fixed; stopped early
+only for invalidity. Replicated once under a second seed if the first run is valid; a stage
+conclusion is claimed only if both runs agree.
+
+**Instrument check first, not used for conclusions:** a short sequence (about 10 E22, 10 G,
+5 B, 5 S) to confirm the reply format, that register 1 follows delivered packets, that the
+query does not go on the air (no 6-byte frame at the T-Deck), that the sync word reverts after
+S, and how AUX behaves around a query. If delivered E22 and G levels are not at least 4 dB
+apart there, all Heltec arms move to power level 2 and the check is repeated.
+
+**Classification**, fixed now. A packet's E220 window runs from the previous query reply to
+its own. Level L_E = median register 1 over delivered ref packets, L_H = median over
+delivered G packets, both from the main run; a Heltec packet is *registered* when its reading
+is on the L_H side of the midpoint. Only Heltec packets whose preceding ref packet was
+delivered, and whose window holds no UART output other than their own, are classified.
+u_G = registered share of undelivered G packets; u_B and u_S likewise over all B and S.
+
+**Decision rules:**
+
+1. *Invalid*, no stage conclusion: ref delivery < 90 %; |L_H - L_E| < 4 dB or fewer than 95 % of
+   delivered G and ref packets classified to their own source; RSSI reply missing or malformed
+   for more than 5 % of packets; any B or S packet delivered by the E220; the T-Deck receiving
+   under half of G (sync not reverting); a board lost mid-run.
+2. u_S >= 0.5: the register moves on a preamble alone, so "registered" only means "preamble
+   detected"; report that and nothing finer.
+3. u_S < 0.2 and u_B >= 0.1 (the register demonstrably moves for a packet the firmware refused):
+   - u_G >= 0.5: most lost packets reach the stage that moves the register - the loss is after
+     sync, in the payload or in the module's firmware.
+   - u_G <= 0.2: most do not - the loss is in the radio before that stage, the same region
+     where our own receiver fails.
+   - otherwise mixed, reported as a hypothesis.
+4. u_S < 0.2 and u_B < 0.1: the register appears to move only on output; the instrument cannot
+   separate radio from firmware and no stage conclusion is drawn.
+
+**Downstream**, also fixed now: for every undelivered G packet, any UART chunk or any AUX pulse
+starting more than 400 ms before its window's query reply counts as the module having output
+it. One such packet demonstrates a loss in the UART/bridge path; none in N bounds that path at
+3/N (95 %). Every delivered packet should show one such pulse and one chunk, which validates
+the two instruments. With the health probe absent, G delivery at or below 50 % against
+ref >= 90 % shows the gap does not need the probe; a probe-on/probe-off comparison is not part
+of this experiment.
+
 ## 2026-09-22: a frequency sweep, declared before it was run
 
 Frequency has never actually been swept. What exists is an instantaneous-RSSI check, which at
