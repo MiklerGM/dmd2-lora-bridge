@@ -5,6 +5,74 @@ gathered while waiting for hardware. Source: EBYTE *E220-900T22S User Manual* (o
 cdebyte.com). The E220-900T30x DMD uses shares this PHY register model; only the power
 table differs (30/27/24/21 dBm instead of 22/17/13/10).
 
+## 2026-09-23: a series on constant differences, declared before any of it runs
+
+Two EBYTE receivers lose our packets independently, so what separates our transmitter from the
+E22 is most likely something constant rather than something that varies per packet. Three
+tests, in this order, all without moving a board. Common to all of them:
+
+- **Two EBYTE judges.** Unless stated otherwise the direction is reverse: the T-Deck transmits
+  from the other room, the remote E220 is the reference, and the local E22 and second E220
+  (5 cm apart) receive, with the Heltec (1 m away) as our own receiver. The primary measure is
+  EBYTE delivery pooled over the two modules: D = (E22 + E220b deliveries) / (2 n).
+- **Valid** only if the reference reaches each EBYTE receiver at 90 % or more, every receiver
+  shows a boot banner, at least 95 % of transmissions are acknowledged and no board drops out.
+- **Replication only for an effect.** If run 1 shows an effect by its rule, run 2 repeats it
+  under the next seed and the effect is claimed only if run 2 shows it in the same direction.
+  If run 1 shows none, it is reported as no effect at this sensitivity and not repeated.
+
+### A. Sync register low nibbles
+
+Receive-side, our SX1262 accepts an E220 with low nibbles 0, 4 and 5 and not with F; transmit-
+side only 0, 4 and 5 were ever sent, into an E22. If the low nibbles shape the sync symbols and
+an EBYTE receiver is stricter than ours, one value may fit it better.
+
+Arms on the T-Deck, each with the `sync=` token so every arm takes the same standby and register
+write before SetTx: `5050`, `5454`, `5858`, `5A5A`, `5C5C`, `5F5F`; plus the reference. 60 packets
+per arm, palindromic rounds shuffled by seed 20260929 (run 2: 20260930), gap 0.8 s.
+
+**Effect:** an arm whose D exceeds the `5454` arm's by at least 20 points. An arm 20 or more
+points *below* it is reported as the EBYTE receivers' tolerance, not as an effect. The Heltec,
+which receives with `5454`, shows our own receiver's tolerance - descriptive.
+
+### B. Regulator mode and the erratum 15.1 bit
+
+Both are set by our drivers and never varied: DC-DC (`SetRegulatorMode 1`) and bit 2 of 0x0889
+cleared, as Semtech's erratum 15.1 asks at 500 kHz. What EBYTE's firmware does with either is
+unknown.
+
+New T-Deck bench tokens, each applied for one packet and restored after it: `ldo=0|1` (standby,
+SetRegulatorMode, back to DC-DC afterwards) and `txmod=0|1` (bit 2 of 0x0889 cleared or set
+immediately before SetTx, by read-modify-write, cleared afterwards). Every token packet logs the
+two values read back just before SetTx. Arms: control `ldo=0 txmod=0`, `ldo=1 txmod=0`,
+`ldo=0 txmod=1`, plus the reference; 100 per arm; seed 20261001 (run 2: 20261002).
+
+**Effect:** an arm whose D differs from the control's by at least 20 points in either direction.
+**Also invalid** if any token packet's readback does not show the state asked for.
+
+### C. Frequency
+
+**C1, a measurement, no decision rule.** The T-Deck, rebuilt with `SX_FREQ_ERROR`, receives 10
+packets each from the Heltec, the E22 and the second E220 (all in the other room) and from the
+remote E220 (10 cm away - noted, since it is a strong signal). Reported: RegFreqError per source.
+The E220s' frequencies have never been measured, which is what the ±40 kHz sweep needs to be
+read against.
+
+**C2, carrier offset at our own receiver.** Our receiver loses our packets at the header and never
+loses the E22's. The E22 arrives at it about 8.2 kHz off; ours arrive within 36 Hz. A new
+`TUNE <Hz>` console command retunes the T-Deck's radio. Forward direction: the Heltec and the E22
+transmit from here, each Heltec packet preceded by an E22 packet; the T-Deck receives, tuned in
+ABBA blocks of 10 Heltec packets to 0 or to +Δ, Δ the E22's offset from C1 rounded to 100 Hz, so
+that the E22 then arrives near zero and ours about Δ off. 200 Heltec and 200 E22 packets; seed
+20261003 (run 2: 20261004). The remote E220 receives too, descriptively.
+
+**Decision** on the T-Deck's delivery, by source and tuning, sign-flip test over block pairs:
+*follows the offset* if the Heltec's delivery rises by at least 8 points at +Δ **and** the E22's
+falls by at least 8 points at +Δ, each with p < 0.05; *not tied to the offset* if neither moves by
+8 points; *mixed* otherwise. Valid only if every retune is confirmed and the remote E220 takes the
+E22 at 90 % or more. With our receiver losing about 10 %, 8 points is close to the most that can
+move; the test is of our receiver, and says something about the EBYTE loss only through that.
+
 ## 2026-09-23: does the listening neighbour cost the E22 our packets? Declared before running
 
 Every target receiver on this bench has had an SX1262 or another module within 10 cm of it, and
