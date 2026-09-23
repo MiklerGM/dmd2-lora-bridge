@@ -90,6 +90,26 @@ remote E220 (10 cm away - noted, since it is a strong signal). Reported: RegFreq
 The E220s' frequencies have never been measured, which is what the ±40 kHz sweep needs to be
 read against.
 
+**Result of C1** (`2026-09-23-freq-c1.json`), RegFreqError at the T-Deck, median of 10 (range):
+
+| transmitter | offset | |
+|---|---|---|
+| Heltec | -9 Hz (-9 to -5) | 8 of 10 received |
+| remote E220 | **+164 Hz** (102 to 203) | 10 cm from the T-Deck, strong signal |
+| second E220 | +734 Hz (680 to 773) | |
+| E22 | +8100 Hz (8046 to 8116) | |
+
+Both E220s sit within a kilohertz - under one ppm, carrier and symbol clock alike - of our two
+boards. Only the E22 is far off. So **frequency and clock rate do not separate an EBYTE
+transmitter from ours**: the remote E220 transmits within 170 Hz of us and everyone takes it,
+and relative to the second E220 its packets arrive 570 Hz off while ours arrive 734 Hz off -
+100 % against about 20 %. Together with the flat ±40 kHz sweep, carrier offset is closed for the
+E220 targets, and a ppm-coherent clock offset is too, since the E220 reference has none to speak of.
+
+It also bears on C2 before it runs: our receivers take both E220s, arriving within a kilohertz,
+without loss (10/10 each here, 24/24 in the matrix), so a near-zero offset is not what costs our
+own receiver its headers. C2 is run as declared; the expectation is *not tied to the offset*.
+
 **C2, carrier offset at our own receiver.** Our receiver loses our packets at the header and never
 loses the E22's. The E22 arrives at it about 8.2 kHz off; ours arrive within 36 Hz. A new
 `TUNE <Hz>` console command retunes the T-Deck's radio. Forward direction: the Heltec and the E22
