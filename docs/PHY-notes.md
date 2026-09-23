@@ -99,6 +99,74 @@ the two instruments. With the health probe absent, G delivery at or below 50 % a
 ref >= 90 % shows the gap does not need the probe; a probe-on/probe-off comparison is not part
 of this experiment.
 
+### Result: our lost packets never reach the point where the module records a reception
+
+`2026-09-23-register-run1.json` (seed 20260924) and `-run2.json` (seed 20260925), analysed by
+`bench/analyze_register.py`, which implements the rules above:
+
+| | run 1 | run 2 |
+|---|---|---|
+| reference delivered | 150/150 | 150/150 |
+| G delivered | 6/50 | 6/50 |
+| register moved, undelivered G (u_G) | 1/44 * | 0/44 |
+| register moved, B (u_B) | 7/50 | 5/50 |
+| register moved, S (u_S) | 0/50 | 0/50 |
+| undelivered G with any AUX pulse or UART byte | 0/44 | 0/44 |
+| delivered packets with one reception pulse and one chunk | 156/156 | 156/156 |
+| L_E / L_H | -51 / -39 dBm | -49 / -39 dBm |
+| delivered packets classified to their own source | 155/156 | 155/156 |
+
+\* Seq 260 is not a movement: the reference before it read -44, an outlier on the Heltec side of
+the -45 midpoint, and the G packet left that same -44 in place. The declared rule counts it.
+
+Both runs are valid and both fall in the lower branch of rule 3, so by the declaration the stage
+conclusion stands:
+
+- **The E220 records a reception for a packet it demodulated and then refused, and not for one
+  whose sync failed.** B moves register 1 as often as G is delivered - 12/100 against 12/100,
+  which is what an identical PHY predicts - and every delivered packet moves it.
+- **None of our 88 undelivered G packets moved it, and none produced AUX activity or a UART
+  byte.** The loss happens before the module records a reception: in the radio's acquisition or
+  decoding (preamble, sync, header or payload CRC), or in a firmware step that runs before that
+  record and does not depend on bytes 2-3.
+- **Excluded as the main path**, each by measurement in these runs: the module's frame check
+  (B shows it comes after the record), the UART and the bridge (0 of 88 losses with any output,
+  at most 3.4 % of losses at 95 %), and the 30 s health probe (absent in both runs, 12 % against
+  100 % all the same).
+
+What this does not establish: which radio stage. The event that moves register 1 is known only
+to lie between sync and a completed read; if the firmware records it only after a CRC-good
+RxDone, a payload CRC failure looks the same here as a header failure. Only the E220 was
+observed, not the E22. No mechanism is identified.
+
+Also measured in these runs:
+
+- **Levels contradict the earlier table.** Register 1 puts the Heltec at -38/-39 dBm and the E22
+  at -49 to -52 dBm at the E220: our transmitter is 10-12 dB *louder*. The table further down
+  ("Heltec -50, E22 -44", the maximum of register 0 polled every 250 ms) has the order reversed.
+  Different register, different day; not reconciled. -39 dBm is close to the -40 dBm this file
+  uses as an overload warning, but the valid power sweep saw the same loss at -81 to -62 dBm.
+- The T-Deck again lost our packets only at the header: `hdr_err` 17 for 17 misses and 12 for 12.
+  Its outcome and the E220's radio-level outcome were again independent: 10 packets reached both
+  against 10.8 expected (run 1, G and B).
+- The E22 *transmitter's* health probe leaked `C1 00 08` onto the air three times in each run;
+  all six landed in reference windows, so no Heltec packet was excluded.
+- The instrument check (`2026-09-23-register-check.json`, 4 packets per arm, not used for
+  conclusions) showed B moving the register 4/4 while G moved it 0/4, with the E22 at -46 rather
+  than -50. The full runs did not reproduce that B rate (12/100 against 4/4). Unexplained; the
+  5 dB shift in the E22's level says the bench changed between the check and run 1.
+
+Next, not yet run:
+
+- The same register on the E22 as target (REG1 bit 5 is clear there, so enabling it is a flash
+  write) - whether an SX1262-based EBYTE receiver loses our packets at the same point.
+- Our own receiver fails our packets at the header and never fails the E22's. An SX1262 receive
+  setting that reproduced the EBYTE rate would give an observable model of the loss; nothing
+  tried so far has (the symbol timeout made it selective against the E22 instead).
+- An implicit-header transmission would test sync against header inside the module only if the
+  firmware records RSSI on a header error. Semtech's reference driver passes RSSI only with
+  RxDone, so that is expected to be uninformative and was not run.
+
 ## 2026-09-22: a frequency sweep, declared before it was run
 
 Frequency has never actually been swept. What exists is an instantaneous-RSSI check, which at
