@@ -1128,10 +1128,9 @@ bool radio_send(const uint8_t *data, size_t len) {
 #endif
         /*
          * Errata 15.1 belongs here, not in configure(): SetPacketParams above puts bit 2 of
-         * REG_TX_MODULATION back, and at BW500 transmitting with it set produces a signal of
-         * exactly the right length and timing that no receiver can demodulate. Applying it once
-         * at startup looks identical in a register dump taken at startup and is useless by the
-         * time a packet goes out.
+         * REG_TX_MODULATION back, so applying it once at startup looks right in a register dump
+         * and is gone by the time a packet goes out. An earlier note here said a packet sent
+         * with the bit set is undecodable; measured, it is not (PHY-notes, series test B).
          */
         fix_modulation_quality();
 #ifdef BENCH_CMD

@@ -67,6 +67,21 @@ readback on this chip, so for `ldo` the evidence is the status of the SetRegulat
 **Also invalid** if any token packet's readback (or, for `ldo`, the command status) does not show
 the state asked for.
 
+**Result of B, run 1** (`2026-09-23-txcfg-run1.json`, seed 20261001). Valid: reference 99/100
+and 100/100; all 300 token packets read back as asked (SetRegulatorMode accepted every time,
+0x0889 = 04 for the 100 `txmod=1` packets and 00 otherwise).
+
+| T-Deck arm | E22 | second E220 | D | Heltec |
+|---|---|---|---|---|
+| control, DC-DC, bit 2 clear | 24/100 | 29/100 | 0.265 | 91/100 |
+| LDO | 21/100 | 19/100 | 0.20 | 89/100 |
+| 0x0889 bit 2 set | 22/100 | 22/100 | 0.22 | 84/100 |
+
+**No effect** (-6.5 and -4.5 points against a declared 20), so not repeated. It also refutes the
+comment in `sx1262.c` that transmitting at BW500 with bit 2 set "produces a signal ... that no
+receiver can demodulate": both EBYTE receivers took 22 % of those packets and the Heltec 84 %.
+The Heltec's 36 misses were again all header errors.
+
 ### C. Frequency
 
 **C1, a measurement, no decision rule.** The T-Deck, rebuilt with `SX_FREQ_ERROR`, receives 10
