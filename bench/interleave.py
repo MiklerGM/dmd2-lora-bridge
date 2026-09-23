@@ -131,7 +131,7 @@ class Node(threading.Thread):
     def __init__(self, name, spec):
         super().__init__()
         self.name, self.spec = name, spec
-        self.seen, self.lines = {}, []
+        self.seen, self.lines, self.times = {}, [], []
         self.stop = threading.Event()
         self.proc, self.port = None, None
         self.lock = threading.Lock()
@@ -165,6 +165,7 @@ class Node(threading.Thread):
             line = raw.decode("utf-8", "replace").rstrip()
             with self.lock:
                 self.lines.append(line)
+                self.times.append(time.time())
             m = RX.search(line)
             if m:
                 self.seen.setdefault(int(m.group(1)), time.time())
@@ -196,6 +197,22 @@ class Node(threading.Thread):
             time.sleep(0.05)
         print(f"  ! {self.name} never answered for seq={seq}")
         return False
+
+    def query(self, timeout=3.0):
+        """Ask a BENCH_OBSERVE receiver for its RSSI registers; returns the reply line or None."""
+        with self.lock:
+            mark = len(self.lines)
+        self.write("RSSI\n")
+        end = time.time() + timeout
+        while time.time() < end:
+            with self.lock:
+                fresh = self.lines[mark:]
+            for line in fresh:
+                if "RSSIQ" in line:
+                    return line
+            time.sleep(0.02)
+        print(f"  ! {self.name} did not answer RSSI")
+        return None
 
     def close(self):
         self.stop.set()
@@ -231,7 +248,7 @@ class Receiver(threading.Thread):
         super().__init__()
         self.name, self.spec = name, spec
         self.seen = {}          # seq -> arrival time
-        self.lines = []
+        self.lines, self.times = [], []
         self.stop = threading.Event()
         self.proc = None
         self.port = None
@@ -269,6 +286,7 @@ class Receiver(threading.Thread):
                 continue
             line = raw.decode("utf-8", "replace").rstrip()
             self.lines.append(line)
+            self.times.append(time.time())
             m = RX.search(line)
             if m:
                 self.seen.setdefault(int(m.group(1)), time.time())
@@ -462,6 +480,12 @@ def main():
                                              "fixed, so every arm has the same predecessor "
                                              "every round.")
     ap.add_argument("--gap", type=float, default=0.4, help="seconds between packets")
+    ap.add_argument("--precede", metavar="ARM",
+                    help="send this arm before every packet of every other arm, so each of "
+                         "those follows the same known predecessor; --n counts the others")
+    ap.add_argument("--probe", action="append", metavar="NAME",
+                    help="a --rx receiver running BENCH_OBSERVE: after every packet and --gap, "
+                         "ask it for its RSSI registers and record the reply")
     ap.add_argument("--settle", type=float, default=35.0,
                     help="seconds to wait at the end for the last packets and for a receiver "
                          "to print its cumulative counters after them")
@@ -491,9 +515,14 @@ def main():
             arms.append((name, by_name[txname], " ".join((args.extra, tokens.strip())).strip()))
     else:
         arms = [(t.name, t, args.extra) for t in txs]
-    rxs = [Receiver(*s.split("=", 1)) for s in args.rx]
+    probed = set(args.probe or [])
+    rxs = [(Node if s.split("=", 1)[0] in probed else Receiver)(*s.split("=", 1)) for s in args.rx]
     for r in rxs:
-        r.start()
+        if isinstance(r, Receiver):
+            r.start()
+    probes = [r for r in rxs if isinstance(r, Node)]
+    if len(probes) != len(probed):
+        ap.error("every --probe must name a --rx")
     # Long enough for an ssh session to come up and for a board that reset when its port was
     # opened to finish booting. A receiver still booting is a receiver that misses packets.
     time.sleep(6.0)
@@ -504,16 +533,30 @@ def main():
         print(f"  {name}: {tx.name} {extra or '(no extra tokens)'}")
     rng = random.Random(args.seed) if args.seed is not None else None
     arm_by_name = {a[0]: a for a in arms}
-    schedule = [arm_by_name[n] for n in build_schedule([a[0] for a in arms], args.n, rng)]
+    names = [a[0] for a in arms]
+    if args.precede:
+        if args.precede not in arm_by_name:
+            ap.error(f"--precede {args.precede}: no such arm")
+        order = []
+        for name in build_schedule([x for x in names if x != args.precede], args.n, rng):
+            order += [args.precede, name]
+    else:
+        order = build_schedule(names, args.n, rng)
+    schedule = [arm_by_name[n] for n in order]
 
     sent = {}                      # seq -> arm name
+    tx_times, probe = {}, {}       # seq -> [sent, answered]; seq -> {receiver: reply}
     counter = itertools.count(1)
     for i, (name, tx, extra) in enumerate(schedule, 1):
         seq = next(counter)
+        t0 = time.time()
         if tx.send(seq, extra):
             sent[seq] = name
+        tx_times[seq] = [t0, time.time()]
         print(f"\r{i}/{len(schedule)} packets, {len(sent)} away ", end="", flush=True)
         time.sleep(args.gap)
+        if probes:
+            probe[seq] = {r.name: r.query() for r in probes}
     print()
 
     # Long by default, and not only for packets still in the air. A receiver prints its
@@ -567,6 +610,10 @@ def main():
             "sent": sent,
             "seen": {r.name: sorted(r.seen) for r in rxs},
             "log": {r.name: r.lines for r in rxs},
+            "log_t": {r.name: r.times for r in rxs},
+            "tx_times": tx_times,
+            "probe": probe,
+            "argv": sys.argv,
         }, indent=1))
         print(f"\nraw result in {args.out}")
 

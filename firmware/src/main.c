@@ -559,7 +559,9 @@ static void rx_task(void *arg) {
     (void)arg;
     static uint8_t buf[PACKET_MAX + 1];
     static char line[OUT_LINE_MAX];
+#ifndef BENCH_OBSERVE
     TickType_t last_probe = xTaskGetTickCount();
+#endif
     for (;;) {
         /*
          * Ask the backend what it is holding, on a timer, whichever way it is currently
@@ -577,7 +579,11 @@ static void rx_task(void *arg) {
          * Timed against the clock rather than counted in loop passes: those run far faster
          * than the poll interval whenever packets are actually arriving.
          */
-        bridge_state_t snap = state_snapshot();
+        bridge_state_t snap;
+#ifndef BENCH_OBSERVE
+        /* Bench observation leaves the module in normal mode after boot: this probe is the one
+         * periodic trip through configuration mode, and it is under test. */
+        snap = state_snapshot();
         TickType_t due = pdMS_TO_TICKS(snap.online ? RADIO_PROBE_MS : RADIO_RETRY_MS);
         if (xTaskGetTickCount() - last_probe >= due) {
             last_probe = xTaskGetTickCount();
@@ -614,6 +620,7 @@ static void rx_task(void *arg) {
                 send_status();
             }
         }
+#endif
         /* The UART lock already prevents CFG from changing the hardware in the middle of this
          * bounded read. Capture the generation, then reject the packet if CFG won either side
          * of that lock; holding the state mutex for every empty 100 ms poll could starve the
@@ -717,6 +724,12 @@ static void bench_task(void *arg) {
     char line[128];
     for (;;) {
         if (bench_readline(line, sizeof(line)) < 0) continue;
+#ifdef BENCH_OBSERVE
+        if (strcmp(line, "RSSI") == 0) {
+            e220_query_rssi();
+            continue;
+        }
+#endif
         bench_tx_t req;
         bench_result_t why = bench_parse_tx(line, &req);
         if (why == BENCH_NOT_TX) continue;   /* not addressed to us */
@@ -802,6 +815,10 @@ void app_main(void) {
     led_init();
 
     radio_init();
+#ifdef BENCH_OBSERVE
+    e220_observe_init();
+    ESP_LOGW(TAG, "BENCH_OBSERVE: no health probe; raw UART, AUX pulses, RSSI query");
+#endif
     radio_identity(s_fw, sizeof(s_fw));
 
     state_lock();

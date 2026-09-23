@@ -64,6 +64,9 @@ static bool uart_lock(void) {
 static void uart_unlock(void) { xSemaphoreGive(s_uart_lock); }
 
 static bool wait_aux(uint32_t timeout_ms);
+#ifdef BENCH_OBSERVE
+static void log_hex(const char *what, const uint8_t *b, size_t n);
+#endif
 
 /* E220 mode table (differs from the E22!): M1 M0 = 1 1 is configuration. */
 static bool e220_set_mode(int m0, int m1, const char *name) {
@@ -474,5 +477,77 @@ size_t e220_read_packet(uint8_t *out, size_t out_len, uint32_t idle_gap_ms,
         } while (n > 0);
     }
     uart_unlock();
+#ifdef BENCH_OBSERVE
+    log_hex("uart", out, used);
+#endif
     return used;
 }
+
+#ifdef BENCH_OBSERVE
+static void log_hex(const char *what, const uint8_t *b, size_t n) {
+    char hex[2 * 256 + 1] = {0};
+    for (size_t i = 0; i < n && i < 256; i++) snprintf(hex + 2 * i, 3, "%02X", b[i]);
+    ESP_LOGI(TAG, "%s t=%lld n=%u %s", what, (long long)esp_timer_get_time(), (unsigned)n, hex);
+}
+
+typedef struct {
+    int64_t t;
+    int level;
+} aux_edge_t;
+
+static QueueHandle_t s_aux_edges;
+
+static void aux_isr(void *arg) {
+    (void)arg;
+    aux_edge_t e = {esp_timer_get_time(), gpio_get_level(PIN_AUX)};
+    BaseType_t woken = pdFALSE;
+    xQueueSendFromISR(s_aux_edges, &e, &woken);
+    if (woken) portYIELD_FROM_ISR();
+}
+
+/* One line per low pulse: when it fell and how long it stayed down. */
+static void aux_log_task(void *arg) {
+    (void)arg;
+    int64_t fell = -1;
+    aux_edge_t e;
+    for (;;) {
+        if (xQueueReceive(s_aux_edges, &e, portMAX_DELAY) != pdTRUE) continue;
+        if (e.level == 0) {
+            fell = e.t;
+        } else if (fell >= 0) {
+            ESP_LOGI(TAG, "aux low t=%lld us=%lld", (long long)fell, (long long)(e.t - fell));
+            fell = -1;
+        }
+    }
+}
+
+void e220_observe_init(void) {
+    s_aux_edges = xQueueCreate(64, sizeof(aux_edge_t));
+    configASSERT(s_aux_edges != NULL);
+    gpio_set_intr_type(PIN_AUX, GPIO_INTR_ANYEDGE);
+    ESP_ERROR_CHECK(gpio_install_isr_service(0));
+    ESP_ERROR_CHECK(gpio_isr_handler_add(PIN_AUX, aux_isr, NULL));
+    xTaskCreate(aux_log_task, "aux_log", 3072, NULL, 3, NULL);
+}
+
+void e220_query_rssi(void) {
+    static const uint8_t req[6] = {0xC0, 0xC1, 0xC2, 0xC3, 0x00, 0x02};
+    uint8_t resp[5] = {0};
+    int got = -1;
+    if (uart_lock()) {
+        /* Not into a module that is still putting a packet out. */
+        if (wait_aux(500) &&
+            uart_write_bytes(E220_UART, (const char *)req, sizeof(req)) == (int)sizeof(req) &&
+            uart_wait_tx_done(E220_UART, pdMS_TO_TICKS(200)) == ESP_OK) {
+            got = uart_read_bytes(E220_UART, resp, sizeof(resp), pdMS_TO_TICKS(300));
+        }
+        uart_unlock();
+    }
+    char hex[2 * sizeof(resp) + 1] = {0};
+    for (int i = 0; i < got && i < (int)sizeof(resp); i++) snprintf(hex + 2 * i, 3, "%02X", resp[i]);
+    const bool ok = got == 5 && resp[0] == 0xC1 && resp[1] == 0x00 && resp[2] == 0x02;
+    /* dBm = -(256 - value), per the manual. */
+    ESP_LOGI(TAG, "RSSIQ t=%lld got=%d raw=%s noise=%d last=%d", (long long)esp_timer_get_time(),
+             got, hex, ok ? -(256 - resp[3]) : 0, ok ? -(256 - resp[4]) : 0);
+}
+#endif

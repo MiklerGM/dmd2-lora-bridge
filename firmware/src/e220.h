@@ -114,3 +114,18 @@ bool e220_write(const uint8_t *data, size_t len);
  */
 size_t e220_read_packet(uint8_t *out, size_t out_len, uint32_t idle_gap_ms,
                         uint32_t first_wait_ms);
+
+#ifdef BENCH_OBSERVE
+/*
+ * Bench: watch the module from outside rather than through the bridge's filter. Logs every AUX
+ * low pulse with its start and width, and every UART chunk as raw hex before any check.
+ */
+void e220_observe_init(void);
+
+/*
+ * Bench: C0 C1 C2 C3 00 02 in normal mode, which REG1 bit 5 enables. The reply carries the
+ * ambient noise (register 0) and, per the manual, the RSSI of the last received packet
+ * (register 1) - the one thing the module will say about a reception it did not output.
+ */
+void e220_query_rssi(void);
+#endif
