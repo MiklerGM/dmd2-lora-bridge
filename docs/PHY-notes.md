@@ -35,6 +35,20 @@ per arm, palindromic rounds shuffled by seed 20260929 (run 2: 20260930), gap 0.8
 points *below* it is reported as the EBYTE receivers' tolerance, not as an effect. The Heltec,
 which receives with `5454`, shows our own receiver's tolerance - descriptive.
 
+**Result of A, run 1** (`2026-09-23-sync-run1.json`, seed 20260929). Valid: reference 59/60 at
+the E22 and 60/60 at the second E220, 418 of 420 transmissions acknowledged.
+
+| T-Deck sync registers | E22 | second E220 | D | Heltec (receives with 5454) |
+|---|---|---|---|---|
+| 5050 | 12/60 | 16/60 | 0.23 | 50/60 |
+| 5454 (what we send) | 17/60 | 11/60 | 0.23 | 57/60 |
+| 5858, 5A5A, 5C5C, 5F5F | 0 | 0 | 0 | 0 |
+
+**No effect**: 5050 matches 5454 exactly, and by the series rule run 1 is not repeated. What the
+run does show is that the low nibble is transmitted, not only a receiver setting: every value
+with bit 3 set makes the packet undecodable for everyone, our own receiver included, while 0 and
+4 pass both EBYTE receivers equally. EBYTE's receivers tolerate the same range ours does.
+
 ### B. Regulator mode and the erratum 15.1 bit
 
 Both are set by our drivers and never varied: DC-DC (`SetRegulatorMode 1`) and bit 2 of 0x0889
@@ -44,11 +58,14 @@ unknown.
 New T-Deck bench tokens, each applied for one packet and restored after it: `ldo=0|1` (standby,
 SetRegulatorMode, back to DC-DC afterwards) and `txmod=0|1` (bit 2 of 0x0889 cleared or set
 immediately before SetTx, by read-modify-write, cleared afterwards). Every token packet logs the
-two values read back just before SetTx. Arms: control `ldo=0 txmod=0`, `ldo=1 txmod=0`,
+two values read back just before SetTx. *Amended before run 1:* the regulator mode has no
+readback on this chip, so for `ldo` the evidence is the status of the SetRegulatorMode command;
+0x0889 is read back. Arms: control `ldo=0 txmod=0`, `ldo=1 txmod=0`,
 `ldo=0 txmod=1`, plus the reference; 100 per arm; seed 20261001 (run 2: 20261002).
 
 **Effect:** an arm whose D differs from the control's by at least 20 points in either direction.
-**Also invalid** if any token packet's readback does not show the state asked for.
+**Also invalid** if any token packet's readback (or, for `ldo`, the command status) does not show
+the state asked for.
 
 ### C. Frequency
 
