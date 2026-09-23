@@ -125,6 +125,38 @@ falls by at least 8 points at +Δ, each with p < 0.05; *not tied to the offset* 
 E22 at 90 % or more. With our receiver losing about 10 %, 8 points is close to the most that can
 move; the test is of our receiver, and says something about the EBYTE loss only through that.
 
+**Result of C2, run 1** (`2026-09-23-tune-run1.json`, seed 20261003). Every one of the 21
+retunes was confirmed, and the remote E220 took the E22 198/200. **The retune went the other way
+from what the declaration assumed.** RegFreqError measured in the run itself:
+
+| source | T-Deck at `TUNE 0` | T-Deck at `TUNE 8100` |
+|---|---|---|
+| Heltec | -13 Hz | +8170 Hz |
+| E22 | +8323 Hz | +16505 Hz |
+
+`TUNE 8100` raised every source's measured offset by about 8.2 kHz, where a TX `foff` of the same
+sign had raised it too - so either this register's sign differs between moving the transmitter
+and moving the receiver, or the receiver moved down; which is not resolved here. The effect on
+the design: our packets did arrive about 8.2 kHz off, the E22's own natural offset, as intended;
+the E22 did **not** arrive near zero but 16.5 kHz off.
+
+| T-Deck delivery | `TUNE 0` | `TUNE 8100` |
+|---|---|---|
+| Heltec | 78/100 | 82/100 |
+| E22 | 100/100 | 100/100 |
+
+By the declared rule, **not tied to the offset** (Heltec +4 points, p = 0.59; E22 unchanged). The
+half that ran as designed is the informative one: our packets, moved to the offset the E22's
+arrive with, are lost at the header just as often (all 40 misses `hdr_err`). The half that did
+not - the E22 near zero - is covered by C1, where both E220s arrive within a kilohertz and are
+received without loss. Not repeated: no effect, and a corrected-sign run would test only what C1
+already shows.
+
+**Series summary.** None of the three constant differences moves anything: sync low nibbles 0
+and 4 are equivalent and 8 and up are fatal for every receiver; LDO and the erratum bit change
+nothing; the E220 reference transmits within 170 Hz of us, so frequency and clock are not the
+difference, and our own receiver's header losses do not follow the carrier offset.
+
 ## 2026-09-23: does the listening neighbour cost the E22 our packets? Declared before running
 
 Every target receiver on this bench has had an SX1262 or another module within 10 cm of it, and
