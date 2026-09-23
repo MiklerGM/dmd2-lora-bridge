@@ -114,6 +114,32 @@ Declared before the first packet:
 - A difference in either direction counts. A handle that reliably makes delivery worse is worth
   as much as one that makes it better, and this bench has not found one of either yet.
 
+### Result: no difference, and the 10 % block was drift
+
+`2026-09-23-standby-setfreq.json`, seed 20260923, 100 packets per arm:
+
+| arm | E220 | T-Deck |
+|---|---|---|
+| `foff=0` - standby and SetRfFrequency before SetTx | 23/100 | 70/100 |
+| no `foff` - straight into radio_send | 20/100 | 72/100 |
+| E22 reference | **99/100** | 100/100 |
+
+Three points, against a declared fifteen and a standard deviation of six. **Putting the chip in
+standby and setting the frequency 100 ms before SetTx changes nothing**, and the ninety-six
+milliseconds it costs buys and costs nothing on the air.
+
+The more useful half is the denominator. Pooled over both arms the Heltec delivered 43/200 =
+21.5 %, which is the pooled 23 % this bench has measured all along. **The 10 % in the frequency
+sweep was drift**, nothing more, and the pre-declared threshold is the only reason it did not
+become a fifth finding that later evaporated.
+
+The control receiver makes the same point from the other side: the T-Deck took 88 % of the same
+transmitter in the sweep run and 71 % here, moving down while the E220 moved up. Two numbers
+from two runs an hour apart can differ by seventeen points in opposite directions on one link.
+Nothing here is comparable across runs, and every number quoted from this bench needs its
+reference inside the same run.
+
+
 ## 2026-09-22: two of the proposed controls, bounded from data already on disk
 
 Both are still worth running; neither can be the explanation, and the bounds belong next to the
