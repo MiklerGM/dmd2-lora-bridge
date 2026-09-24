@@ -5,6 +5,33 @@ gathered while waiting for hardware. Source: EBYTE *E220-900T22S User Manual* (o
 cdebyte.com). The E220-900T30x DMD uses shares this PHY register model; only the power
 table differs (30/27/24/21 dBm instead of 22/17/13/10).
 
+## 2026-09-24: two identical E220s on the same packets, declared before running
+
+The pair test that did run (E22 and E220, 5 cm apart) said *near independent*, but the two were
+different parts. The second E220 is now beside the remote E220 in the other room, both on the
+remote station with the T-Deck (the second E220 at `/dev/ttyUSB0`, CP2102; the first at
+`/dev/ttyUSB1`, CH340; the T-Deck at `/dev/ttyACM0`, all identified by boot banner). Placement as
+set by the owner; distances to be recorded from the owner's description.
+
+A layout check (5 packets per transmitter, not used for conclusions) gave the E22 5/5 at all
+three and the E22 at -43 to -49 dBm and the Heltec at -52 dBm on the second E220's register 1.
+
+**Design.** Forward direction: the Heltec transmits ordinary packets and the E22 is the reference,
+both local; the two E220s and the T-Deck receive. 300 packets per transmitter, palindromic rounds
+shuffled by seed 20261008 (run 2: 20261009), gap 0.8 s; the second E220 queried after every
+packet for its registers (descriptive: radio-level reception of lost packets, and levels).
+
+**Decision**, `bench/analyze_pair.py --arm heltec --a e220 --b e220b --ref e22`, the rules already
+declared for the pair question: fewer than 8 deliveries at either - no verdict; *same packets* if
+P(B|A) and P(A|B) are both at least 0.6 (and the block-stratified odds ratio at least 3, else
+possibly drift); *near independent* if each is at most its marginal plus 0.2; *partial*
+otherwise. A second run under the next seed only if run 1 says *same packets* or *partial*.
+
+**Invalid** if the reference reaches either E220 below 90 %, a board lacks a banner or drops out,
+fewer than 95 % of transmissions are acknowledged, or the reference's median level on the second
+E220 is above -40 dBm. The Heltec itself arrives near -40 dBm at the first E220 (-39 on 2026-09-23),
+as in every earlier forward run; noted, not a criterion.
+
 ## 2026-09-24: recalibrating at the working frequency, declared before running
 
 The last cheap constant difference on the list. `configure()` runs Calibrate (0x7F) straight after
