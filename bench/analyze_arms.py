@@ -62,6 +62,28 @@ def txcfg_check(run, arms_tokens):
     return bad
 
 
+TXCAL = re.compile(r"txcal seq=(\d+) cal=(\d) rejected=(\d) errors=([0-9A-F]{4})")
+CAL_ERRORS = 0x000F   # RC64k, RC13M, PLL, ADC calibration failures
+
+
+def txcal_check(run, arms_cal):
+    """Every cal packet logged; a cal=1 packet must not be rejected or report a calibration error."""
+    sent = {int(k): v for k, v in run["sent"].items()}
+    seen = {}
+    for line in (l for lines in run.get("tx_log", {}).values() for l in lines):
+        m = TXCAL.search(line)
+        if m:
+            seen[int(m[1])] = (int(m[2]), int(m[3]), int(m[4], 16))
+    bad = []
+    for s, arm in sent.items():
+        if arm not in arms_cal:
+            continue
+        got = seen.get(s)
+        if got is None or got[0] != arms_cal[arm] or (got[0] and (got[1] or got[2] & CAL_ERRORS)):
+            bad.append((s, arm, got))
+    return bad
+
+
 def self_check():
     run = {"sent": {"1": "c", "2": "x", "3": "ref", "4": "c", "5": "x", "6": "ref"},
            "seen": {"e22": [1, 2, 5, 3, 6], "e220b": [2, 5, 3, 6]}}
@@ -71,6 +93,9 @@ def self_check():
     run["tx_log"] = {"tdeck": ["txcfg seq=2 ldo=1 reg_cmd=ok txmod=0 0889=0A",
                                "txcfg seq=5 ldo=1 reg_cmd=ok txmod=0 0889=0E"]}
     assert [b[0] for b in txcfg_check(run, {"x": (1, 0)})] == [5]
+    run["tx_log"] = {"tdeck": ["txcal seq=2 cal=1 rejected=0 errors=0020",
+                               "txcal seq=5 cal=1 rejected=0 errors=0004"]}
+    assert [b[0] for b in txcal_check(run, {"x": 1})] == [5]   # PLL calibration error flagged
     print("analyze_arms: self-check passes")
 
 

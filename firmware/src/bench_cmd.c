@@ -31,6 +31,7 @@ static bool parse_uint(const char *p, const char *end, int base, unsigned long *
 #define SEEN_FOFF 64u
 #define SEEN_LDO 128u
 #define SEEN_TXMOD 256u
+#define SEEN_CAL 512u
 
 bench_result_t bench_parse_tx(const char *line, bench_tx_t *out) {
     const char *p = line;
@@ -39,7 +40,7 @@ bench_result_t bench_parse_tx(const char *line, bench_tx_t *out) {
     p += 2;
 
     bench_tx_t r = {.seq = 0, .power = -1, .preamble = -1, .sync = -1, .len = -1, .hdr = -1,
-                    .foff = BENCH_FOFF_NONE, .ldo = -1, .txmod = -1};
+                    .foff = BENCH_FOFF_NONE, .ldo = -1, .txmod = -1, .cal = -1};
     unsigned seen = 0;
 
     while (*p) {
@@ -111,13 +112,14 @@ bench_result_t bench_parse_tx(const char *line, bench_tx_t *out) {
             if (v > 125) return BENCH_OUT_OF_RANGE;
             bit = SEEN_FOFF;
             r.foff = neg ? -(int)v : (int)v;
-        } else if ((klen == 3 && memcmp(tok, "ldo", 3) == 0) ||
+        } else if ((klen == 3 && (memcmp(tok, "ldo", 3) == 0 || memcmp(tok, "cal", 3) == 0)) ||
                    (klen == 5 && memcmp(tok, "txmod", 5) == 0)) {
             /* Switches, so only 0 and 1: anything else is a typo, not a third setting. */
             if (!parse_uint(vs, ve, 10, &v)) return BENCH_BAD_TOKEN;
             if (v > 1) return BENCH_OUT_OF_RANGE;
-            bit = klen == 3 ? SEEN_LDO : SEEN_TXMOD;
-            *(klen == 3 ? &r.ldo : &r.txmod) = (int)v;
+            const bool ldo = klen == 3 && tok[0] == 'l';
+            bit = klen == 5 ? SEEN_TXMOD : ldo ? SEEN_LDO : SEEN_CAL;
+            *(klen == 5 ? &r.txmod : ldo ? &r.ldo : &r.cal) = (int)v;
         } else {
             return BENCH_UNKNOWN_KEY;
         }

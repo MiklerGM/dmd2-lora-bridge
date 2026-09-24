@@ -5,6 +5,29 @@ gathered while waiting for hardware. Source: EBYTE *E220-900T22S User Manual* (o
 cdebyte.com). The E220-900T30x DMD uses shares this PHY register model; only the power
 table differs (30/27/24/21 dBm instead of 22/17/13/10).
 
+## 2026-09-24: recalibrating at the working frequency, declared before running
+
+The last cheap constant difference on the list. `configure()` runs Calibrate (0x7F) straight after
+the TCXO is set up and *before* SetRfFrequency - so the PLL and ADC are calibrated with the chip
+still at its power-on frequency, and only the image is calibrated for 863-870 MHz afterwards.
+Semtech's reference driver does the same, so the prior is low; but if the synthesiser's
+modulation path depends on a calibration taken 50 MHz away, it would be constant, invisible to
+our own configuration-matched receiver's CRC, and at its worst at 500 kHz.
+
+New T-Deck token `cal=0|1`: `cal=1` runs Calibrate with mask 0x3F (RC64k, RC13M, PLL, ADC - not
+the image) at the frequency in use, in STDBY_RC just before SetTx, then waits 5 ms; `cal=0` waits
+the same 5 ms without calibrating. Both read GetDeviceErrors and log it with any rejection
+(`txcal seq=... rejected=... errors=...`).
+
+**Design** as in the series: reverse direction, the T-Deck transmits `ctl` (`cal=0`) and `cal`
+(`cal=1`), the remote E220 is the reference, the E22 and the second E220 judge, the Heltec
+receives. 200 packets per arm, palindromic rounds shuffled by seed 20261006 (run 2: 20261007),
+gap 0.8 s.
+
+**Effect** if D for `cal` differs from `ctl` by at least 20 points either way (the interval is
+reported with it); replicated only then. **Valid** as in the series, and only if no `cal=1`
+packet was rejected or reported a calibration error (bits 0-3 of GetDeviceErrors).
+
 ## 2026-09-23: a series on constant differences, declared before any of it runs
 
 Two EBYTE receivers lose our packets independently, so what separates our transmitter from the
@@ -68,8 +91,9 @@ readback on this chip, so for `ldo` the evidence is the status of the SetRegulat
 the state asked for.
 
 **Result of B, run 1** (`2026-09-23-txcfg-run1.json`, seed 20261001). Valid: reference 99/100
-and 100/100; all 300 token packets read back as asked (SetRegulatorMode accepted every time,
-0x0889 = 04 for the 100 `txmod=1` packets and 00 otherwise).
+and 100/100; all 300 token packets read back as asked (no SetRegulatorMode rejection in the
+T-Deck's log - `reg_cmd=ok` itself only meant the transfer completed - and 0x0889 = 04 for the
+100 `txmod=1` packets and 00 otherwise).
 
 | T-Deck arm | E22 | second E220 | D | Heltec |
 |---|---|---|---|---|

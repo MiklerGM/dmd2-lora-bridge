@@ -950,10 +950,11 @@ radio_state_t radio_verify(const radio_request_t *req) {
 /* Set for one packet by radio_bench_tx; -1 means derive the header from the payload. */
 static int s_once_hdr = -1;
 /* Set for one packet by radio_bench_tx; -1 means untouched. See bench_tx_t. */
-static int s_once_ldo = -1, s_once_txmod = -1;
+static int s_once_ldo = -1, s_once_txmod = -1, s_once_cal = -1;
 /* What the chip said just before SetTx, logged once the packet is out. */
-static bool s_seen_reg_ok;
+static bool s_seen_reg_ok, s_seen_cal_rejected;
 static uint8_t s_seen_txmod;
+static uint16_t s_seen_errors;
 #endif
 
 bool radio_send(const uint8_t *data, size_t len) {
@@ -1105,6 +1106,25 @@ bool radio_send(const uint8_t *data, size_t len) {
 #ifndef TX_LIKE_RADIOLIB_ALL
         uint8_t noerr[2] = {0x00, 0x00};
         cmd(0x07 /* ClearDeviceErrors */, noerr, 2);
+#endif
+#ifdef BENCH_CMD
+        /* Configure calibrates before SetRfFrequency, as Semtech's reference does: this redoes
+         * RC, PLL and ADC at the frequency actually in use. Not the image, which is receive-side
+         * and band-specific. The control waits the same 5 ms without calibrating. */
+        if (s_once_cal >= 0) {
+            if (s_once_cal) {
+                const bool before = s_cmd_error;
+                uint8_t mask = 0x3F;
+                s_cmd_error = false;
+                cmd(CMD_CALIBRATE, &mask, 1);
+                s_seen_cal_rejected = s_cmd_error;
+                s_cmd_error = before;
+            }
+            delay_us(5000);
+            uint8_t err[2] = {0, 0};
+            cmd_read(0x17 /* GetDeviceErrors */, err, 2);
+            s_seen_errors = (uint16_t)((err[0] << 8) | err[1]);
+        }
 #endif
 #ifdef TCXO_SETTLE_TEST
         /*
@@ -1523,6 +1543,7 @@ bool radio_bench_tx(const bench_tx_t *req, const uint8_t *payload, size_t len, u
     s_once_hdr = req->hdr;
     s_once_ldo = req->ldo;
     s_once_txmod = req->txmod;
+    s_once_cal = req->cal;
     /*
      * Frequency is the one setting radio_send does not touch, so it is moved here and moved
      * back afterwards rather than being made a per-packet argument. SetRfFrequency holds until
@@ -1541,7 +1562,11 @@ bool radio_bench_tx(const bench_tx_t *req, const uint8_t *payload, size_t len, u
     s_once_preamble = -1;
     s_once_sync = -1;
     s_once_hdr = -1;
-    s_once_ldo = s_once_txmod = -1;
+    s_once_ldo = s_once_txmod = s_once_cal = -1;
+    if (req->cal >= 0) {
+        ESP_LOGI(TAG, "txcal seq=%lu cal=%d rejected=%d errors=%04X", (unsigned long)req->seq,
+                 req->cal, req->cal ? (int)s_seen_cal_rejected : 0, s_seen_errors);
+    }
     /* The regulator has no readback, so its command status is the evidence; the modulation bit
      * is read back. Logged after the packet so nothing sits between the write and SetTx. */
     if (req->ldo >= 0 || req->txmod >= 0) {

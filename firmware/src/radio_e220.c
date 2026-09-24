@@ -59,7 +59,7 @@ bool radio_bench_tx(const bench_tx_t *req, const uint8_t *payload, size_t len, u
      * remove.
      */
     if (req->preamble >= 0 || req->sync >= 0 || req->hdr >= 0 || req->foff != BENCH_FOFF_NONE ||
-        req->ldo >= 0 || req->txmod >= 0) {
+        req->ldo >= 0 || req->txmod >= 0 || req->cal >= 0) {
         ESP_LOGW("e220", "preamble, sync, the frame header and the frequency are the module's own");
         return false;
     }
