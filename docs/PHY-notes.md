@@ -29,6 +29,40 @@ fine capture showed a constant +20 us far from jumps, which is not the effect):
   anywhere up to 400 us - which refutes the hypothesis at this resolution;
 - *mixed* otherwise, reported with the whole curve.
 
+### Result: mixed - the dip is real in both symbols, the overshoot is not established
+
+`2026-09-24-rssi-jump.json.gz` (468 captures, seed 20261013), qualification in
+`2026-09-24-rssi-jump.analysis.json`, curve in `2026-09-24-rssi-jump.curve.txt`. Seventeen of the
+eighteen offsets qualify; +165 kHz does not (preamble chains in 0/12 E22 and 5/12 Heltec captures)
+and is excluded, which removes h7's 655 us point. The first E220 took the Heltec 34/216 and the E22
+213/216 meanwhile.
+
+| after the jump | h6: E22 minus Heltec | h7: E22 minus Heltec |
+|---|---|---|
+| ~25 us | -61.6 (-89.5 to -11.4) | -47.5 (-93.5 to -2.7) |
+| ~65 us | **-84.9** (-161.5 to -45.6) | **-87.2** (-147.7 to -17.7) |
+| ~120 us | -35.7 (-93.7 to -12.8) | -69.2 (-117.5 to -28.4) |
+| ~190 us | -21.9 (-73.6 to 33.0) | -57.5 (-81.2 to -35.6) |
+| ~245 us | +35.2 (-5.6 to 66.1) | -24.6 (-56.9 to 9.4) |
+| ~300 us | +50.1 (3.4 to 64.2) | +43.9 (-12.0 to 77.3) |
+| ~370 us | +4.2 | -2.5 |
+| ~490 us | +26.4 | +6.9 |
+| ~655 us and h6's far slices (1.7-2.0 ms) | +9.5; -5 to +16 | excluded |
+
+Baselines (median from 500 us on): h6 +8.1 us, h7 none (0). By the declared rule: **dip** in both
+symbols (30 us or more below baseline, 80-200 us after the jump, interval clear) - yes; **peak**
+(30 us above, 220-400 us, interval clear) - no for either (h6 +50 at 300 us has its interval
+reaching 3.4, below the +8 baseline; h7 +44 reaches -12); **settled** by 500 us - yes for both.
+Verdict **mixed**.
+
+What stands: for the first roughly 200 us after each of these symbols' opening jump, the E22's
+path crosses a given frequency 50-90 us before ours - at the chirp's 122 kHz/ms, ours is about
+10 kHz (40 bins) behind the E22's in that interval - in both symbols, at several slices each, and
+in agreement with the two earlier captures. After about half a millisecond the two paths agree.
+A positive swing near 300 us appears in both symbols but does not meet the declared bar, so
+"ringing" is not established; "our path lags the E22's right after a jump" is. The difference
+cannot say which of the two departs from an ideal chirp.
+
 ## 2026-09-24: a model of the scope traces, and where ours departs from the E22's (exploratory)
 
 After aligning on the preamble crossing at a slice f, an upchirp of value v that starts at time s
