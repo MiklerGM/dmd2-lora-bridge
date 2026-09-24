@@ -21,3 +21,9 @@ firmware/.pio/
 firmware/sdkconfig.*
 !firmware/sdkconfig.defaults
 firmware/dist/
+
+# Raw narrowband scope captures are tens of MB: kept in ~/bench-backup with their SHA-256
+# listed in bench/results/README.md, not in git.
+bench/results/*-rssi-*.json.gz
+!bench/results/2026-09-22-rssi-center.json.gz
+!bench/results/2026-09-22-rssi-offsets.json.gz
