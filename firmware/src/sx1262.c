@@ -1445,8 +1445,12 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
                     const int rssi = -(int)ps[0] / 2;
                     const int snr4 = (int)(int8_t)ps[1];
                     const int sig = -(int)ps[2] / 2;
-                    ESP_LOGI(TAG, "rx quality rssi %d dBm, snr %d.%02d dB, signal rssi %d dBm",
-                             rssi, snr4 / 4, (snr4 < 0 ? -snr4 : snr4) % 4 * 25, sig);
+                    /* The sign printed separately: snr4 / 4 is 0 for -0.75, which used to come
+                     * out as "0.75" - exactly the range this instrument is read in near the
+                     * sensitivity limit. */
+                    const int mag = snr4 < 0 ? -snr4 : snr4;
+                    ESP_LOGI(TAG, "rx quality rssi %d dBm, snr %s%d.%02d dB, signal rssi %d dBm",
+                             rssi, snr4 < 0 ? "-" : "", mag / 4, mag % 4 * 25, sig);
                 }
             }
             /*
