@@ -29,6 +29,33 @@ more slices; *no lead detected* if no slice differs by 30 us with its interval c
 otherwise. A lead would put the lag in our SX1262 as we configure it, on either board, against
 EBYTE's firmware on either chip; no lead would put it in the Heltec or in the E22.
 
+### Result: no lead detected, on thin ground - and what that does to the post-jump lead
+
+`2026-09-24-rssi-family.json.gz` (156 captures, seed 20261016; raw file outside git), qualification
+`2026-09-24-rssi-family.analysis.json`, result `2026-09-24-rssi-family.result.json`. Heltec scope
+image `f02ffb1540954349d895b6c6879e7046d74ec664473c94c2e8ebf41b2b727193`; the T-Deck back on
+`v0.1.0-84-gf4dd5c6`. The E22 took the T-Deck 17/72 and the E220 71/72 meanwhile.
+
+- **The E220's preamble is 30 symbols**: that length makes 47 header landmarks common to both arms,
+  no other length more than 8. (Ours is 8, the E22's 20.)
+- **Qualification**: the E220 qualifies at -100 and +100 kHz only (preamble chains in 8, 12, 8, 2,
+  10, 5 of 12 captures at -107, -100, 0, +93, +100, +108 kHz); the T-Deck everywhere. The E220, at
+  21 dBm and received through the Heltec's LNA, most likely saturated the scope - the same failure
+  as the strong PA arms. By the declaration only -100 and +100 kHz count.
+- **E220 minus T-Deck**: -4.8 us (-67.3 to 58.6) at -100 kHz, 123 us after h6's jump; +39.7 us
+  (-61.7 to 60.0) at +100 kHz, 121 us after h7's. **No lead detected.** For comparison, the E22 led
+  the Heltec by 34-48 and 60-69 us at these same two points in every T-Deck-scope run.
+
+The intervals are wide - about +/-60 us, against +/-20-40 on the T-Deck scope - and only two
+slices qualify, so this is not proof that the T-Deck and the E220 follow the same path after a
+jump. But both point estimates sit near zero or on the wrong side, not at -40 to -70. If it holds,
+it takes the post-jump lead out of the explanation: the T-Deck loses its packets to EBYTE
+receivers as badly as the Heltec does, and an EBYTE module that is always received (the E220)
+would then follow the same post-jump path as the T-Deck. The difference seen between the Heltec
+and the E22 would belong to one of those two boards - the Heltec's front end, or the E22 - not to
+"our transmitter against EBYTE's". To settle it, the comparison has to be repeated on one
+instrument with levels that do not saturate it: the Heltec, the E22 and an E220 on the same scope.
+
 ## 2026-09-24: does the PA's drive level move our post-jump path? Declared before capturing
 
 A synthesiser's frequency right after a jump can be pulled by what the power amplifier does to the
