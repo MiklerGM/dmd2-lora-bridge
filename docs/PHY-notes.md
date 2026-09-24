@@ -46,6 +46,35 @@ least 1 dB with its 95 % interval above 0; *ours not lower* if the interval's up
 1 dB; otherwise inconclusive. (2) The T-Deck's header-error count and its delivery of the Heltec,
 compared descriptively with today's strong-level runs (80-90 %, every miss a header error).
 
+### Result, run 1: level does not matter, our SNR is not lower, and the header loss is not noise
+
+`2026-09-24-level-run1.json`, seed 20261010. Valid: reference 296/300 at the strong E220 and
+300/300 at the weak one, 600/600 acknowledged. The instrument check (`2026-09-24-level-check.json`)
+had the weak E220 taking the reference 10/10 at -87 dBm.
+
+| Heltec packets, n = 300 | strong E220 (antenna) | weak E220 (no antenna) |
+|---|---|---|
+| delivered | 44 | 44 |
+| level on register 1 | about -40 dBm (earlier runs) | -93 dBm (Heltec), -87 (E22) |
+
+Weak minus strong **0 points**, discordant 32 against 32, McNemar p = 1.0: **no effect detected**;
+not repeated. From about -40 to -93 dBm an E220 refuses our packets equally, and its register again
+never moved for a lost one (0/256). (Twelve packets reached both, 6.5 expected if independent -
+somewhat more than chance; descriptive.)
+
+**SNR at equal RSSI**, T-Deck without antenna: E22 minus Heltec **-0.42 dB** (interval -0.77 to
+-0.07) over the bins at -103, -102 and -101 dBm - **ours not lower**; if anything the E22's is
+slightly lower. By the one quality measure an SX1262 reports, our signal is not dirtier.
+
+**The T-Deck's header loss does not go away at a weak level, and it is not noise.** The Heltec
+arrived at a median -100 dBm and SNR +4.25 dB and was delivered 267/300, with `hdr_err` 33 and
+`crc_err` 1. The E22 arrived at -104 dBm and SNR -0.25 dB - four and a half decibels worse - and
+was delivered 299/300. The check's 20/20 was chance. Whatever costs our receiver our headers is
+not a shortage of signal: it takes packets with more SNR and still fails them at the header, where
+it passes the E22's at less. Together with every earlier null, what is left is structural - how
+our transmission is built around sync, SFD and header - rather than power, frequency, level or
+modulation quality.
+
 ## 2026-09-24: two identical E220s on the same packets, declared before running
 
 The pair test that did run (E22 and E220, 5 cm apart) said *near independent*, but the two were
