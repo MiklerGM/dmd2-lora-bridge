@@ -5,6 +5,30 @@ gathered while waiting for hardware. Source: EBYTE *E220-900T22S User Manual* (o
 cdebyte.com). The E220-900T30x DMD uses shares this PHY register model; only the power
 table differs (30/27/24/21 dBm instead of 22/17/13/10).
 
+## 2026-09-24: our board without a front end against an E220, declared before capturing
+
+Everything about the post-jump lag so far compares one pair: the Heltec (with its KCT8103L) and
+the E22 (SX1262 under EBYTE's firmware). Two questions that pair cannot answer: does our board
+**without** a front end lag too, and does an EBYTE module of the **other** chip family, the
+LLCC68 in an E220, behave like the E22?
+
+**Bench.** The scope moves to the Heltec (`probe` environment `heltec_rssi_scope`: the same
+sampler, the front end held in receive through its LNA). In the far room the T-Deck (bench image,
+antenna on) and the first E220 (antenna on, `/dev/ttyUSB1`) transmit, 10 cm apart; the second E220
+has no antenna and does not transmit. The local E22 records delivery.
+
+**Capture.** `bench/rssi_capture.py`, arms `tdeck` and `e220`, slices -107, -100, +93, +100, +108 kHz
+(near the openings of h6 and h7) and 0 kHz (far from any jump), 12 captures per arm per slice plus
+quiet windows, seed 20261016. Each arm and slice must qualify by the 2026-09-22 criteria.
+
+**Decision**, `bench/analyze_family.py`. The E220's preamble length is fitted as the one that makes
+the most header landmarks common to both arms, and must beat the runner-up by a factor of two
+(otherwise invalid). Then E220 minus T-Deck at the five near-jump slices, 99.5 % intervals:
+*the EBYTE module leads after a jump* if at least 30 us earlier, interval clear of 0, at two or
+more slices; *no lead detected* if no slice differs by 30 us with its interval clear; *mixed*
+otherwise. A lead would put the lag in our SX1262 as we configure it, on either board, against
+EBYTE's firmware on either chip; no lead would put it in the Heltec or in the E22.
+
 ## 2026-09-24: does the PA's drive level move our post-jump path? Declared before capturing
 
 A synthesiser's frequency right after a jump can be pulled by what the power amplifier does to the

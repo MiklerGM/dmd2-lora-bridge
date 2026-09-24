@@ -24,7 +24,9 @@ import numpy as np
 from analyze_rssi import analyze, load_captures
 
 SYMBOL_US = 4096.0
-PREAMBLE = {"heltec": 8, "e22": 20}
+# Preamble symbols per transmitting board; ours is 8, the E22's 20. Others are measured with
+# best_preamble() and passed in.
+PREAMBLE = {"heltec": 8, "tdeck": 8, "e22": 20}
 
 
 def pulses(t, y, peak):
@@ -37,10 +39,10 @@ def pulses(t, y, peak):
     return np.array(out)
 
 
-def origin(chain, tx):
-    """Fitted time of our preamble's first symbol; the E22's twelve extra symbols removed."""
+def origin(chain, tx, preamble=PREAMBLE):
+    """Fitted time of the first of the last eight preamble symbols, so every board lines up with ours."""
     _, t0 = np.polyfit(np.arange(len(chain)), chain, 1)
-    return t0 + (PREAMBLE[tx] - PREAMBLE["heltec"]) * SYMBOL_US
+    return t0 + (preamble[tx] - 8) * SYMBOL_US
 
 
 def landmarks(caps, lo, hi, reach=150.0):
@@ -81,16 +83,28 @@ def boot_ci(a, b, rng, n=8000):
     return [float(np.percentile(d, tail)), float(np.percentile(d, 100 - tail))]
 
 
-def analyse(paths, sfd_window=(9.3, 12.0), a="heltec", b="e22"):
+_CACHE = {}
+
+
+def _loaded(paths):
+    """Captures and their qualification, once per set of files. Qualified per file, as each run
+    was qualified on its own quiet windows - and keyed by file, since every run numbers its
+    packets from 100001."""
+    if paths not in _CACHE:
+        caps, qual = [], {}
+        for path in paths:
+            mine = load_captures([Path(path)])
+            caps += mine
+            qual.update({(str(Path(path)), r["seq"]): r for r in analyze(mine)["rows"]})
+        _CACHE[paths] = (caps, qual)
+    return _CACHE[paths]
+
+
+def analyse(paths, sfd_window=(9.3, 12.0), a="heltec", b="e22", preamble=None):
     """Landmark times of arm b minus arm a at every scope offset (defaults: E22 minus Heltec)."""
-    # Qualified per file, as each run was qualified on its own quiet windows - and keyed by file
-    # too, since every run numbers its packets from 100001.
-    caps, qual = [], {}
-    for path in paths:
-        mine = load_captures([Path(path)])
-        caps += mine
-        qual.update({(str(Path(path)), r["seq"]): r for r in analyze(mine)["rows"]})
+    caps, qual = _loaded(tuple(paths))
     rng = np.random.default_rng(1)
+    pre = dict(PREAMBLE, **(preamble or {}))
     by_offset = {}
     for path, attempt, t, y in caps:
         arm = attempt["tx"]
@@ -100,7 +114,7 @@ def analyse(paths, sfd_window=(9.3, 12.0), a="heltec", b="e22"):
             continue
         peak = float(np.percentile(y[(t >= chain[0] - 2000) & (t < chain[-1] + 2000)], 99))
         p = pulses(t, y, peak)
-        ref = origin(chain, tx)
+        ref = origin(chain, tx, pre)
         by_offset.setdefault(attempt["capture"]["offset_khz"], []).append((arm, p - ref))
     out = []
     for offset, caps_o in sorted(by_offset.items()):
@@ -160,6 +174,16 @@ def replicated(result, targets=TARGETS, min_us=20.0):
                   and (hit["ci_us"][0] > 0 or hit["ci_us"][1] < 0))
         out.append({"offset_khz": off, "symbol": sym, "found": hit, "replicated": ok})
     return out
+
+
+def best_preamble(paths, a, b, board, candidates=range(6, 33)):
+    """The preamble length for board (transmitting arm b) that makes the most header landmarks
+    common to both arms - a wrong length moves every one of them by whole symbols."""
+    scores = {}
+    for n in candidates:
+        result = analyse(paths, a=a, b=b, preamble={board: n})
+        scores[n] = sum(1 for o in result for r in o["landmarks"] if r["symbol"] >= 12.0)
+    return max(scores, key=scores.get), scores
 
 
 def verdict(result, shift_us=10.0, sfd_us=15.0):

@@ -42,6 +42,9 @@ def main():
     ap.add_argument('--arm', action='append', metavar='NAME=TX:TOKENS',
                     help="a transmission variant, e.g. 'txm=heltec:txmod=1'; repeatable. "
                          "Without any, the arms are plain 'heltec' and 'e22'.")
+    ap.add_argument('--board', action='append', default=[], metavar='NAME=[HOST:]PORT',
+                    help='another bridge board an arm may transmit from, e.g. tdeck=host:/dev/ttyACM0')
+    ap.add_argument('--oracle', default='e220', help='the board whose reception is recorded')
     ap.add_argument('--heltec', default='/dev/ttyACM0')
     ap.add_argument('--e22', default='/dev/ttyUSB1')
     ap.add_argument('--e220', default='morlov@10.10.10.190:/dev/ttyUSB1')
@@ -55,21 +58,30 @@ def main():
         ap.error('offsets must be within +/-240 kHz')
     args.out.parent.mkdir(parents=True, exist_ok=True)
     # Ports move when boards are replugged; identify them by boot banner before a run.
-    specs = {'heltec': args.heltec, 'e22': args.e22, 'e220': args.e220, 'scope': args.scope}
+    boards = {'heltec': args.heltec, 'e22': args.e22, 'e220': args.e220}
+    boards.update(dict(b.split('=', 1) for b in args.board))
     arms = {}
     for spec in args.arm or ['heltec=heltec:', 'e22=e22:']:
         name, _, rest = spec.partition('=')
         board, _, tokens = rest.partition(':')
-        if board not in ('heltec', 'e22'):
-            ap.error(f'--arm {name}: transmitter must be heltec or e22')
+        if board not in boards:
+            ap.error(f'--arm {name}: no board named {board!r}')
         arms[name] = (board, tokens.strip())
+    if args.oracle not in boards:
+        ap.error(f'--oracle {args.oracle}: no such board')
+    # Only the boards in use are opened: opening resets a board, and the scope may be one of them.
+    used = sorted({b for b, _ in arms.values()} | {args.oracle})
+    specs = {name: boards[name] for name in used}
+    if args.scope in specs.values():
+        ap.error('the scope port is also a transmitter or the oracle')
+    specs['scope'] = args.scope
     nodes, attempts = {}, []
     error = None
     try:
         for name, spec in specs.items():
             nodes[name] = Node(name, spec)
         time.sleep(6)
-        for name in ('heltec', 'e22', 'e220'):
+        for name in used:
             boot = [s for s in nodes[name].lines if 'bridge up' in s]
             if not boot or 'online=1' not in boot[-1]:
                 raise RuntimeError(f'{name}: missing healthy boot banner')
@@ -134,7 +146,7 @@ def main():
             attempt['capture_host_time'] = time.time()
             print(f'{index + 1}/{len(schedule)} seq={seq} tx={tx or "quiet"} offset={offset} '
                   f'n={len(rssi)} span={times[-1] - times[0]}us '
-                  f'e220={seq in nodes["e220"].seen}', flush=True)
+                  f'{args.oracle}={seq in nodes[args.oracle].seen}', flush=True)
             time.sleep(0.8)
         time.sleep(2)
     except BaseException as exc:
@@ -143,7 +155,7 @@ def main():
     finally:
         for node in nodes.values():
             node.close()
-        receiver = nodes.get('e220')
+        receiver = nodes.get(args.oracle)
         for attempt in attempts:
             attempt['e220_received'] = attempt['seq'] in receiver.seen if receiver else None
         result = {

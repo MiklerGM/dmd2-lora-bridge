@@ -5,7 +5,14 @@
 #include <errno.h>
 
 static SPIClass spi(HSPI);
+#ifdef SCOPE_HELTEC
+/* Heltec V4.3: NSS 8, DIO1 14, RST 12, BUSY 13; SCK 9, MISO 11, MOSI 10. */
+static Module module(8, 14, 12, 13, spi);
+#define BOARD_NAME "heltec"
+#else
 static Module module(9, 45, 17, 13, spi);
+#define BOARD_NAME "tdeck"
+#endif
 static SX1262 radio(&module);
 static constexpr uint32_t PERIOD_US = 100, DURATION_US = 1000000;
 static constexpr size_t MAX_SAMPLES = DURATION_US / PERIOD_US;
@@ -101,7 +108,7 @@ static bool command_self_check() {
 }
 
 static void ready() {
-    serial_format("{\"type\":\"ready\",\"status\":%d,\"board\":\"tdeck\","
+    serial_format("{\"type\":\"ready\",\"status\":%d,\"board\":\"" BOARD_NAME "\","
                   "\"freq_mhz\":868.125,\"offset_khz\":%d,\"bw_khz\":39.0,"
                   "\"br_kbps\":19.2,\"tcxo_v\":1.8,\"period_us\":%lu,"
                   "\"duration_us\":%lu,\"uptime_us\":%llu}\n",
@@ -204,9 +211,21 @@ static void capture(uint32_t seq, int offset) {
 }
 
 void setup() {
+#ifdef SCOPE_HELTEC
+    /* The KCT8103L front end: supply first (VFEM_Ctrl, GPIO7), then CSD high to enable, CTX low to
+     * receive through its LNA; CPS on DIO2 is a don't-care while receiving. */
+    pinMode(7, OUTPUT);
+    digitalWrite(7, HIGH);
+    delay(20);
+    pinMode(2, OUTPUT);
+    digitalWrite(2, HIGH);
+    pinMode(5, OUTPUT);
+    digitalWrite(5, LOW);
+#else
     pinMode(10, OUTPUT);
     digitalWrite(10, HIGH);
     for (int cs : {12, 39, 9}) { pinMode(cs, OUTPUT); digitalWrite(cs, HIGH); }
+#endif
     delay(100);
     Serial.begin(115200);
     Serial.setTxBufferSize(1024);
@@ -216,7 +235,11 @@ void setup() {
         serial_format("{\"type\":\"error\",\"reason\":\"command_self_check\"}\n");
         while (true) delay(1000);
     }
+#ifdef SCOPE_HELTEC
+    spi.begin(9, 11, 10, 8);
+#else
     spi.begin(40, 38, 41, 9);
+#endif
     radio_state = radio.beginFSK(868.125f, 19.2f, 5.0f, 39.0f, 0, 16, 1.8f);
     uint8_t sync[] = {0x97, 0x35, 0xb1, 0x6a, 0xe3, 0x48, 0x0d, 0xfc};
     if (radio_state == RADIOLIB_ERR_NONE) radio_state = radio.setSyncWord(sync, sizeof(sync));
