@@ -56,6 +56,10 @@ typedef struct {
     /* 1: Calibrate (RC, PLL, ADC; mask 0x3F) at the frequency in use just before SetTx, then
      * 5 ms; 0: the 5 ms alone, so the control waits as long. -1: untouched. */
     int      cal;
+    /* 0..3: this packet with SetPaConfig pinned at Semtech's (4, 7) pair and SetTxParams at
+     * +22/+14/+6/-2 dBm, the previous settings restored after it - unlike power=, which re-applies
+     * the whole configuration and leaves it in force. -1: untouched. */
+    int      pa;
 } bench_tx_t;
 
 #define BENCH_FOFF_NONE 32767
@@ -71,7 +75,7 @@ typedef enum {
 } bench_result_t;
 
 /*
- * Parses "TX seq=417 power=2 preamble=16 sync=5454 len=38 hdr=A504 foff=-8 ldo=1 txmod=0 cal=1". Only seq is
+ * Parses "TX seq=417 power=2 preamble=16 sync=5454 len=38 hdr=A504 foff=-8 ldo=1 txmod=0 cal=1 pa=2". Only seq is
  * required; an omitted key leaves that setting as the radio already has it.
  *
  * *out is written only when the whole line is good.

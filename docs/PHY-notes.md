@@ -5,6 +5,25 @@ gathered while waiting for hardware. Source: EBYTE *E220-900T22S User Manual* (o
 cdebyte.com). The E220-900T30x DMD uses shares this PHY register model; only the power
 table differs (30/27/24/21 dBm instead of 22/17/13/10).
 
+## 2026-09-24: does the PA's drive level move our post-jump path? Declared before capturing
+
+A synthesiser's frequency right after a jump can be pulled by what the power amplifier does to the
+supply and to its own load; on the Heltec that includes the front end. The `power=` token cannot
+test it cleanly (it re-applies the configuration and leaves it in force), so a new token `pa=0..3`
+sets, for one packet, SetPaConfig at Semtech's (4, 7) pair and SetTxParams at +22/+14/+6/-2 dBm - the
+clean power sweep's settings - and restores the configured level afterwards.
+
+**Arms** on the Heltec: `p22` (`pa=0`), `p14` (`pa=1`), `p6` (`pa=2`), `m2` (`pa=3`), and `e22`. Same
+five slices as the settings screen (-107, -100, +93, +100, +108 kHz), 12 captures per arm per slice
+plus quiet windows, seed 20261015. The strongest arm may saturate the scope's RSSI in the far room;
+an arm or slice that fails the qualification is excluded, not rescued.
+
+**Decision**, `bench/analyze_knobs.py --control m2 --arms p6 p14 p22`: valid only if `e22` leads
+`m2` by at least 30 us, interval clear, at two or more slices; an arm moves **toward the E22** if at
+least 30 us earlier than `m2`, interval clear, at two or more slices; **away** for the mirror image;
+otherwise **no change detected**. Twenty-four decibels of drive with no change would put the PA and
+the front end's loading out of the post-jump difference.
+
 ## 2026-09-24: does any transmit setting move our post-jump path toward the E22's? Declared before capturing
 
 The post-jump lag is a property of the signal itself, measurable in minutes and without waiting

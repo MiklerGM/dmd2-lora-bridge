@@ -103,6 +103,8 @@ int main(void) {
     assert(r.ldo == -1 && r.txmod == -1 && r.cal == -1);
     rejects("TX seq=1 txmod=2", BENCH_OUT_OF_RANGE);
     rejects("TX seq=1 cal=2", BENCH_OUT_OF_RANGE);
+    assert(parsed("TX seq=1 pa=3").pa == 3 && parsed("TX seq=1").pa == -1);
+    rejects("TX seq=1 pa=4", BENCH_OUT_OF_RANGE);
     rejects("TX seq=1 ldo=1 ldo=0", BENCH_DUPLICATE);
     printf("%-26s ok\n", "ldo, txmod, cal: switches");
 

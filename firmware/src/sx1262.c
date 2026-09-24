@@ -950,7 +950,7 @@ radio_state_t radio_verify(const radio_request_t *req) {
 /* Set for one packet by radio_bench_tx; -1 means derive the header from the payload. */
 static int s_once_hdr = -1;
 /* Set for one packet by radio_bench_tx; -1 means untouched. See bench_tx_t. */
-static int s_once_ldo = -1, s_once_txmod = -1, s_once_cal = -1;
+static int s_once_ldo = -1, s_once_txmod = -1, s_once_cal = -1, s_once_pa = -1;
 /* What the chip said just before SetTx, logged once the packet is out. */
 static bool s_seen_reg_ok, s_seen_cal_rejected;
 static uint8_t s_seen_txmod;
@@ -1159,6 +1159,16 @@ bool radio_send(const uint8_t *data, size_t len) {
         if (s_once_ldo >= 0) {
             uint8_t reg = s_once_ldo ? 0x00 : 0x01;
             s_seen_reg_ok = cmd(CMD_SET_REGULATOR_MODE, &reg, 1);
+        }
+        if (s_once_pa >= 0) {
+            /* The pair pinned at Semtech's validated (4, 7) and only the drive level moving, as in
+             * the clean power sweep; the over-current limit has to follow SetPaConfig. */
+            static const int8_t PA_DBM[4] = {22, 14, 6, -2};
+            uint8_t pa[4] = {0x04, 0x07, 0x00, 0x01};
+            uint8_t tx[2] = {(uint8_t)PA_DBM[s_once_pa], TX_RAMP_CODE};
+            cmd(CMD_SET_PA_CONFIG, pa, 4);
+            cmd(CMD_SET_TX_PARAMS, tx, 2);
+            set_ocp();
         }
         if (s_once_txmod >= 0) {
             uint8_t m = 0;
@@ -1548,6 +1558,7 @@ bool radio_bench_tx(const bench_tx_t *req, const uint8_t *payload, size_t len, u
     s_once_ldo = req->ldo;
     s_once_txmod = req->txmod;
     s_once_cal = req->cal;
+    s_once_pa = req->pa;
     /*
      * Frequency is the one setting radio_send does not touch, so it is moved here and moved
      * back afterwards rather than being made a per-packet argument. SetRfFrequency holds until
@@ -1566,7 +1577,16 @@ bool radio_bench_tx(const bench_tx_t *req, const uint8_t *payload, size_t len, u
     s_once_preamble = -1;
     s_once_sync = -1;
     s_once_hdr = -1;
-    s_once_ldo = s_once_txmod = s_once_cal = -1;
+    s_once_ldo = s_once_txmod = s_once_cal = s_once_pa = -1;
+    if (req->pa >= 0 && bus_lock()) {
+        /* Back to the configured level's own PA pair and drive. */
+        set_standby();
+        set_power(s_have_applied ? s_applied.power_level : RADIO_DEFAULT_POWER_LEVEL);
+        set_ocp();
+        enter_rx();
+        bus_unlock();
+        ESP_LOGI(TAG, "txpa seq=%lu pa=%d", (unsigned long)req->seq, req->pa);
+    }
     if (req->cal >= 0) {
         ESP_LOGI(TAG, "txcal seq=%lu cal=%d rejected=%d errors=%04X", (unsigned long)req->seq,
                  req->cal, req->cal ? (int)s_seen_cal_rejected : 0, s_seen_errors);
