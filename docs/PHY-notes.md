@@ -42,6 +42,43 @@ about a dozen landmarks):
 
 The T-Deck's bench image (`v0.1.0-84-gf4dd5c6`) is restored after the capture.
 
+### Result: no displacement; two single-landmark differences reproduce
+
+`2026-09-24-rssi-fine.json.gz` (200 captures, seed 20261012), qualification in
+`2026-09-24-rssi-fine.analysis.json` (every offset qualifies: chains in 19-24 of 24 captures per
+transmitter, none in the quiet windows), timing in `2026-09-24-rssi-fine.timing.txt`. The first
+E220 took the Heltec 21/96 and the E22 94/96 meanwhile. Scope image
+`76e0fbfe24e47916fb4c52fcf1c6dcb77479cb178146620aff7b956923c560c8`; the T-Deck is back on its bench
+image `v0.1.0-84-gf4dd5c6` afterwards.
+
+| scope offset | whole-header shift, E22 minus Heltec | median SFD shift |
+|---|---|---|
+| -100 kHz | -4.3 us (-23.2 to 8.4) | -136.6 us |
+| 0 | +4.4 us (-17.7 to 25.6) | -127.8 us |
+| +100 kHz | -1.3 us (-21.9 to 8.2) | -119.8 us |
+| +190 kHz | +20.5 us (-1.8 to 34.2) | -86.3 us |
+
+- **No header displacement and no SFD difference** by the declared rules: our header block sits
+  where the E22's does to within about 10-20 us at every offset, and within each offset the SFD
+  landmarks move together.
+- **Local differences:** -100 kHz, symbol 17.98: E22 minus Heltec **-47.5 us** (interval -69.4 to
+  -39.6), replicated; +100 kHz, symbol 18.58: **-63.7 us** (-106.8 to -47.7), replicated; 0 kHz,
+  symbol 14.43: +17.3 us (-1.1 to 30.9), not replicated. Two single points where the E22's pulse
+  comes 50-60 us (25-30 chips) earlier than ours, now in two independent capture runs.
+
+What that does and does not say. After aligning on the preamble crossing at the same slice, an
+upchirp crossing sits at a fixed position whatever the slice, so symbol 17.98 is the same symbol at
+every offset - and at 0, +100 and +190 kHz its difference is about +20 us, not -47. A different
+symbol value would move every slice alike, so that is not what this is; a difference in the chirp's
+time-frequency path localised to part of the band would fit, but so might a pulse-shape artefact
+of the filter. Not interpreted further without a model of where each known header symbol should
+cross each slice.
+
+Descriptive, not declared: the SFD shift depends on the slice (-137, -128, -120, -86 us from -100
+to +190 kHz). A pure carrier offset moves every downchirp crossing equally; a trend across the
+band would mean the two transmitters' downchirps differ in slope. With the +190 kHz intervals as
+wide as they are (for example -131.6 to -28.4) this is a lead, not a finding.
+
 ## 2026-09-24: a weak and a strong E220 on the same packets, declared before running
 
 Two level checks, not used for conclusions. With small antennas on the Heltec and the E22 the gap
