@@ -33,6 +33,28 @@ each, seed 20261014. Each arm and slice must qualify by the 2026-09-22 criteria.
 
 An arm judged *toward the E22* is then tested for delivery under its own declaration.
 
+### Result: valid, and none of the three moves our path
+
+`2026-09-24-rssi-knobs.json.gz` (310 captures, seed 20261014; raw file outside git), qualification
+`2026-09-24-rssi-knobs.analysis.json` (every arm and slice qualifies), result
+`2026-09-24-rssi-knobs.result.txt`. A first attempt aborted at packet 12: the Heltec still ran the
+2026-09-22 image, which did not know the new tokens. It was reflashed with `v0.1.0-95-gda80f63`
+(same flags, front end powered, same register readback) and the capture rerun under the same seed;
+the aborted file is kept outside git and not used.
+
+Positive control, `e22` minus `ctl`: -79.7, -47.3, -56.1, -68.9, -40.2 us at the five slices, every
+interval clear of 0 - the post-jump lead seen for the fourth time. Arms minus `ctl`:
+
+| arm | -107 | -100 | +93 | +100 | +108 kHz | verdict |
+|---|---|---|---|---|---|---|
+| `txm` (0x0889 bit 2) | -2.8 | +1.5 | -0.1 | -2.6 | +5.1 | no change detected |
+| `ldo` | -2.0 | +3.3 | +32.5 (-68.9 to 101.7) | -8.0 | -0.3 | no change detected |
+| `cal` | +0.4 | -1.1 | +3.2 | -0.6 | -11.8 | no change detected |
+
+The erratum bit, the regulator and a recalibration at the working frequency all leave our path
+where it was, 40-80 us behind the E22's right after a jump. Delivery at the first E220 in the same
+run, descriptive: `ctl` 12/60, `txm` 17/60, `ldo` 8/60, `cal` 12/60, `e22` 60/60.
+
 ## 2026-09-24: the first half-millisecond after a symbol's jump, declared before capturing
 
 A direct test of the hypothesis below. Two header symbols with known values are followed: h6
