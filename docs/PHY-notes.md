@@ -55,8 +55,10 @@ or level at our losses follows from it.
 
 What does stand, because the clock is ours: the header error fires 70-80 ms after the preamble IRQ
 (42 at 70, 15 at 79, 13 at 80), where the Heltec's delivered packets report header-valid (70: 120,
-80: 45, 79: 42, 69: 23 of 230). To the 10 ms poll - about two symbols - the receiver reaches the
-header at the right time and then fails to decode it; it is not a late or early lock.
+80: 45, 79: 42, 69: 23 of 230). To the 10 ms poll - about two symbols - the header error comes
+when header-valid would. That excludes a lock two or more symbols early or late; it does not
+exclude a fractional or one-symbol error in the receiver's alignment, which would also first show
+at the header check.
 
 ## 2026-09-24: our receiver told to expect a module's preamble, declared before running
 
@@ -1411,6 +1413,14 @@ defect; it does **not** by itself explain the remaining bare-SX1262 versus EBYTE
 Consequently, an EBYTE UART silence is not proof of a PHY failure: the module can reject the
 encapsulation after a successful LoRa decode. Past UART tests using a constant/copied header
 with varying numbered payloads, or an independent counter, are confounded by that defect.
+That includes every switch measured at an E220 on 2026-09-21 before this correction (`efd60c6`,
+`e048013`, `6393e57`, `bdb6248`): RadioLib's PA and OCP, the TCXO at 1.6 V, transmit-only, the
+RadioLib-like init, Bluetooth off, the quiet transmit wait, the replay of RadioLib's SPI stream,
+CR 4/8, and preambles 8/12/20. Their 0-1 of 20-30 is the rejected-frame floor, not a PHY result.
+Noted 2026-09-24: RadioLib itself, measured after the correction, still loses to the E22 (19/48,
+3/24), which covers the ways it differs from this driver (PA and OCP, TCXO at 1.6 V, never in
+receive, no SPI between SetTx and the end of the packet), and the T-Deck's bench builds run
+without Bluetooth and lose the same; CR 4/8 and a quiet host have not been measured since.
 Sweeps using an even-length constant marker and `A0 01` are not invalidated by this finding.
 The claim below that the layer above the PHY was already solved was premature.
 
