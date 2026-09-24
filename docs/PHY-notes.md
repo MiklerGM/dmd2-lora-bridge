@@ -48,6 +48,30 @@ least 30 us earlier than `m2`, interval clear, at two or more slices; **away** f
 otherwise **no change detected**. Twenty-four decibels of drive with no change would put the PA and
 the front end's loading out of the post-jump difference.
 
+### Result: no change detected where it could be measured; the strong arms saturated the scope
+
+`2026-09-24-rssi-pa.json.gz` (310 captures, seed 20261015; raw file outside git), qualification
+`2026-09-24-rssi-pa.analysis.json`, result `2026-09-24-rssi-pa.result.txt`. Heltec image
+`v0.1.0-98-g409b893` (`f1268568f003e3163580677ac13d95fc30c0c68ded3dc7409e0955360eb9497c`).
+
+The positive control holds: `e22` leads `m2` (-2 dBm) by 66.5, 34.0, 60.4 and 35.8 us at -107,
+-100, +100 and +108 kHz, intervals clear (at +93 kHz -78.0 with its interval reaching +19.4). But the
+stronger arms overloaded the scope in the far room: preamble chains in 0-4 of 12 captures at most
+slices, so by the declaration those arm-slices are excluded. What qualifies:
+
+| arm minus `m2` | +93 kHz | +100 kHz | +108 kHz |
+|---|---|---|---|
+| `p6` (+6 dBm) | +26.2 (-13.0 to 180.3) | **+31.9** (5.2 to 83.0) | +10.1 (-15.5 to 52.1) |
+| `p14` (+14 dBm) | excluded | +16.1 (-10.8 to 70.6) | excluded |
+| `p22` (+22 dBm) | excluded | +33.1 (-8.1 to 77.5) | excluded |
+
+(-107 and -100 kHz: every arm above `m2` excluded.) **No change detected** for any arm by the
+declared rule. What little qualifies points, if anywhere, the other way - more drive a little
+*later*, further from the E22 - and only one slice clears zero. The PA's drive does not bring our
+path toward the E22's over 8 dB (-2 to +6 dBm) at three slices; above that the test is one slice
+wide and says little. Delivery at the first E220 in the same run, descriptive: `p22` 14/60, `p14`
+13/60, `p6` 8/60, `m2` 6/60, `e22` 58/60.
+
 ## 2026-09-24: does any transmit setting move our post-jump path toward the E22's? Declared before capturing
 
 The post-jump lag is a property of the signal itself, measurable in minutes and without waiting
