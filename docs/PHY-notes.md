@@ -5,6 +5,43 @@ gathered while waiting for hardware. Source: EBYTE *E220-900T22S User Manual* (o
 cdebyte.com). The E220-900T30x DMD uses shares this PHY register model; only the power
 table differs (30/27/24/21 dBm instead of 22/17/13/10).
 
+## 2026-09-24: what our receiver measured on the packets it lost, declared before running
+
+**Question.** When the T-Deck loses one of the Heltec's packets - by its own counters always at the
+header - does the modem's frequency estimate (RegFreqError), SNR or RSSI for that reception differ
+from the ones it reports for the Heltec packets it delivers? Observational: nothing is varied.
+
+**Prior, from `2026-09-24-rxpre-run1.json`** (successes only, looked at before this was written):
+the T-Deck reads the Heltec at -17 to -9 Hz, median -13 (246 packets); the E22 at +8461 to
++8616, the E220 at +796 to +1032. Our transmitter is the steadiest of the three.
+
+**Bench.** The Heltec and the E22 (the reference) transmit from here; the T-Deck receives, running a
+bench image that also logs, at a header or CRC error, the packet status, RegFreqError and the time
+since the preamble IRQ (`rx fail …`, `fail freq error …`; image
+`4884c71055d4c80e5ef22fac71e4aa9020daa2f6f634f28c351c8a008e9fba57`), receive preamble at the
+default 8.
+
+**Run.** `bench/interleave.py`, arms `heltec`, `e22`, 300 packets each, palindromic rounds shuffled
+by seed 20261019, gap 0.8 s. No stopping rule besides the count; not repeated whatever it shows
+(this is the last run of the day, and the result is descriptive unless the rule below fires).
+
+**Decision**, `bench/analyze_fail.py`, Heltec arm. A failure line is given to the packet whose
+transmission started last before it, within 2 s.
+
+- Frequency: the share of failures whose reading lies outside the 1st-99th percentile of the
+  successes'. At least 0.5: *failures sit at a different frequency estimate*; at most 0.1:
+  *failures among the successes*; between: *mixed*.
+- SNR and RSSI: median of successes minus median of failures, 99.5 % bootstrap interval.
+  *Failures lower* if the difference is at least 1 dB (SNR) or 2 dB (RSSI) and the interval is
+  above 0; *no difference* if the interval lies within ±1 dB (SNR) or ±2 dB (RSSI); otherwise
+  *inconclusive*.
+- Descriptive: time from preamble IRQ to the failure (10 ms polling), the E22's readings.
+
+**Invalid** if the T-Deck delivers the E22 below 90 %; if fewer than 80 % of the Heltec's misses
+carry a failure line (the instrument does not see them); if fewer than 20 failures carry a
+frequency reading; or if more than half of the failures that follow another transmitter's reception
+repeat that reception's frequency reading exactly (the register was not refreshed).
+
 ## 2026-09-24: our receiver told to expect a module's preamble, declared before running
 
 SetPacketParams carries the preamble length for reception as well as for transmission. Every

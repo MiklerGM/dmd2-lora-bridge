@@ -1327,6 +1327,32 @@ static void sync_sweep_step(void) {
 }
 #endif
 
+#ifdef SX_FREQ_ERROR
+/*
+ * What the modem had to pull the incoming carrier by to lock onto it - so, measured
+ * against a transmitter we trust, the error of this board's own reference.
+ *
+ * Receiving cleanly proves nothing about our frequency: a LoRa receiver tracks the signal
+ * and tolerates a quarter of the bandwidth, 125 kHz here. Transmitting is where an error
+ * has to be inside the *other* end's window, and nothing says an E220's window is as wide
+ * as the theory allows. That would be transmit-only, per-packet, indifferent to power,
+ * identical across two drivers sharing one board, and absent on a module with its own
+ * reference - which is the whole shape of what we are chasing.
+ */
+static void log_freq_error(const char *what) {
+    uint8_t fe[3] = {0};
+    if (reg_read(REG_FREQ_ERROR, fe, 3)) {
+        uint32_t raw = ((uint32_t)fe[0] << 16) | ((uint32_t)fe[1] << 8) | fe[2];
+        raw &= 0x0FFFFF;
+        int32_t sign = 1;
+        if (raw & 0x80000) { raw = (~raw + 1) & 0xFFFFF; sign = -1; }
+        /* 1.55 * raw / (1600 / bw_khz), bw = 500 kHz -> 0.484 Hz per count */
+        int32_t hz = sign * (int32_t)((raw * 155u) / 320u);
+        ESP_LOGI(TAG, "%s %+ld Hz (raw %lu)", what, (long)hz, (unsigned long)raw);
+    }
+}
+#endif
+
 size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_t first_wait_ms) {
     (void)idle_gap_ms;   /* a UART packet boundary; SPI hands over whole packets */
     if (!bus_lock()) return 0;
@@ -1429,7 +1455,28 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
         uint8_t clear[2] = {IRQ_CLEAR_HI, IRQ_CLEAR_LO};
         if (flags & (IRQ_CRC_ERR | IRQ_HEADER_ERR)) {
 #ifdef RX_STAGES
+            const long long since_preamble =
+                s_t_preamble ? (esp_timer_get_time() - s_t_preamble) / 1000 : -1;
             s_t_preamble = s_t_header = 0;
+            /*
+             * The same measurements for a reception that died, so a failure can be set against
+             * the successes from the same transmitter: whether our losses sit at a different
+             * frequency estimate or SNR than our deliveries, or among them.
+             */
+            {
+                uint8_t ps[3] = {0, 0, 0};
+                if (cmd_read(CMD_GET_PACKET_STATUS, ps, 3)) {
+                    const int snr4 = (int)(int8_t)ps[1];
+                    const int mag = snr4 < 0 ? -snr4 : snr4;
+                    ESP_LOGI(TAG, "rx fail %s rssi %d dBm, snr %s%d.%02d dB, signal rssi %d dBm, "
+                             "preamble->fail %lld ms", (flags & IRQ_HEADER_ERR) ? "hdr" : "crc",
+                             -(int)ps[0] / 2, snr4 < 0 ? "-" : "", mag / 4, mag % 4 * 25,
+                             -(int)ps[2] / 2, since_preamble);
+                }
+            }
+#ifdef SX_FREQ_ERROR
+            log_freq_error("fail freq error");
+#endif
 #endif
             cmd(CMD_CLEAR_IRQ_STATUS, clear, 2);
             break;
@@ -1499,29 +1546,7 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
             }
         }
 #ifdef SX_FREQ_ERROR
-        /*
-         * What the modem had to pull the incoming carrier by to lock onto it - so, measured
-         * against a transmitter we trust, the error of this board's own reference.
-         *
-         * Receiving cleanly proves nothing about our frequency: a LoRa receiver tracks the signal
-         * and tolerates a quarter of the bandwidth, 125 kHz here. Transmitting is where an error
-         * has to be inside the *other* end's window, and nothing says an E220's window is as wide
-         * as the theory allows. That would be transmit-only, per-packet, indifferent to power,
-         * identical across two drivers sharing one board, and absent on a module with its own
-         * reference - which is the whole shape of what we are chasing.
-         */
-        {
-            uint8_t fe[3] = {0};
-            if (reg_read(REG_FREQ_ERROR, fe, 3)) {
-                uint32_t raw = ((uint32_t)fe[0] << 16) | ((uint32_t)fe[1] << 8) | fe[2];
-                raw &= 0x0FFFFF;
-                int32_t sign = 1;
-                if (raw & 0x80000) { raw = (~raw + 1) & 0xFFFFF; sign = -1; }
-                /* 1.55 * raw / (1600 / bw_khz), bw = 500 kHz -> 0.484 Hz per count */
-                int32_t hz = sign * (int32_t)((raw * 155u) / 320u);
-                ESP_LOGI(TAG, "freq error %+ld Hz (raw %lu)", (long)hz, (unsigned long)raw);
-            }
-        }
+        log_freq_error("freq error");
 #endif
         cmd(CMD_CLEAR_IRQ_STATUS, clear, 2);
         break;
