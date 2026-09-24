@@ -23,4 +23,8 @@ bool radio_bench_tx(const bench_tx_t *req, const uint8_t *payload, size_t len, u
  */
 bool radio_bench_tune(int32_t hz);
 
+/* SX1262 only: the preamble length the receiver is configured with (and any later transmission
+ * without a preamble= token), until changed. */
+bool radio_bench_rx_preamble(int symbols);
+
 #endif

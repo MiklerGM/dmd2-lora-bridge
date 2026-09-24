@@ -178,6 +178,9 @@ static bool s_in_rx;
 #ifdef BENCH_CMD
 /* Set for one packet by radio_bench_tx and consulted by radio_send; -1 means "leave alone". */
 static int s_once_preamble = -1, s_once_sync = -1;
+/* Bench: the configured preamble length while receiving (and for any later packet without its own
+ * preamble= token), set by RXPRE. -1: PHY_PREAMBLE. */
+static int s_rx_preamble = -1;
 #endif
 #ifdef RX_STAGES
 static unsigned s_stage_preamble, s_stage_header, s_stage_rx_done, s_stage_hdr_err, s_stage_crc_err;
@@ -520,7 +523,8 @@ static bool set_packet_params(uint8_t payload_len) {
 #if defined(PREAMBLE_SWEEP) || defined(WIDE_SWEEP)
     const uint16_t pre = s_preamble;
 #elif defined(BENCH_CMD)
-    const uint16_t pre = s_once_preamble >= 0 ? (uint16_t)s_once_preamble : PHY_PREAMBLE;
+    const uint16_t pre = s_once_preamble >= 0 ? (uint16_t)s_once_preamble
+                         : s_rx_preamble >= 0 ? (uint16_t)s_rx_preamble : PHY_PREAMBLE;
 #else
     const uint16_t pre = PHY_PREAMBLE;
 #endif
@@ -1628,6 +1632,16 @@ bool radio_bench_tx(const bench_tx_t *req, const uint8_t *payload, size_t len, u
 #endif
 
 #ifdef BENCH_CMD
+bool radio_bench_rx_preamble(int symbols) {
+    /* What a receiver is told to expect: SetPacketParams carries it for reception as well as for
+     * transmission, and every test so far moved only the transmitted one. */
+    if (symbols < 6 || symbols > 65535 || !bus_lock()) return false;
+    s_rx_preamble = symbols;
+    const bool ok = set_standby() && set_packet_params(255) && enter_rx();
+    bus_unlock();
+    return ok;
+}
+
 bool radio_bench_tune(int32_t hz) {
     /* The same bound as foff, in Hz: past a quarter of the bandwidth nothing is expected to lock. */
     if (hz < -125000 || hz > 125000 || !bus_lock()) return false;

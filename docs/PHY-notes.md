@@ -5,6 +5,36 @@ gathered while waiting for hardware. Source: EBYTE *E220-900T22S User Manual* (o
 cdebyte.com). The E220-900T30x DMD uses shares this PHY register model; only the power
 table differs (30/27/24/21 dBm instead of 22/17/13/10).
 
+## 2026-09-24: our receiver told to expect a module's preamble, declared before running
+
+SetPacketParams carries the preamble length for reception as well as for transmission. Every
+preamble test so far changed only what our transmitter sends (8 to 128 symbols, no effect at an
+E220); our receivers were always configured for 8. The modules transmit 20 (E22) and 30 (E220)
+and, presumably, receive expecting the same - which cannot be changed on them, but can be copied
+onto our SX1262. If our receiver, told to expect 20 or 30, starts refusing our packets while still
+taking the modules', the loss would be reproduced on a receiver we can instrument. (It would not
+mean our preamble is too short: 32-128 symbols were already sent to an E220 without effect.)
+
+**Bench.** The Heltec (8-symbol preamble), the E22 (20) and the E220 (30) transmit from here; the
+T-Deck receives, running a bench image with a new `RXPRE <n>` console command
+(`08257b12790d50541a610024f7f6f97e662fa95fd074d0e93f5029cccd0714e6`), and the antenna-less E220
+records delivery descriptively.
+
+**Run.** `bench/interleave.py`, arms `heltec`, `e22`, `e220`, 300 packets each, palindromic rounds
+shuffled by seed 20261018, gap 0.8 s; the T-Deck cycles `RXPRE 20`, `RXPRE 30`, `RXPRE 8` in
+palindromic blocks of 15 packets (`--toggle tdeck --states 'RXPRE 20,RXPRE 30,RXPRE 8' --block 15`).
+
+**Decision**, `bench/analyze_rxpre.py`, T-Deck delivery of the Heltec's packets under each setting
+against `RXPRE 8`, bootstrap over switching blocks, 99 % interval:
+
+- *reproduces the modules' selectivity* if at least 30 points lower, interval below 0, with the E22
+  and the E220 still at 90 % or more under that setting; repeated under seed 20261019 before it is
+  claimed;
+- *no effect detected* if within 15 points; *partial* otherwise.
+
+**Invalid** if a switch is not confirmed, a board drops out, or under `RXPRE 8` the T-Deck takes the
+E22 or the E220 below 90 %.
+
 ## 2026-09-24: Heltec, E22 and E220 on one scope, declared before capturing
 
 The T-Deck/E220 comparison left two readings open: the post-jump lead belongs to the E22 (the

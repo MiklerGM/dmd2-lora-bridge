@@ -493,9 +493,9 @@ def main():
                          "--seed; used to switch a neighbour off")
     ap.add_argument("--block", type=int, default=10)
     ap.add_argument("--states", default="SLEEP,WAKE",
-                    help="the two console commands --toggle alternates, e.g. 'TUNE 0,TUNE 8200'; "
-                         "the board must answer '<command> ok'. The second is the resting "
-                         "state, restored at the end")
+                    help="console commands --toggle cycles through in palindromic blocks, e.g. "
+                         "'TUNE 0,TUNE 8200' or 'RXPRE 20,RXPRE 30,RXPRE 8'; the board must "
+                         "answer '<command> ok'. The last is the resting state, restored at the end")
     ap.add_argument("--probe", action="append", metavar="NAME",
                     help="a --rx receiver running BENCH_OBSERVE: after every packet and --gap, "
                          "ask it for its RSSI registers and record the reply")
@@ -548,12 +548,18 @@ def main():
     for name, tx, extra in arms:
         print(f"  {name}: {tx.name} {extra or '(no extra tokens)'}")
     rng = random.Random(args.seed) if args.seed is not None else None
-    # Drawn before the schedule so a seed fixes both. ABBA over blocks cancels a linear trend.
-    first = (rng or random.Random()).random() < 0.5
+    # Drawn before the schedule so a seed fixes both. A palindrome over blocks (ABBA, ABCCBA)
+    # cancels a linear trend.
     pair = [x.strip() for x in args.states.split(",")]
-    if len(pair) != 2:
-        ap.error("--states takes exactly two commands")
-    states = pair if first else pair[::-1]
+    if len(pair) < 2:
+        ap.error("--states takes at least two commands")
+    states = list(pair)
+    if len(pair) == 2:
+        if not (rng or random.Random()).random() < 0.5:
+            states.reverse()
+    else:
+        (rng or random.Random()).shuffle(states)
+    cycle = states + states[::-1]
     arm_by_name = {a[0]: a for a in arms}
     names = [a[0] for a in arms]
     if args.precede:
@@ -574,7 +580,7 @@ def main():
     for i, (name, tx, extra) in enumerate(schedule, 1):
         if toggle and (i - 1) % per_block == 0:
             b = (i - 1) // per_block
-            want = states[[0, 1, 1, 0][b % 4]]
+            want = cycle[b % len(cycle)]
             reply = toggle.command(want, f"{want} ", timeout=8.0)
             if reply is None or "FAILED" in reply:
                 print(f"\n  ! {toggle.name} did not confirm {want}; stopping")
@@ -600,8 +606,8 @@ def main():
     # received and 14 in the counters that were supposed to explain them.
     print(f"waiting {args.settle}s for the last receptions and for the counters after them")
     time.sleep(args.settle)
-    if toggle and state != pair[1]:
-        toggle.command(pair[1], f"{pair[1]} ", timeout=8.0)   # leave it in the resting state
+    if toggle and state != pair[-1]:
+        toggle.command(pair[-1], f"{pair[-1]} ", timeout=8.0)   # leave it in the resting state
     for r in rxs + [t for t in txs if isinstance(t, Node)]:
         r.close()
 
