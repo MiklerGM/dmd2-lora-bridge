@@ -32,6 +32,33 @@ fewer than 95 % of transmissions are acknowledged, or the reference's median lev
 E220 is above -40 dBm. The Heltec itself arrives near -40 dBm at the first E220 (-39 on 2026-09-23),
 as in every earlier forward run; noted, not a criterion.
 
+### Result, run 1: identical E220s lose our packets independently
+
+`2026-09-24-e220pair-run1.json`, seed 20261008. Placement, from the owner: the T-Deck and both
+E220s lie 10 cm apart with parallel antennas, in a small compartment inside a plasterboard wall
+of the far room. Valid: reference 296/300 at the first E220 and 300/300 at the second, reference
+median -48 dBm on the second E220's register 1, all 600 transmissions acknowledged.
+
+| Heltec packets, n = 300 | first E220 | second E220 | both |
+|---|---|---|---|
+| delivered | 38 | 41 | 5 (5.2 expected if independent) |
+
+P(B|A) = 0.13 against P(B) = 0.14, P(A|B) = 0.12 against P(A) = 0.13, block-stratified odds ratio
+0.99: **near independent**, so by the declaration not repeated. Two identical EBYTE receivers
+10 cm apart do not lose the same transmissions of ours - the same answer the E22 and E220 pair
+gave, now without the difference of part.
+
+Also measured:
+
+- **The stage finding holds on the third arrangement.** For all 258 lost Heltec packets with a
+  reading, the second E220's register 1 read exactly what it read after the previous packet;
+  delivered packets changed it 229/300 (reference) and 37/41 (Heltec), the rest being equal
+  values at 1 dB resolution. (The level split was only 5 dB this time, -48 against -53, so the
+  earlier midpoint rule was not used.) No lost packet showed AUX or UART activity; the one flagged
+  by the script was seq 1, whose window holds the module's boot pulses.
+- The T-Deck took 248/300 of the Heltec's packets, all 52 misses header errors, and was
+  independent of both E220s (25 both against 31.4; 34 against 33.9).
+
 ## 2026-09-24: recalibrating at the working frequency, declared before running
 
 The last cheap constant difference on the list. `configure()` runs Calibrate (0x7F) straight after
