@@ -37,19 +37,22 @@ def scope_reply(scope, mark, kind, seq=None, timeout=8, incomplete_ok=False):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--n', type=int, default=8, help='packets per transmitter')
-    ap.add_argument('--offset', type=int, nargs='+', choices=(-100, 0, 100), default=[0],
-                    help='scope RX offsets, kHz; interleaved when several are given')
+    ap.add_argument('--offset', type=int, nargs='+', default=[0],
+                    help='scope RX offsets, kHz, within +/-240; interleaved when several are given')
+    ap.add_argument('--heltec', default='/dev/ttyACM0')
+    ap.add_argument('--e22', default='/dev/ttyUSB1')
+    ap.add_argument('--e220', default='morlov@10.10.10.190:/dev/ttyUSB1')
+    ap.add_argument('--scope', default='morlov@10.10.10.190:/dev/ttyACM0')
     ap.add_argument('--seed', type=int, default=20260922)
     ap.add_argument('--out', type=Path, required=True)
     args = ap.parse_args()
     if args.n <= 0:
         ap.error('n must be positive')
+    if any(abs(o) > 240 for o in args.offset):
+        ap.error('offsets must be within +/-240 kHz')
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    specs = {
-        'heltec': '/dev/ttyACM1', 'e22': '/dev/ttyUSB1',
-        'e220': 'morlov@10.10.10.190:/dev/ttyUSB0',
-        'scope': 'morlov@10.10.10.190:/dev/ttyACM0',
-    }
+    # Ports move when boards are replugged; identify them by boot banner before a run.
+    specs = {'heltec': args.heltec, 'e22': args.e22, 'e220': args.e220, 'scope': args.scope}
     nodes, attempts = {}, []
     error = None
     try:

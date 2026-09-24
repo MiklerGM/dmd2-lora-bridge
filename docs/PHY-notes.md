@@ -5,6 +5,43 @@ gathered while waiting for hardware. Source: EBYTE *E220-900T22S User Manual* (o
 cdebyte.com). The E220-900T30x DMD uses shares this PHY register model; only the power
 table differs (30/27/24/21 dBm instead of 22/17/13/10).
 
+## 2026-09-24: start-of-packet timing at finer resolution, declared before capturing
+
+**Exploratory re-reading of the 2026-09-22 captures** (`2026-09-24-header-timing.py`, and
+`bench/analyze_scope_timing.py`, whose first versions had two bugs worth recording: qualification
+pooled across files whose packets share sequence numbers, so one run's chains overwrote the
+other's; and cluster chaining that let stray pulses glue neighbouring symbols together). With
+both fixed, aligned as in the 2026-09-22 review (fitted first preamble pulse, E22 moved back 12
+symbols at the nominal 4096 us): the whole header region sits at the same time for both
+transmitters within the instrument's spread (-12, +16 and -8 us at -100, 0 and +100 kHz, all
+intervals across 0); the SFD downchirp pair moves by -120 to -136 us, the E22's carrier offset.
+Three single landmarks differ at one offset each - E22 minus Heltec -56 us at symbol 17.98
+(-100 kHz), +34 at 14.44 (0 kHz), -59 at 18.59 (+100 kHz) - on 7-8 captures per transmitter.
+
+**New capture.** The T-Deck, antenna back on, temporarily runs the `tdeck_rssi_scope` probe with its
+offset range widened to +/-240 kHz, so a slice at +190 kHz can see the SFD's closing quarter
+downchirp (+250 to +125 kHz). Forward direction as now: the Heltec and the E22 (small antennas)
+transmit, the first E220 (`/dev/ttyUSB1`) is the delivery oracle. `bench/rssi_capture.py`, scope
+offsets -100, 0, +100 and +190 kHz interleaved, 24 captures per transmitter per offset plus the
+script's quiet windows, seed 20261012. The captures qualify by the 2026-09-22 criteria (6-pulse
+preamble chain at 4096 +/- 100 us in at least 75 % per transmitter and offset, none in quiet
+windows).
+
+**Decision**, `bench/analyze_scope_timing.py` (99.5 % bootstrap intervals, because each offset has
+about a dozen landmarks):
+
+- *the header is displaced* if the whole-header shift (per capture, mean deviation of header-region
+  pulses from the landmark centres; E22 minus Heltec) is at least 10 us with its interval excluding
+  0, at two or more offsets;
+- *SFD structure differs* if an SFD-window landmark departs from that offset's median SFD shift by
+  at least 15 us with its interval excluding it, at two or more offsets - all downchirps move by
+  the same carrier offset, so a quarter downchirp that moved differently would mean a different SFD;
+- each of the three local differences above is *replicated* if the landmark within 0.1 symbol of
+  the same position at the same offset shows the same sign, at least 20 us, interval excluding 0;
+- otherwise no displacement at the resolution reached, with the interval widths reported.
+
+The T-Deck's bench image (`v0.1.0-84-gf4dd5c6`) is restored after the capture.
+
 ## 2026-09-24: a weak and a strong E220 on the same packets, declared before running
 
 Two level checks, not used for conclusions. With small antennas on the Heltec and the E22 the gap

@@ -66,7 +66,9 @@ static bool parse_capture(const char *line, uint32_t &seq, int &offset) {
         p += 8;
         errno = 0;
         number = strtol(p, &end, 10);
-        if (errno || end == p || number < -100 || number > 100) return false;
+        /* 240 kHz reaches the SFD's closing quarter-downchirp, which sweeps +250 to +125 kHz;
+         * past the channel edge the slice would see nothing of this signal. */
+        if (errno || end == p || number < -240 || number > 240) return false;
         offset = (int)number;
         p = end;
     }
@@ -91,7 +93,8 @@ static bool command_self_check() {
            seq == 99999999 && offset == -100 &&
            parse_capture("CAP seq=0", seq, offset) && seq == 0 && offset == 0 &&
            !parse_capture("CAP seq=100000000", seq, offset) &&
-           !parse_capture("CAP seq=1 offset=101", seq, offset) &&
+           parse_capture("CAP seq=1 offset=190", seq, offset) && offset == 190 &&
+           !parse_capture("CAP seq=1 offset=241", seq, offset) &&
            !parse_capture("CAP seq=1 offset=2 extra", seq, offset) &&
            parse_dump("DUMP seq=42", seq) && seq == 42 &&
            !parse_dump("DUMP seq=42 offset=0", seq);
