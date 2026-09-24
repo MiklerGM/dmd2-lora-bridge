@@ -28,6 +28,23 @@ gap 0.8 s.
 reported with it); replicated only then. **Valid** as in the series, and only if no `cal=1`
 packet was rejected or reported a calibration error (bits 0-3 of GetDeviceErrors).
 
+### Result, run 1: no effect
+
+`2026-09-24-cal-run1.json`, seed 20261006. Valid: reference 198/200 and 200/200; all 200 `cal=1`
+packets calibrated with no rejection and GetDeviceErrors 0000, T-Deck image `v0.1.0-80-gf1a0eda`
+(`43c7d6ab1a0cf5b9a89c8d0d46d5893bd3f1e5af4dc6cecfa1cdc460f9b62a95`).
+
+| T-Deck arm | E22 | second E220 | D | Heltec |
+|---|---|---|---|---|
+| `ctl`, 5 ms wait | 28/200 | 32/200 | 0.150 | 168/200 |
+| `cal`, Calibrate at 868.125 MHz | 29/200 | 36/200 | 0.163 | 173/200 |
+
++1.3 points, approximate interval -3.8 to +6.3: **no effect**, not repeated. Recalibrating at the
+working frequency does not recover even a few points.
+
+Descriptive: the Heltec's counters show `hdr_err` 52 and, for the first time on this bench,
+`crc_err` 6, for 59 missed T-Deck packets.
+
 ## 2026-09-23: a series on constant differences, declared before any of it runs
 
 Two EBYTE receivers lose our packets independently, so what separates our transmitter from the
