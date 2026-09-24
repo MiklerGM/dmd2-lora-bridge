@@ -81,7 +81,8 @@ def boot_ci(a, b, rng, n=8000):
     return [float(np.percentile(d, tail)), float(np.percentile(d, 100 - tail))]
 
 
-def analyse(paths, sfd_window=(9.3, 12.0)):
+def analyse(paths, sfd_window=(9.3, 12.0), a="heltec", b="e22"):
+    """Landmark times of arm b minus arm a at every scope offset (defaults: E22 minus Heltec)."""
     # Qualified per file, as each run was qualified on its own quiet windows - and keyed by file
     # too, since every run numbers its packets from 100001.
     caps, qual = [], {}
@@ -92,36 +93,37 @@ def analyse(paths, sfd_window=(9.3, 12.0)):
     rng = np.random.default_rng(1)
     by_offset = {}
     for path, attempt, t, y in caps:
-        tx = attempt["tx"]
+        arm = attempt["tx"]
+        tx = attempt.get("transmitter", arm)        # the board decides the preamble length
         chain = qual.get((path, attempt["seq"]), {}).get("train_us")
-        if not tx or not chain:
+        if arm not in (a, b) or not chain:
             continue
         peak = float(np.percentile(y[(t >= chain[0] - 2000) & (t < chain[-1] + 2000)], 99))
         p = pulses(t, y, peak)
         ref = origin(chain, tx)
-        by_offset.setdefault(attempt["capture"]["offset_khz"], []).append((tx, p - ref))
+        by_offset.setdefault(attempt["capture"]["offset_khz"], []).append((arm, p - ref))
     out = []
     for offset, caps_o in sorted(by_offset.items()):
-        n = {tx: sum(c[0] == tx for c in caps_o) for tx in PREAMBLE}
+        n = {arm: sum(c[0] == arm for c in caps_o) for arm in (a, b)}
         rows = []
         for _, per in landmarks(caps_o, 6.5 * SYMBOL_US, 21.0 * SYMBOL_US):
-            h = np.array([v for i, v in per.items() if caps_o[i][0] == "heltec"])
-            e = np.array([v for i, v in per.items() if caps_o[i][0] == "e22"])
-            if len(h) < max(2, n["heltec"] / 2) or len(e) < max(2, n["e22"] / 2):
+            h = np.array([v for i, v in per.items() if caps_o[i][0] == a])
+            e = np.array([v for i, v in per.items() if caps_o[i][0] == b])
+            if len(h) < max(2, n[a] / 2) or len(e) < max(2, n[b] / 2):
                 continue
             sym = float(np.median(np.r_[h, e])) / SYMBOL_US
             rows.append({"symbol": round(sym, 2),
                          "region": "sfd" if sfd_window[0] <= sym <= sfd_window[1] else "upchirp",
                          "n": [len(h), len(e)],
-                         "e22_minus_heltec_us": round(float(np.median(e) - np.median(h)), 1),
+                         "b_minus_a_us": round(float(np.median(e) - np.median(h)), 1),
                          "ci_us": [round(v, 1) for v in boot_ci(h, e, rng)]})
-        sfd = [r["e22_minus_heltec_us"] for r in rows if r["region"] == "sfd"]
+        sfd = [r["b_minus_a_us"] for r in rows if r["region"] == "sfd"]
         out.append({"offset_khz": offset, "captures": n, "sfd_median_shift_us": float(np.median(sfd)) if sfd else None,
-                    "header_shift": header_shift(caps_o, rng), "landmarks": rows})
+                    "header_shift": header_shift(caps_o, rng, a, b), "landmarks": rows})
     return out
 
 
-def header_shift(caps, rng, lo=12.2 * SYMBOL_US, hi=21.0 * SYMBOL_US):
+def header_shift(caps, rng, a="heltec", b="e22", lo=12.2 * SYMBOL_US, hi=21.0 * SYMBOL_US):
     """Whole-header displacement: per capture, the mean deviation of its header-region pulses from
     the landmark centres; then E22 minus Heltec, with a bootstrap interval."""
     marks = [(c, per) for c, per in landmarks(caps, lo, hi)]
@@ -132,11 +134,11 @@ def header_shift(caps, rng, lo=12.2 * SYMBOL_US, hi=21.0 * SYMBOL_US):
         d = [per[i] - c for c, per in marks if i in per]
         if len(d) >= len(marks) / 2:
             dev[i] = float(np.mean(d))
-    h = np.array([v for i, v in dev.items() if caps[i][0] == "heltec"])
-    e = np.array([v for i, v in dev.items() if caps[i][0] == "e22"])
+    h = np.array([v for i, v in dev.items() if caps[i][0] == a])
+    e = np.array([v for i, v in dev.items() if caps[i][0] == b])
     if len(h) < 2 or len(e) < 2:
         return None
-    return {"e22_minus_heltec_us": round(float(np.median(e) - np.median(h)), 1),
+    return {"b_minus_a_us": round(float(np.median(e) - np.median(h)), 1),
             "ci_us": [round(v, 1) for v in boot_ci(h, e, rng)], "n": [len(h), len(e)]}
 
 
@@ -153,8 +155,8 @@ def replicated(result, targets=TARGETS, min_us=20.0):
         for r in (o["landmarks"] if o else []):
             if abs(r["symbol"] - sym) <= 0.1:
                 hit = r
-        ok = bool(hit and np.sign(hit["e22_minus_heltec_us"]) == sign
-                  and abs(hit["e22_minus_heltec_us"]) >= min_us
+        ok = bool(hit and np.sign(hit["b_minus_a_us"]) == sign
+                  and abs(hit["b_minus_a_us"]) >= min_us
                   and (hit["ci_us"][0] > 0 or hit["ci_us"][1] < 0))
         out.append({"offset_khz": off, "symbol": sym, "found": hit, "replicated": ok})
     return out
@@ -162,14 +164,14 @@ def replicated(result, targets=TARGETS, min_us=20.0):
 
 def verdict(result, shift_us=10.0, sfd_us=15.0):
     """The declared rules: a whole-header shift must appear at two or more scope offsets."""
-    up = sum(bool(o.get("header_shift")) and abs(o["header_shift"]["e22_minus_heltec_us"]) >= shift_us
+    up = sum(bool(o.get("header_shift")) and abs(o["header_shift"]["b_minus_a_us"]) >= shift_us
              and (o["header_shift"]["ci_us"][0] > 0 or o["header_shift"]["ci_us"][1] < 0) for o in result)
     sf = 0
     for o in result:
         m = o["sfd_median_shift_us"]
         if m is None:
             continue
-        sf += any(r["region"] == "sfd" and abs(r["e22_minus_heltec_us"] - m) >= sfd_us
+        sf += any(r["region"] == "sfd" and abs(r["b_minus_a_us"] - m) >= sfd_us
                   and not (r["ci_us"][0] <= m <= r["ci_us"][1]) for r in o["landmarks"])
     return {"header_shift_offsets_flagged": up, "sfd_offsets_flagged": sf,
             "verdict": ("the header is displaced" if up >= 2 else
@@ -183,9 +185,9 @@ def self_check():
     assert abs(origin(chain, "heltec") - 1000) < 1e-6
     assert abs(origin(chain, "e22") - (1000 + 12 * 4096)) < 1e-6
     rows = [{"offset_khz": 0, "sfd_median_shift_us": -130.0,
-             "header_shift": {"e22_minus_heltec_us": 12.0, "ci_us": [3.0, 20.0]}, "landmarks": [
-        {"symbol": 14.47, "region": "upchirp", "e22_minus_heltec_us": 30.0, "ci_us": [5.0, 50.0]},
-        {"symbol": 10.0, "region": "sfd", "e22_minus_heltec_us": -130.0, "ci_us": [-140.0, -120.0]}]}]
+             "header_shift": {"b_minus_a_us": 12.0, "ci_us": [3.0, 20.0]}, "landmarks": [
+        {"symbol": 14.47, "region": "upchirp", "b_minus_a_us": 30.0, "ci_us": [5.0, 50.0]},
+        {"symbol": 10.0, "region": "sfd", "b_minus_a_us": -130.0, "ci_us": [-140.0, -120.0]}]}]
     v = verdict(rows)
     assert v["header_shift_offsets_flagged"] == 1 and v["local"][1]["replicated"]
     assert not v["local"][0]["replicated"]
@@ -208,7 +210,7 @@ def main():
               f"header shift {o['header_shift']}")
         for r in o["landmarks"]:
             print(f"  {r['symbol']:6.2f} {r['region']:8s} n={r['n']} "
-                  f"diff {r['e22_minus_heltec_us']:+7.1f} ci {r['ci_us']}")
+                  f"diff {r['b_minus_a_us']:+7.1f} ci {r['ci_us']}")
     print(json.dumps(verdict(result)))
 
 

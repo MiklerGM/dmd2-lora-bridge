@@ -39,6 +39,9 @@ def main():
     ap.add_argument('--n', type=int, default=8, help='packets per transmitter')
     ap.add_argument('--offset', type=int, nargs='+', default=[0],
                     help='scope RX offsets, kHz, within +/-240; interleaved when several are given')
+    ap.add_argument('--arm', action='append', metavar='NAME=TX:TOKENS',
+                    help="a transmission variant, e.g. 'txm=heltec:txmod=1'; repeatable. "
+                         "Without any, the arms are plain 'heltec' and 'e22'.")
     ap.add_argument('--heltec', default='/dev/ttyACM0')
     ap.add_argument('--e22', default='/dev/ttyUSB1')
     ap.add_argument('--e220', default='morlov@10.10.10.190:/dev/ttyUSB1')
@@ -53,6 +56,13 @@ def main():
     args.out.parent.mkdir(parents=True, exist_ok=True)
     # Ports move when boards are replugged; identify them by boot banner before a run.
     specs = {'heltec': args.heltec, 'e22': args.e22, 'e220': args.e220, 'scope': args.scope}
+    arms = {}
+    for spec in args.arm or ['heltec=heltec:', 'e22=e22:']:
+        name, _, rest = spec.partition('=')
+        board, _, tokens = rest.partition(':')
+        if board not in ('heltec', 'e22'):
+            ap.error(f'--arm {name}: transmitter must be heltec or e22')
+        arms[name] = (board, tokens.strip())
     nodes, attempts = {}, []
     error = None
     try:
@@ -75,9 +85,9 @@ def main():
         for start in range(0, args.n, 2):
             rng.shuffle(offsets)
             for offset in offsets:
-                order = ['heltec', 'e22']
+                order = list(arms)
                 rng.shuffle(order)
-                schedule += [(tx, offset) for tx in build_schedule(order, min(2, args.n - start))]
+                schedule += [(arm, offset) for arm in build_schedule(order, min(2, args.n - start))]
         for index, (tx, offset) in enumerate(schedule):
             seq = 100001 + index
             with scope.lock:
@@ -91,7 +101,9 @@ def main():
             time.sleep(0.05)
             if tx:
                 attempt['tx_command_time'] = time.time()
-                if not nodes[tx].send(seq, ''):
+                board, tokens = arms[tx]
+                attempt['transmitter'], attempt['tokens'] = board, tokens
+                if not nodes[board].send(seq, tokens):
                     raise RuntimeError(f'{tx}: transmission {seq} not confirmed')
                 attempt['ack_host_time'] = time.time()
             for retry in range(3):
@@ -144,7 +156,7 @@ def main():
         opener = gzip.open if args.out.suffix == '.gz' else open
         with opener(args.out, 'wt') as out:
             json.dump(result, out)
-    for tx in ('heltec', 'e22'):
+    for tx in arms:
         arm = [a for a in attempts if a['tx'] == tx]
         print(tx, sum(a['e220_received'] for a in arm), '/', len(arm), flush=True)
 

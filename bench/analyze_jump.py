@@ -37,7 +37,7 @@ def curve(result):
                 continue
             r = min(near, key=lambda r: abs(r["symbol"] - pos))
             out[name].append({"offset_khz": f, "tau_us": round((f - f0) / 500 * 4096), "found": True,
-                              "diff_us": r["e22_minus_heltec_us"], "ci_us": r["ci_us"], "n": r["n"]})
+                              "diff_us": r["b_minus_a_us"], "ci_us": r["ci_us"], "n": r["n"]})
     for name in out:
         out[name].sort(key=lambda p: p["tau_us"])
     return out

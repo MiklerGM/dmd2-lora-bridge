@@ -5,6 +5,34 @@ gathered while waiting for hardware. Source: EBYTE *E220-900T22S User Manual* (o
 cdebyte.com). The E220-900T30x DMD uses shares this PHY register model; only the power
 table differs (30/27/24/21 dBm instead of 22/17/13/10).
 
+## 2026-09-24: does any transmit setting move our post-jump path toward the E22's? Declared before capturing
+
+The post-jump lag is a property of the signal itself, measurable in minutes and without waiting
+for a delivery rate to settle. So settings are screened by it first; only one that moves our path
+toward the E22's goes on to a delivery test.
+
+**Arms**, all on the Heltec except the reference: `ctl` (plain), `txm` (`txmod=1`: bit 2 of 0x0889,
+which Semtech's erratum 15.1 ties to modulation quality at 500 kHz), `ldo` (`ldo=1`), `cal`
+(`cal=1`: RC, PLL and ADC recalibrated at 868.125 MHz right before SetTx), and `e22`. Transmit
+power is left out: the `power=` token re-applies the whole configuration and leaves it in force
+for the following packets, which would contaminate the other arms.
+
+**Capture.** Scope slices -107 and -100 kHz (h6, 65 and 123 us after its jump) and +93, +100 and
++108 kHz (h7, 64, 121 and 187 us), where the jump capture found the E22 leading by 36-87 us.
+`bench/rssi_capture.py` with the arms above, 12 captures per arm per slice plus two quiet windows
+each, seed 20261014. Each arm and slice must qualify by the 2026-09-22 criteria.
+
+**Decision**, `bench/analyze_knobs.py`, landmark difference arm minus `ctl` at those five slices,
+99.5 % bootstrap intervals:
+
+- **valid** only if the positive control shows: `e22` minus `ctl` at least 30 us earlier, interval
+  clear of 0, at two or more slices;
+- an arm moves **toward the E22** if it is at least 30 us earlier than `ctl`, interval clear, at
+  two or more slices (and not later at two); **away** for the mirror image; otherwise **no change
+  detected**.
+
+An arm judged *toward the E22* is then tested for delivery under its own declaration.
+
 ## 2026-09-24: the first half-millisecond after a symbol's jump, declared before capturing
 
 A direct test of the hypothesis below. Two header symbols with known values are followed: h6
