@@ -5,6 +5,47 @@ gathered while waiting for hardware. Source: EBYTE *E220-900T22S User Manual* (o
 cdebyte.com). The E220-900T30x DMD uses shares this PHY register model; only the power
 table differs (30/27/24/21 dBm instead of 22/17/13/10).
 
+## 2026-09-24: a weak and a strong E220 on the same packets, declared before running
+
+Two level checks, not used for conclusions. With small antennas on the Heltec and the E22 the gap
+stayed (Heltec 6/20 and 1/20 at the two E220s, E22 20/20) and levels did not drop - the E22 at
+-43.5 dBm and the Heltec at -48 on the second E220 (`2026-09-24-small-antenna-check.json`). With
+the T-Deck's antenna removed it received both at -102 to -104 dBm with SNR 0.25 to 2 dB, all
+20/20 of the Heltec's packets and **no header error** (`2026-09-24-tdeck-noantenna-check.json`);
+at strong levels today it lost 10-17 % of them, all at the header. Twenty packets do not show
+that (p about 0.06), and those SNRs were printed by firmware that dropped the sign between -1 and
+0 dB (fixed in `f4dd5c6`). But it is the first condition that has looked like it changes a loss,
+and the obvious question follows: does an EBYTE receiver stop losing our packets at a weak level?
+The valid power sweep went down to -81 dBm only.
+
+**Bench.** As in the identical-E220 run, forward direction, the Heltec and the E22 with the small
+antennas. In the far room the **second E220 has its antenna removed** (weak) and the first keeps
+its antenna (strong), 10 cm apart; the T-Deck, also without antenna, runs `v0.1.0-84-gf4dd5c6`.
+
+**Instrument check first**, not used for conclusions: 10 packets per transmitter, to see the weak
+E220 still takes the reference and where levels sit.
+
+**Main run.** Heltec ordinary packets and E22 reference, 300 each, palindromic rounds shuffled by
+seed 20261010 (run 2: 20261011), gap 0.8 s; the weak E220 queried after every packet
+(descriptive levels).
+
+**Decision**, `bench/analyze_level.py`, on the Heltec's packets, paired by packet:
+
+- *level matters* if the weak E220's delivery minus the strong E220's is at least 20 points in
+  either direction and an exact McNemar test on the discordant packets gives p < 0.01; claimed
+  only if run 2 repeats it;
+- otherwise *no effect detected at this sensitivity*, with the difference reported.
+
+**Invalid** if the reference reaches either E220 below 90 % - the weak one must still hear a clean
+LoRa signal for its refusals to mean anything - or a board lacks a banner or drops out, or fewer
+than 95 % of transmissions are acknowledged.
+
+**Also declared, on the T-Deck:** (1) SNR of Heltec against E22 packets at equal RSSI, mean over
+1 dB RSSI bins holding at least 2 of each: *ours lower* if the E22 minus Heltec difference is at
+least 1 dB with its 95 % interval above 0; *ours not lower* if the interval's upper end is below
+1 dB; otherwise inconclusive. (2) The T-Deck's header-error count and its delivery of the Heltec,
+compared descriptively with today's strong-level runs (80-90 %, every miss a header error).
+
 ## 2026-09-24: two identical E220s on the same packets, declared before running
 
 The pair test that did run (E22 and E220, 5 cm apart) said *near independent*, but the two were
