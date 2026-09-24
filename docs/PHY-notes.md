@@ -35,6 +35,24 @@ against `RXPRE 8`, bootstrap over switching blocks, 99 % interval:
 **Invalid** if a switch is not confirmed, a board drops out, or under `RXPRE 8` the T-Deck takes the
 E22 or the E220 below 90 %.
 
+### Result: no effect - what our receiver expects does not change what it loses
+
+`2026-09-24-rxpre-run1.json`, seed 20261018. Valid: all 60 switches confirmed; under `RXPRE 8` the
+T-Deck took the E22 100/100 and the E220 98/100.
+
+| T-Deck expects | Heltec (sends 8) | E22 (sends 20) | E220 (sends 30) |
+|---|---|---|---|
+| 8 | 79/100 | 100/100 | 98/100 |
+| 20 | 84/100 | 100/100 | 98/100 |
+| 30 | 83/100 | 100/100 | 100/100 |
+
+`RXPRE 20` minus `RXPRE 8`: +5.0 points (99 % block-bootstrap interval -10.4 to +20.3); `RXPRE 30`:
++4.0 (-12.3 to +20.0). **No effect detected**, so not repeated. Told to expect a module's preamble,
+our receiver still loses a fifth of our packets and none of the modules' - by its counters every
+miss a header error (`hdr_err` 54 for 54, `crc_err` 1) - so the preamble our receiver expects is
+not the difference between it and an EBYTE receiver. Descriptive: the antenna-less E220 took the
+Heltec 10/300, the E22 300/300 and the E220 295/300.
+
 ## 2026-09-24: Heltec, E22 and E220 on one scope, declared before capturing
 
 The T-Deck/E220 comparison left two readings open: the post-jump lead belongs to the E22 (the
