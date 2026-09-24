@@ -1459,9 +1459,9 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
                 s_t_preamble ? (esp_timer_get_time() - s_t_preamble) / 1000 : -1;
             s_t_preamble = s_t_header = 0;
             /*
-             * The same measurements for a reception that died, so a failure can be set against
-             * the successes from the same transmitter: whether our losses sit at a different
-             * frequency estimate or SNR than our deliveries, or among them.
+             * The same measurements for a reception that died. Measured 2026-09-24: at a header
+             * error the packet status and RegFreqError still hold the previous delivered packet's
+             * values, so only the time since the preamble belongs to this reception.
              */
             {
                 uint8_t ps[3] = {0, 0, 0};

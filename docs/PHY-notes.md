@@ -42,6 +42,22 @@ carry a failure line (the instrument does not see them); if fewer than 20 failur
 frequency reading; or if more than half of the failures that follow another transmitter's reception
 repeat that reception's frequency reading exactly (the register was not refreshed).
 
+### Result: invalid - at a header error the modem reports the previous packet
+
+`2026-09-24-rxfail-run1.json`, analysis `2026-09-24-rxfail-run1-analysis.json`. The T-Deck
+delivered the Heltec 230/300 and the E22 300/300; all 70 Heltec misses carried a failure line, all
+header errors, none crc, none attributed to the E22. **Invalid by the last rule:** 51 of the 51
+failures that follow an E22 reception repeat its frequency reading exactly (+8430 to +8600 Hz where
+the Heltec reads -21 to -9). Checked after the rule fired: all 70 failures' RSSI and SNR equal the
+previous delivered packet's too. **On a header error the SX1262 refreshes neither RegFreqError nor
+the packet status**, so this instrument cannot see a lost packet, and nothing about frequency, SNR
+or level at our losses follows from it.
+
+What does stand, because the clock is ours: the header error fires 70-80 ms after the preamble IRQ
+(42 at 70, 15 at 79, 13 at 80), where the Heltec's delivered packets report header-valid (70: 120,
+80: 45, 79: 42, 69: 23 of 230). To the 10 ms poll - about two symbols - the receiver reaches the
+header at the right time and then fails to decode it; it is not a late or early lock.
+
 ## 2026-09-24: our receiver told to expect a module's preamble, declared before running
 
 SetPacketParams carries the preamble length for reception as well as for transmission. Every
