@@ -31,6 +31,33 @@ Heltec lags - and with the T-Deck matching an E220 earlier, the lag would be the
 what the T-Deck's losses need. Q1 no lead with Q2 difference means the E22 is the odd one. Either
 way the post-jump lead would not be what separates our transmitters from EBYTE's.
 
+### Result: the E22 is the odd one; the post-jump lead is closed as a cause
+
+`2026-09-24-rssi-three.json.gz` (228 captures, seed 20261017; raw file outside git), result
+`2026-09-24-rssi-three.result.json`. Valid: every arm qualifies at every slice, the E220's preamble
+is again unambiguously 30 symbols, and the positive control holds. The antenna-less E220 took the
+Heltec 3/72, the E22 71/72 and the E220 72/72 meanwhile.
+
+| near-jump slice | -107 | -100 | +93 | +100 | +108 kHz |
+|---|---|---|---|---|---|
+| E22 minus Heltec | **-71.6** | **-38.5** | -47.3 | **-58.5** | **-31.3** |
+| E220 minus Heltec | -6.8 | +5.6 | -46.5 | -14.5 | -14.4 |
+| E22 minus E220 | **-64.9** | **-44.1** | -0.8 | -44.1 | -16.8 |
+
+(bold: interval clear of 0.) **Q1 no lead detected; Q2 the EBYTE modules differ.** By the reading
+fixed beforehand, the E22 is the odd one: the E220 - received by everyone, always - follows the
+same post-jump path as our Heltec, and the E22 runs ahead of both. With the T-Deck matching an
+E220 earlier, the lead that four captures measured is real but belongs to the E22, not to the
+difference between our transmitters and EBYTE's. **It is closed as an explanation.**
+
+Exploratory, not declared: comparing the E220 and the Heltec over every landmark at all six slices
+(preamble end, both sync symbols, the SFD, the whole header), everything agrees within about
++/-20-30 us; whole-header shift -2 to +4 us, SFD shift near zero as the 164 Hz carrier offset
+predicts, one SFD landmark at -21 us just clear of zero. **At this instrument's resolution - some
+tens of microseconds in time, a few kilohertz in the frequency path - the always-received E220
+and our mostly-lost Heltec transmit the same start of packet.** Whatever separates them is finer
+than that, or in phase, or not in the shape of the chirps at all.
+
 ## 2026-09-24: our board without a front end against an E220, declared before capturing
 
 Everything about the post-jump lag so far compares one pair: the Heltec (with its KCT8103L) and
