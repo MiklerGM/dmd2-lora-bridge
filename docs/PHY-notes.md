@@ -5,6 +5,30 @@ gathered while waiting for hardware. Source: EBYTE *E220-900T22S User Manual* (o
 cdebyte.com). The E220-900T30x DMD uses shares this PHY register model; only the power
 table differs (30/27/24/21 dBm instead of 22/17/13/10).
 
+## 2026-09-24: the first half-millisecond after a symbol's jump, declared before capturing
+
+A direct test of the hypothesis below. Two header symbols with known values are followed: h6
+(v = 553, starts at -115.0 kHz) and h7 (v = 1373, +85.2 kHz). A scope slice f above a symbol's start
+sees its crossing (f - f0) / 500 kHz x 4096 us after the symbol's opening jump, so placing slices at
+a series of distances samples our path and the E22's through the first 0.65 ms after the jump.
+
+**Slices.** h6: -112, -107, -100, -92, -85, -78, -70, -55, -35 kHz; h7: +88, +93, +100, +108, +115,
++122, +130, +145, +165 kHz - about 25, 65, 120, 190, 245, 300, 370, 490 and 655 us after each jump.
+`bench/rssi_capture.py`, all 18 offsets interleaved, 12 captures per transmitter per offset plus
+two quiet windows each, seed 20261013, same bench and transmitters as the fine capture; the scope
+image as before. Each offset qualifies by the 2026-09-22 criteria.
+
+**Decision**, `bench/analyze_jump.py`, on each symbol's E22-minus-Heltec difference at its landmark
+(17.98 for h6, 18.58 for h7), relative to that symbol's own baseline (median from 500 us on - the
+fine capture showed a constant +20 us far from jumps, which is not the effect):
+
+- *transient confirmed* if **both** symbols show a dip at least 30 us below the baseline 80-200 us
+  after the jump and a peak at least 30 us above it 220-400 us after, each with its 99.5 % interval
+  clear of the baseline, and settle within 20 us of it from 500 us on;
+- *no near-jump difference* if neither symbol departs from its baseline by 30 us, interval clear,
+  anywhere up to 400 us - which refutes the hypothesis at this resolution;
+- *mixed* otherwise, reported with the whole curve.
+
 ## 2026-09-24: a model of the scope traces, and where ours departs from the E22's (exploratory)
 
 After aligning on the preamble crossing at a slice f, an upchirp of value v that starts at time s
