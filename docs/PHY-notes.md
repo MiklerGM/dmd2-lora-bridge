@@ -5,6 +5,40 @@ gathered while waiting for hardware. Source: EBYTE *E220-900T22S User Manual* (o
 cdebyte.com). The E220-900T30x DMD uses shares this PHY register model; only the power
 table differs (30/27/24/21 dBm instead of 22/17/13/10).
 
+## 2026-09-24: a model of the scope traces, and where ours departs from the E22's (exploratory)
+
+After aligning on the preamble crossing at a slice f, an upchirp of value v that starts at time s
+crosses f at s - v/2048 if f lies above its start frequency f0 = -250 + v x 500/2048 kHz, and one
+symbol later if below (the chirp wraps first). With the header block starting at 12.25 symbols
+(8 preamble, 2 sync, 2.25 SFD), **every landmark at all four offsets is explained by one header
+symbol with one value**, consistently across slices - h0 348, h1 1147, h2 1659-1679, h3 819-840,
+h4 1843-1864, h5 328, h6 553, h7 1352-1413 (the spread is the landmark resolution); the two sync
+symbols come out as v = 40, nibble 5 times 8. The instrument and the alignment do what they
+should.
+
+`2026-09-24-boundary-model.py` assigns each landmark and sets the E22-minus-Heltec difference
+against how soon after its symbol's opening frequency jump the crossing happens
+(`2026-09-24-rssi-fine.boundary.json`, and for the 2026-09-22 captures
+`2026-09-22-rssi-old.boundary.json`):
+
+| crossing after the jump | E22 minus Heltec, new capture | same, 2026-09-22 captures |
+|---|---|---|
+| 123-164 us | -47.5 (h6 at -100 kHz), -63.7 (h7 at +100) | -56.4 (h6), -59.3 (h7) |
+| 287 us | +63.5 (h2 at +190; interval 1.3 to 112.5) | - |
+| 370-410 us | +22.8, +22.2 | +22.2 |
+| 530 us and later | within about +/-20 us, no pattern | the same |
+
+The two reproduced local differences are the two crossings closest to a symbol's opening jump,
+and the difference changes sign within a few hundred microseconds and dies out by about half a
+millisecond - the shape of a synthesiser's damped step response, period of order 300 us, rather
+than of a time shift or a different symbol value. **Hypothesis, not a finding:** right after the
+frequency jumps that every BW500 symbol contains (at its boundary and at its wrap), our
+transmitted frequency path differs from the E22's for a few hundred microseconds - about a tenth
+of each 4.1 ms symbol. That would not show in SNR or level, and could upset a receiver's fine
+synchronisation or not depending on where its window falls, which is the per-reception randomness
+measured. Only three landmarks sit that close to a jump, one of them with a wide interval, and a
+difference cannot tell which transmitter rings.
+
 ## 2026-09-24: start-of-packet timing at finer resolution, declared before capturing
 
 **Exploratory re-reading of the 2026-09-22 captures** (`2026-09-24-header-timing.py`, and
