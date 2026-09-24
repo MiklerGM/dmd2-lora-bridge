@@ -5,6 +5,32 @@ gathered while waiting for hardware. Source: EBYTE *E220-900T22S User Manual* (o
 cdebyte.com). The E220-900T30x DMD uses shares this PHY register model; only the power
 table differs (30/27/24/21 dBm instead of 22/17/13/10).
 
+## 2026-09-24: Heltec, E22 and E220 on one scope, declared before capturing
+
+The T-Deck/E220 comparison left two readings open: the post-jump lead belongs to the E22 (the
+odd one), or to the Heltec (the lagging one). One instrument, three transmitters, settles which.
+The E220 with its antenna was moved beside the E22 (laptop `/dev/ttyUSB2`); the Heltec, the E22
+and it transmit from here. The T-Deck in the far room is the scope again (it received all three
+without saturating in a 4-packet check); the antenna-less second E220 there records delivery.
+
+**Capture.** `bench/rssi_capture.py`, arms `heltec`, `e22`, `e220`, slices -107, -100, 0, +93, +100,
++108 kHz, 12 captures per arm per slice plus quiet windows, seed 20261017.
+
+**Decision**, `bench/analyze_three.py`, counting only slices where both arms of a pair qualify
+(chains in at least 75 % of their captures), 99.5 % intervals, the E220's preamble fitted as before:
+
+- **valid** only if the positive control holds - E22 at least 30 us ahead of the Heltec, interval
+  clear, at two or more slices - and the E220's preamble length is unambiguous;
+- **Q1**, E220 minus Heltec: *the E220 leads like the E22* if at least 30 us earlier, interval clear,
+  at two or more slices; *no lead detected* if no slice differs by 30 us either way; *mixed* otherwise;
+- **Q2**, E22 minus E220: *the EBYTE modules differ* if at least 30 us apart, interval clear, at two or
+  more slices; *no difference detected* otherwise.
+
+Reading, fixed now: Q1 lead with Q2 no difference means the two EBYTE modules share a path the
+Heltec lags - and with the T-Deck matching an E220 earlier, the lag would be the Heltec's own, not
+what the T-Deck's losses need. Q1 no lead with Q2 difference means the E22 is the odd one. Either
+way the post-jump lead would not be what separates our transmitters from EBYTE's.
+
 ## 2026-09-24: our board without a front end against an E220, declared before capturing
 
 Everything about the post-jump lag so far compares one pair: the Heltec (with its KCT8103L) and
