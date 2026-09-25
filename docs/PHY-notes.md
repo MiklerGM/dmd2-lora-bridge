@@ -52,6 +52,46 @@ last before it, within 2 s.
   in its block each damaged frame and each E22 miss falls (right after a switch or not); the
   explicit blocks' delivery and header errors; the EBYTE receivers.
 
+### Result: valid - the same header, and every loss is one and the same wrong decode
+
+`2026-09-25-impl-run1.json`, analysis `2026-09-25-impl-run1-analysis.json`, 08:54-09:11, seed
+20261022. Valid: all switches confirmed, 800 of 800 transmissions acknowledged, and in implicit
+blocks the E22 gave a frame for 200 of 200 packets, all clean.
+
+**(1) Same coding rate and CRC flag.** In explicit blocks all 168 of our receptions and all 206 of
+the E22's read coding-rate field 1 (4/5) and CRC flag 1. Implicit frames of both transmitters start
+with the same header nibbles (`1D ED CD 35`). The E22's PHY header is ours, field for field.
+
+**(2) Whole-frame misdecode**, by the declared rule. In implicit blocks the Heltec's 200 packets
+gave 200 frames - none went undetected - of which 157 were clean and **43 (21.5 %) damaged, all of
+them across the whole frame** (more than half of the 43 reference positions wrong). In the explicit
+blocks of the same run the Heltec was delivered 168/200 with 32 header errors (16 %), the E22
+200/200. Descriptive:
+
+| Heltec frames, implicit blocks | clean, 157 | damaged, 43 |
+|---|---|---|
+| packet RSSI, median | -57 dBm | **-82 dBm** |
+| SNR, median | 7.25 dB | **4.0 dB** |
+| frequency error, median | -13 Hz | **-1 Hz** |
+
+- **The damaged frames are one frame, not noise:** 37 of their 51 bytes agree in at least 90 % of
+  them - `E8 76 9D 86 D9 96 B2 7D 60 66 ...` against the clean `1D ED CD 35 1E 54 CD 9A 25 2B ...` -
+  the rest following the sequence number as in clean frames. The instrument check's two damaged
+  frames were the same. Whatever goes wrong goes wrong the same way every time.
+- They end when clean frames end: the T-Deck logged them at the same time after the transmission
+  started, to a few ms of its 10 ms polling. The receiver is on the packet, not late onto it.
+- They are spread over the blocks (0-5 of 7-13 at every position from the first packet after a
+  switch to the last), so switching is not the cause.
+- The EBYTE receivers took the Heltec 47/400 (first E220) and 132/400 (second, no antenna), the
+  E22 391/400 and 400/400. The T-Deck also logged 3 frames about 330 ms after E22 packets, not
+  from either arm; not used.
+
+Reading, not a finding: a receiver that decodes a transmission into the same wrong frame every
+time it fails has taken the same wrong turn in synchronisation - it found the packet, then aligned
+to it wrongly in one particular way. An SNR estimate 3 dB lower is what half a bin of misalignment
+costs a dechirped symbol. Which wrong alignment turns our frame into this one can be worked out
+offline from a model of the LoRa encoding, without new packets.
+
 ## 2026-09-25: does our receiver's loss follow the fractional frequency offset? Declared before running
 
 **Question.** The T-Deck loses 15-23 % of the Heltec's packets, all at the header, and none of the
