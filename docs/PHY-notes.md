@@ -92,6 +92,32 @@ to it wrongly in one particular way. An SNR estimate 3 dB lower is what half a b
 costs a dechirped symbol. Which wrong alignment turns our frame into this one can be worked out
 offline from a model of the LoRa encoding, without new packets.
 
+### Exploratory, from the same capture: the receiver starts one symbol late
+
+`bench/lora_model.py` models the PHY encoding after gr-lora_sdr: header nibbles and checksum,
+whitening, CRC, Hamming coding, diagonal interleaving, reduced rate (every symbol at 4n+1 with
+LDRO), Gray mapping. Checked against the capture: for all 357 clean implicit frames it predicts 50
+of the 51 bytes exactly (the 51st is padding), and from any clean frame the payload symbols can be
+read back - 1020 of 1020 equal to the model's.
+
+Then the damaged frames, symbol errors tried one family at a time:
+
+- every symbol shifted by -3 to +3 bins, the header block alone or the payload alone shifted:
+  0-1 of 50 bytes explained;
+- the receiver one symbol early: 0-1;
+- **the receiver one symbol late** - its first data symbol is our second: 28-33 of 50, and the
+  header block, all five of its bytes, **in 43 of 43 frames**. Starting the payload anywhere else
+  after that header gives 0.
+
+Read back from the damaged frames, 66 % of the payload symbols are exactly our symbol one position
+on. The rest differ in the same places and mostly by the same amounts in every frame (for
+instance our 50 read as 205, 502 as 9, 263 as 266) - deterministic, a function of the neighbouring
+symbols, not noise. What each lost reception shows, then, is **the receiver placing the start of
+our data one whole symbol late** - 4.096 ms, a decision about where sync and SFD end, not a
+fraction of a bin - with a residual misalignment on top that spoils some symbols the same way
+every time. The receiver finds the packet every time; in about one reception in five it counts
+one symbol too many before the data.
+
 ## 2026-09-25: does our receiver's loss follow the fractional frequency offset? Declared before running
 
 **Question.** The T-Deck loses 15-23 % of the Heltec's packets, all at the header, and none of the
