@@ -5,6 +5,36 @@ gathered while waiting for hardware. Source: EBYTE *E220-900T22S User Manual* (o
 cdebyte.com). The E220-900T30x DMD uses shares this PHY register model; only the power
 table differs (30/27/24/21 dBm instead of 22/17/13/10).
 
+## 2026-09-25: the end of the SFD on the scope, both carriers at +8 kHz. Declared before capturing
+
+**Question.** Our receiver starts our data one symbol late; the bits there are the E22's; so if our
+signal differs, it differs in shape at the end of the SFD. The fine capture of 2026-09-24 hinted at
+that very place: on the +190 kHz slice, which the closing quarter downchirp crosses, the E22's SFD
+shift was -86 us against -120 to -137 on the other slices. That capture compared transmitters 8 kHz
+apart, whose carrier offset moves up- and downchirp crossings by 68 us in opposite directions. Here
+the Heltec transmits with `foff=8`, the E22's own offset (+8036 to +8166 Hz today), so that
+artefact is the same for both and cancels. Does our closing quarter downchirp, or the start of our
+first data symbol, then sit at a different time from the E22's?
+
+**Bench.** The T-Deck in the far room runs the scope image (`tdeck-scope-a68e638.bin`, the +/-240
+kHz range); the Heltec (bench image, `foff=8` on every packet) and the E22 transmit from the laptop;
+the first E220 is the delivery oracle.
+
+**Capture.** `bench/rssi_capture.py`, arms `heltec` (`foff=8`) and `e22`, slices +140, +170, +200,
++230 kHz (the quarter downchirp, +250 to +125 kHz), -150 and -120 kHz (the first data symbol, value
+348, just after its start at -165 kHz) and 0 kHz, 24 captures per arm per slice plus the script's
+quiet windows, seed 20261029. Captures qualify by the 2026-09-22 criteria.
+
+**Decision**, `bench/analyze_sfd_end.py` on `analyze_scope_timing.py`'s landmarks, E22 minus Heltec,
+99.5 % bootstrap intervals, the landmark within 0.05 symbol of each predicted crossing:
+
+- *the closing quarter differs* if it is at least 20 us, interval clear of 0, the same sign, at two
+  or more of the four quarter slices;
+- *the data start differs* if so at both data slices;
+- otherwise *no difference at this resolution*.
+- **Valid** only if the other landmarks - preamble, sync, full downchirps, header - agree: their
+  median absolute difference at most 15 us (otherwise the offsets did not cancel).
+
 ## 2026-09-25: our transmitter away from the laptop - USB against a power bank. Declared before running
 
 **Question.** Two of the outside reviews point at the host: our boards are an ESP32-S3 on USB with
