@@ -39,6 +39,26 @@ else transmits during the segments.
 **Invalid** if the E22 reaches any receiver below 90 % before or after, fewer than 100 beacons are
 sent in either condition, or foreign packets appear at the T-Deck during the segments.
 
+### Result: no change detected - the host is not it
+
+Capture `2026-09-25-bank-capture.tsv` (11:22-11:54), analysis `2026-09-25-bank-analysis.json`,
+references `2026-09-25-bank-ref-before.json` and `-after.json`. A first attempt at 11:20 was
+stopped and discarded: the board went onto the power bank a few minutes early. Valid: the E22 30/30
+at the T-Deck, 29-30/30 at the E220s, before and after; no foreign packet at the T-Deck; 511 and
+440 beacons.
+
+| Heltec, beacon image | beacons | T-Deck | its header errors | first E220 | second E220 |
+|---|---|---|---|---|---|
+| laptop USB, 11:22-11:30 and 11:45-11:54 | 511 | 438 (85.7 %) | 74 | 106 (20.7 %) | 94 (18.4 %) |
+| power bank, 11:30-11:45 | 440 | 364 (82.7 %) | 76 | 89 (20.2 %) | 107 (24.3 %) |
+
+**No change detected** (one-sided Fisher p = 0.91 for fewer misses on the power bank). On a power
+bank, with no USB data, no host, no Bluetooth, nothing sent to it and the CPU asleep through each
+transmission, the Heltec is slipped on as often by our receiver and refused as often by both E220s.
+The beacon image on USB is no better than the interleave-driven bench image either (14 % against
+14-27 % today), so neither the host connection nor the firmware's activity during transmission is
+what separates us from EBYTE's transmitters.
+
 ## 2026-09-25: does our receiver slip on our packets at 125 kHz? Declared before running
 
 **Question.** Semtech's erratum 15.1 describes "sensitivity degradation ... on any LoRa device, when
