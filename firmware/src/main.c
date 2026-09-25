@@ -742,6 +742,13 @@ static void bench_task(void *arg) {
             ESP_LOGI(TAG, "TUNE %ld %s", hz, ok ? "ok" : "FAILED");
             continue;
         }
+        if (strncmp(line, "IMPL ", 5) == 0) {
+            char *end;
+            long n = strtol(line + 5, &end, 10);
+            const bool ok = end != line + 5 && *end == '\0' && radio_bench_rx_implicit((int)n);
+            ESP_LOGI(TAG, "IMPL %ld %s", n, ok ? "ok" : "FAILED");
+            continue;
+        }
         if (strncmp(line, "RXPRE ", 6) == 0) {
             char *end;
             long n = strtol(line + 6, &end, 10);

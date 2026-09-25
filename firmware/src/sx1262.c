@@ -181,6 +181,9 @@ static int s_once_preamble = -1, s_once_sync = -1;
 /* Bench: the configured preamble length while receiving (and for any later packet without its own
  * preamble= token), set by RXPRE. -1: PHY_PREAMBLE. */
 static int s_rx_preamble = -1;
+/* Bench: receive with an implicit header of this many bytes and no CRC, set by IMPL; 0: the normal
+ * explicit header. */
+static int s_rx_implicit;
 #endif
 #ifdef RX_STAGES
 static unsigned s_stage_preamble, s_stage_header, s_stage_rx_done, s_stage_hdr_err, s_stage_crc_err;
@@ -769,7 +772,24 @@ static bool enter_rx(void) {
      * is refused. Two bench radios sending the same size never notice; a group whose packets
      * grow with the number of riders would, and only after a transmission.
      */
+#ifdef BENCH_CMD
+    if (s_rx_implicit > 0) {
+        /*
+         * Bench: an implicit-header receiver has no header to reject, so it hands over every
+         * packet it synchronises on - including the ones the explicit receiver drops with a
+         * header error - with the transmitter's own header nibbles as the first bytes. With CRC
+         * off the payload comes back as received, errors and all.
+         */
+        const uint16_t pre = s_rx_preamble >= 0 ? (uint16_t)s_rx_preamble : PHY_PREAMBLE;
+        uint8_t a[6] = {(uint8_t)(pre >> 8), (uint8_t)pre, 0x01 /* implicit */,
+                        (uint8_t)s_rx_implicit, 0x00 /* CRC off */, 0x00 /* IQ normal */};
+        if (!cmd(CMD_SET_PACKET_PARAMS, a, 6)) return false;
+    } else if (!set_packet_params(255)) {
+        return false;
+    }
+#else
     if (!set_packet_params(255)) return false;
+#endif
 #ifdef RX_SYMB_TIMEOUT
     /*
      * How many preamble symbols this receiver insists on before it will commit.
@@ -1515,6 +1535,16 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
                 }
             }
             /*
+             * The header as this receiver decoded it: 0x0749 bits 6:4 hold the coding rate and
+             * 0x076B bit 4 the CRC flag (RadioLib's getLoRaRxHeaderInfo). Our frames match a
+             * module's byte for byte, but those two fields of its PHY header were never read.
+             */
+            {
+                uint8_t cr = 0, crc = 0;
+                if (reg_read(0x0749, &cr, 1) && reg_read(0x076B, &crc, 1))
+                    ESP_LOGI(TAG, "rx header regs 0749=%02X 076B=%02X", cr, crc);
+            }
+            /*
              * The header exactly as it came off the air. This backend builds its own EBYTE frame
              * because there is no module MCU to build one, and the only way to know whether it
              * matches what a module really sends is to hold the two side by side. The check
@@ -1663,6 +1693,14 @@ bool radio_bench_rx_preamble(int symbols) {
     if (symbols < 6 || symbols > 65535 || !bus_lock()) return false;
     s_rx_preamble = symbols;
     const bool ok = set_standby() && set_packet_params(255) && enter_rx();
+    bus_unlock();
+    return ok;
+}
+
+bool radio_bench_rx_implicit(int len) {
+    if (len < 0 || len > 255 || !bus_lock()) return false;
+    s_rx_implicit = len;
+    const bool ok = set_standby() && enter_rx();
     bus_unlock();
     return ok;
 }

@@ -27,4 +27,8 @@ bool radio_bench_tune(int32_t hz);
  * without a preamble= token), until changed. */
 bool radio_bench_rx_preamble(int symbols);
 
+/* SX1262 only: receive with an implicit header of len bytes and CRC off, until told otherwise;
+ * 0 restores the explicit header. */
+bool radio_bench_rx_implicit(int len);
+
 #endif

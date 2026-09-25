@@ -5,6 +5,53 @@ gathered while waiting for hardware. Source: EBYTE *E220-900T22S User Manual* (o
 cdebyte.com). The E220-900T30x DMD uses shares this PHY register model; only the power
 table differs (30/27/24/21 dBm instead of 22/17/13/10).
 
+## 2026-09-25: what our receiver decodes from the packets it loses, read without a header check. Declared before running
+
+**Questions.** (1) Do the E22's packets carry the same PHY header fields as ours - coding rate and
+CRC flag, which our byte-for-byte comparisons of the frame never covered? (2) An implicit-header
+receiver with CRC off has no header to reject: it hands over every packet it synchronises on, the
+transmitter's header nibbles as its first bytes. What does the T-Deck make of the Heltec's packets
+that way - does the loss disappear, are the lost ones never detected, or are they damaged, and where?
+
+**Bench.** As in the scan above, unchanged. The T-Deck runs a new bench image
+(`3c4a4127fb4e3485a01789ac2c18da4a1cb74cf66005ae8121ed4f7ee79d34b8`): `IMPL <n>` switches its
+receiver to an implicit header of n bytes with CRC off (`IMPL 0` back to explicit), and every
+reception logs registers 0x0749 (bits 6:4, the coding rate of the received header) and 0x076B
+(bit 4, its CRC flag). An instrument check (`IMPL 51`/`IMPL 0`, 8 packets per arm, not used for
+conclusions) showed both modes working, both transmitters' frames starting `1D ED CD 35` in
+implicit mode, and two Heltec frames right after the first switch decoded as something else
+entirely, with packet RSSI -78/-80 dBm against the usual -53 and a frequency error of ±1 Hz against
+the usual -13.
+
+**Run.** `bench/interleave.py`, arms `heltec` and `e22`, 400 packets each, palindromic rounds
+shuffled by seed 20261022, gap 0.8 s. The T-Deck alternates `IMPL 51` and `IMPL 0` in ABBA blocks
+of 20 packets, the first state drawn from the seed, and rests at `IMPL 0`. 51 bytes is the 46-byte
+frame, its 2 CRC bytes and the 2.5 bytes of header nibbles, rounded up: the same 63 symbols.
+
+**Decision**, `bench/analyze_impl.py`. A frame is given to the packet whose transmission started
+last before it, within 2 s.
+
+- **Valid** if every switch is confirmed, at least 95 % of transmissions are acknowledged, and in
+  implicit blocks the E22 produces a frame for at least 90 % of its packets with at least 95 % of
+  them clean. The reference is the E22's most common frame, at the positions where at least 90 %
+  of the E22's frames agree; a frame is clean if it matches at all of them.
+- **(1)**, explicit blocks: if our own frames read a coding-rate field of 1 (4/5) and a CRC flag
+  of 1 in at least 95 % of receptions, the E22's are *the same* when theirs do too, *different*
+  otherwise; if ours do not, the registers are not understood and only the raw values are
+  reported.
+- **(2)**, implicit blocks, the Heltec's packets without a clean frame:
+  - *the loss disappears without the header check* if they are at most 3 % of its packets
+    (repeated under seed 20261023 before it is claimed);
+  - *not detected at all* if at least half of them have no frame;
+  - *damage confined to the first block* if at least 80 % of the damaged frames differ only in
+    bytes 0-4 (the first eight symbols);
+  - *whole-frame misdecode* if at least half of the damaged frames differ at more than half of the
+    reference positions;
+  - *mixed* otherwise.
+- Descriptive: packet RSSI, SNR and frequency error of damaged against clean Heltec frames; where
+  in its block each damaged frame and each E22 miss falls (right after a switch or not); the
+  explicit blocks' delivery and header errors; the EBYTE receivers.
+
 ## 2026-09-25: does our receiver's loss follow the fractional frequency offset? Declared before running
 
 **Question.** The T-Deck loses 15-23 % of the Heltec's packets, all at the header, and none of the
