@@ -36,6 +36,18 @@ Heltec answers after TxDone; a packet is about 2.3 s on the air).
 **Invalid** if the T-Deck takes under half of the packets without header errors to account for the
 rest (the two ends not on the same PHY), or a board drops out.
 
+### Result: the slip is there at 125 kHz too
+
+`2026-09-25-bw125-run1.json`, 10:45-10:53. Valid: the T-Deck took 96 of the Heltec's 120 packets and
+**all 24 misses were header errors** (`hdr_err 24 crc_err 0`), none unattributed. 20.0 % against
+16.7 % pooled at 500 kHz today (135/810; one-sided Fisher p = 0.85 for fewer). **The slip is there
+at 125 kHz too** - it is not the 500 kHz modulation of erratum 15.1. Nor does it scale with the
+chip (8 µs here, 2 µs at 500 kHz) or with the bin (30.5 Hz here, 244 Hz there): a defect fixed in
+microseconds would have shrunk and one fixed in hertz grown, and neither happened. Whatever makes
+our receiver count one symbol too many before our data is a property of the frame at symbol scale,
+the same at both rates. (RegFreqError is scaled for 500 kHz in this driver, so its -167 Hz median
+here is not a frequency.)
+
 ## 2026-09-25: sync low nibbles and preamble length against the one-symbol slip. Declared before running
 
 **Question.** Our receiver loses our packets by starting the data one symbol late, at the end of
