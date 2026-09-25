@@ -30,6 +30,13 @@ at this density, so 4-8 per module would be expected.
 each module completes at least 20 probes (the probe still runs under traffic). **Not fixed** if
 any leak appears.
 
+### Result: fixed
+
+19:05-19:20, `2026-09-25-probe-leak.tsv`. Each bridge transmitted 373 packets and completed 30
+probes, all 30 "ok"; neither logged "radio stopped answering" or "no answer". **No 3-byte frame
+reached the Heltec**, which received all 746 packets; the bridges took each other's 373/373
+(E220) and 371/373 (E22). At this density the old image would have leaked 4-8 times per module.
+
 ## 2026-09-25: the end of the SFD on the scope, both carriers at +8 kHz. Declared before capturing
 
 **Question.** Our receiver starts our data one symbol late; the bits there are the E22's; so if our
