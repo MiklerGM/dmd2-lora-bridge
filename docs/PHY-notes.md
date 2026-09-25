@@ -35,6 +35,34 @@ one-sided Fisher exact test:
 **Invalid** if the E22 reaches the T-Deck below 90 %, a board drops out or fewer than 95 % of
 transmissions are acknowledged.
 
+### Result: no change detected - neither setting touches the slip
+
+`2026-09-25-slip-run1.json`, analysis `2026-09-25-slip-run1-analysis.json`, 09:25-09:43. Valid:
+the E22 70/70 at the T-Deck, 769 of 770 transmissions acknowledged. (The second E220 printed no
+boot banner at the start; it took the E22 70/70, so it was listening.)
+
+| Heltec arm | T-Deck | its misses: header errors | first E220 | second E220 |
+|---|---|---|---|---|
+| `sync=5050` | 59/70 | 11 | 14 | 13 |
+| `sync=5151` | 46/70 | 24 | 15 | 16 |
+| `sync=5252` | 58/69 | 11 | 12 | 16 |
+| `sync=5353` | 52/70 | 18 | 14 | 16 |
+| `sync=5454` (control) | 58/70 | 12 | 11 | 16 |
+| `sync=5555` | 60/70 | 10 | 10 | 8 |
+| `sync=5656` | 57/70 | 13 | 6 | 19 |
+| `sync=5757` | 52/70 | 18 | 10 | 19 |
+| `preamble=20` | 51/70 | 19 | 11 | 13 |
+| `preamble=30` | 57/70 | 13 | 18 | 16 |
+| E22 | 70/70 | 0 | 66 | 70 |
+
+**No change detected** for any arm: none misses fewer than the control by the declared margin
+(one-sided Fisher p 0.41 to 0.99), and every miss of every arm is a header error - the slip. Our
+receiver, set to 0x5454, accepts all eight low nibbles 0-7 alike, and none of them, nor 20 or 30
+preamble symbols, changes how often it slips on our packets or how often the E220s refuse them.
+The header block that follows the SFD is the same for our frames and the E22's (same length, flags
+and first two bytes), and so are the sync symbols; what separates the two transmitters at that
+point is not in the bits.
+
 ## 2026-09-25: what our receiver decodes from the packets it loses, read without a header check. Declared before running
 
 **Questions.** (1) Do the E22's packets carry the same PHY header fields as ours - coding rate and
