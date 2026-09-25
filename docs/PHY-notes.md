@@ -5,6 +5,31 @@ gathered while waiting for hardware. Source: EBYTE *E220-900T22S User Manual* (o
 cdebyte.com). The E220-900T30x DMD uses shares this PHY register model; only the power
 table differs (30/27/24/21 dBm instead of 22/17/13/10).
 
+## 2026-09-25: the health probe's register read on the air - a fix, checked before it ships
+
+The EBYTE bridges' periodic probe (`e220_verify`, every 30 s) enters configuration mode and sends
+the register read `C1 00 08` (`C1 00 09` on an E22). Every run since the receivers started logging
+dropped frames shows it on the air as a 3-byte packet instead - from the E22 7 times in
+`frac-run1` (22 min), 9 in `impl-run1` (17 min), from the E22 7 and the E220 4 in `rxpre-run1` - and
+each one starts 30-100 ms after the same module's own transmission ended: the mode change is taken
+late right after a transmission, although AUX already reads idle. On the bridge it also reads as
+"radio stopped answering", which closes transmit until the retry.
+
+**Fix** (`e220.c`, `main.c`): configuration mode is entered only once the module has not
+transmitted for 500 ms, waiting outside the UART lock so reception carries on; a probe that finds
+the module busy is retried on the next pass instead of 30 s later. Applies to every entry into
+configuration mode (probe, CFG, firmware read, bench sleep).
+
+**Check.** Both bridges on the fixed bench build (`BENCH_CMD`, which also logs every completed
+probe), alternating TX commands every 1.2 s for 15 minutes - each module transmitting every 2.4 s,
+denser than any run above - with the Heltec listening; every line from all three recorded
+(`bench/results/2026-09-25-probe-leak.tsv`). The old image leaked 0.3-0.5 times a minute per module
+at this density, so 4-8 per module would be expected.
+
+**Fixed** if no 3-byte `C1 00 08/09` frame reaches the Heltec, no probe reports "no answer", and
+each module completes at least 20 probes (the probe still runs under traffic). **Not fixed** if
+any leak appears.
+
 ## 2026-09-25: the end of the SFD on the scope, both carriers at +8 kHz. Declared before capturing
 
 **Question.** Our receiver starts our data one symbol late; the bits there are the E22's; so if our

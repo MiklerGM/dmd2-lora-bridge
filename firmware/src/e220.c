@@ -63,6 +63,32 @@ static bool uart_lock(void) {
 
 static void uart_unlock(void) { xSemaphoreGive(s_uart_lock); }
 
+/*
+ * How long after its own transmission a module is left alone before configuration mode is
+ * entered. Straight after a transmission a module can read idle on AUX and still take the M0/M1
+ * change late, and what is written next then goes out on the air: bench receivers logged the
+ * register read (C1 00 08, or C1 00 09 from an E22) as a 3-byte packet in every run, sent some
+ * 30-100 ms after the same module's own packet ended - about one health probe in six under
+ * traffic, and each one also read as "radio stopped answering". 500 ms is five times that window
+ * and still fits between packets at the DMD's 1.5 s pacing.
+ */
+#define CONFIG_QUIET_MS 500
+static TickType_t s_tx_done_at;   /* when the module's last transmission ended; 0: none yet */
+
+/* The UART lock, taken only once the module has been quiet for CONFIG_QUIET_MS. The wait happens
+ * outside the lock, so reception carries on meanwhile; gives up after wait_ms. */
+static bool lock_quiet(uint32_t wait_ms) {
+    const TickType_t quiet = pdMS_TO_TICKS(CONFIG_QUIET_MS), started = xTaskGetTickCount();
+    for (;;) {
+        if (!uart_lock()) return false;
+        const TickType_t since = xTaskGetTickCount() - s_tx_done_at;
+        if (s_tx_done_at == 0 || since >= quiet) return true;
+        uart_unlock();
+        if (xTaskGetTickCount() - started + (quiet - since) > pdMS_TO_TICKS(wait_ms)) return false;
+        vTaskDelay(quiet - since);
+    }
+}
+
 static bool wait_aux(uint32_t timeout_ms);
 #ifdef BENCH_OBSERVE
 static void log_hex(const char *what, const uint8_t *b, size_t n);
@@ -239,7 +265,7 @@ e220_state_t e220_apply(const e220_config_t *cfg) {
     uint8_t frame[E220_FRAME_MAX];
     e220_build_frame(cfg, frame);
 
-    if (!uart_lock()) {
+    if (!lock_quiet(CONFIG_QUIET_MS + 100)) {
         ESP_LOGW(TAG, "apply: uart busy");
         return E220_BUSY;
     }
@@ -299,7 +325,7 @@ e220_state_t e220_verify(const e220_config_t *cfg) {
     uint8_t req[3];
     e220_build_read_frame(req);
 
-    if (!uart_lock()) return E220_BUSY;
+    if (!lock_quiet(0)) return E220_BUSY;
     if (!e220_mode_config()) {
         uart_unlock();
         return E220_NO_ANSWER;
@@ -365,7 +391,7 @@ size_t e220_read_firmware(char *out, size_t out_len) {
     /* The stock DMD firmware answers AT+FWCODE=?; a distributor module may not. Harmless
      * either way — an unanswered probe just yields nothing. */
     const char *probe = "AT+FWCODE=?\r\n";
-    if (!uart_lock()) return 0;
+    if (!lock_quiet(CONFIG_QUIET_MS + 100)) return 0;
     if (!e220_mode_config()) {
         uart_unlock();
         return 0;
@@ -417,6 +443,8 @@ bool e220_write(const uint8_t *data, size_t len) {
     /* A short write is a truncated air packet, which the group decodes as corruption rather
      * than as a shorter roster. Report it as a failure instead of logging a transmission. */
     bool idle = wait_aux(TX_COMPLETE_WAIT_MS);
+    const TickType_t now = xTaskGetTickCount();
+    s_tx_done_at = now ? now : 1;
     bool ok = (written == (int)len) && drained && idle;
     if (!ok) {
         ESP_LOGW(TAG, "write: %d of %u bytes accepted, drained=%d aux_idle=%d", written,
@@ -565,7 +593,7 @@ void e220_query_rssi(void) {
 }
 
 bool e220_bench_sleep(bool sleep) {
-    if (!uart_lock()) return false;
+    if (!lock_quiet(CONFIG_QUIET_MS + 100)) return false;
     const bool ok = sleep ? e220_mode_config() : e220_mode_normal();
     /* A failed wake leaves it marked asleep: the guard stays on until normal mode is confirmed. */
     if (sleep) s_asleep = true;

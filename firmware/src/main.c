@@ -599,12 +599,17 @@ static void rx_task(void *arg) {
         snap = state_snapshot();
         TickType_t due = pdMS_TO_TICKS(snap.online ? RADIO_PROBE_MS : RADIO_RETRY_MS);
         if (xTaskGetTickCount() - last_probe >= due) {
-            last_probe = xTaskGetTickCount();
             bool changed = false;
             state_lock();
             radio_state_t st = radio_verify(&s_state.req);
-            /* Busy means the bus was in use, which says nothing about the radio. */
+            /* Busy means the bus was in use, or the module had only just finished transmitting,
+             * which says nothing about the radio. Ask again on the next pass rather than a whole
+             * interval later, or steady traffic could keep the probe from ever running. */
             if (st != RADIO_BUSY) {
+                last_probe = xTaskGetTickCount();
+#ifdef BENCH_CMD
+                ESP_LOGI(TAG, "probe: %s", st == RADIO_OK ? "ok" : st == RADIO_NO_ANSWER ? "no answer" : "mismatch");
+#endif
                 /*
                  * Two separate facts, which the old single health flag could not tell apart. A
                  * module that answers but holds different registers is present and misconfig-
