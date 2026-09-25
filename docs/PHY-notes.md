@@ -5,6 +5,40 @@ gathered while waiting for hardware. Source: EBYTE *E220-900T22S User Manual* (o
 cdebyte.com). The E220-900T30x DMD uses shares this PHY register model; only the power
 table differs (30/27/24/21 dBm instead of 22/17/13/10).
 
+## 2026-09-25: our transmitter away from the laptop - USB against a power bank. Declared before running
+
+**Question.** Two of the outside reviews point at the host: our boards are an ESP32-S3 on USB with
+the radio beside it, EBYTE's are a module with its own quiet MCU. Does our receiver slip less on
+the Heltec's packets when the Heltec runs from a power bank, with no USB data and no host, than
+when the same board, same firmware, runs from the laptop's USB?
+
+**Bench.** As before at 500 kHz: the T-Deck back on `v0.1.0-116-gfe73bb6` (`5a63eee5...`), the
+two E220s, all in the far room. The Heltec runs a diagnostic beacon image
+(`cc63dadc7aefb2484fa03b1e7e909ace356fea27f1fc5127b0d22490da2e1701`: `BEACON_TX_MS=2000`,
+`BEACON_SEQ` - the bench's numbered 38-byte payload, counting from 1 at every boot - `TX_QUIET_WAIT`,
+no Bluetooth), so nothing on the host sends it anything. It lies where it always does; only its
+cable moves, between the laptop and a power bank beside it.
+
+**Run.** A script on the remote station records every line from the three receivers with its
+arrival time. Segments, by the clock: laptop USB for about 7 minutes, power bank for about 14,
+laptop USB for about 7 - a palindrome in time. The E22 sends 30 reference packets before the
+segments and 30 after, with the Heltec silent.
+
+**Decision**, per condition, on the T-Deck: transmitted beacons (the highest number received in
+each segment), delivered beacons, and header errors, all attributable to the Heltec since nothing
+else transmits during the segments.
+
+- *The host causes the slip* if on the power bank at most 3 % of beacons are missed while on USB
+  at least 10 % are, one-sided Fisher p < 0.01;
+- *less on the power bank* if at least 10 points fewer, p < 0.05;
+- *no change detected* otherwise.
+- Descriptive: the E220s' deliveries per condition, and the USB segments against today's
+  interleave-driven runs (the beacon firmware sleeps through its transmission; the bench image
+  polls).
+
+**Invalid** if the E22 reaches any receiver below 90 % before or after, fewer than 100 beacons are
+sent in either condition, or foreign packets appear at the T-Deck during the segments.
+
 ## 2026-09-25: does our receiver slip on our packets at 125 kHz? Declared before running
 
 **Question.** Semtech's erratum 15.1 describes "sensitivity degradation ... on any LoRa device, when
