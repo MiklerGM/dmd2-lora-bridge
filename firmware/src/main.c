@@ -505,6 +505,19 @@ static void beacon_task(void *arg) {
         if (!copy) continue;
         memset(copy, 'A' + sweep_level, len);
         copy[len] = '\0';
+#elif defined(BEACON_SEQ)
+        /*
+         * The bench's own numbered payload - eight digits and 'A' filler to 38 bytes - so each
+         * beacon names itself and a missing number is a lost packet, for runs in which nothing on
+         * a host sends or counts: a board on a power bank, out of reach of any USB cable.
+         */
+        static uint32_t beacon_seq;
+        size_t len = 38;
+        char *copy = malloc(len + 1);
+        if (!copy) continue;
+        int at = snprintf(copy, len + 1, "%08lu", (unsigned long)++beacon_seq);
+        memset(copy + at, 'A', len - (size_t)at);
+        copy[len] = '\0';
 #else
         size_t len = strlen(BEACON_PAYLOAD);
         char *copy = malloc(len + 1);
