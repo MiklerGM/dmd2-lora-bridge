@@ -27,6 +27,10 @@ bool radio_bench_tune(int32_t hz);
  * without a preamble= token), until changed. */
 bool radio_bench_rx_preamble(int symbols);
 
+/* SX1262 only: read n (1..32) bytes of the chip's register space, e.g. the version string at
+ * 0x0320. */
+bool radio_bench_reg_read(uint16_t addr, uint8_t *out, size_t n);
+
 /* SX1262 only: receive with an implicit header of len bytes and CRC off, until told otherwise;
  * 0 restores the explicit header. */
 bool radio_bench_rx_implicit(int len);

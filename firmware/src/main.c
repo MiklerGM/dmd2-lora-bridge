@@ -742,6 +742,23 @@ static void bench_task(void *arg) {
             ESP_LOGI(TAG, "TUNE %ld %s", hz, ok ? "ok" : "FAILED");
             continue;
         }
+        if (strncmp(line, "REGR ", 5) == 0) {
+            char *end;
+            const unsigned long addr = strtoul(line + 5, &end, 16);
+            unsigned long n = 0;
+            if (end != line + 5 && *end == ' ') n = strtoul(end + 1, &end, 10);
+            uint8_t buf[32];
+            char hex[2 * sizeof(buf) + 1] = "", txt[sizeof(buf) + 1] = "";
+            const bool ok = *end == '\0' && n >= 1 && n <= sizeof(buf) && addr <= 0xFFFF &&
+                            radio_bench_reg_read((uint16_t)addr, buf, (size_t)n);
+            for (unsigned long i = 0; ok && i < n; i++) {
+                snprintf(hex + 2 * i, 3, "%02X", buf[i]);
+                txt[i] = (buf[i] >= 0x20 && buf[i] < 0x7F) ? (char)buf[i] : '.';
+                txt[i + 1] = '\0';
+            }
+            ESP_LOGI(TAG, "REGR %04lX %s %s |%s|", addr, ok ? "ok" : "FAILED", hex, txt);
+            continue;
+        }
         if (strncmp(line, "IMPL ", 5) == 0) {
             char *end;
             long n = strtol(line + 5, &end, 10);

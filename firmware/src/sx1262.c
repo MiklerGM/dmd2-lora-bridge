@@ -1697,6 +1697,15 @@ bool radio_bench_rx_preamble(int symbols) {
     return ok;
 }
 
+bool radio_bench_reg_read(uint16_t addr, uint8_t *out, size_t n) {
+    if (n == 0 || n > 32 || !bus_lock()) return false;
+    bool ok = true;
+    for (size_t i = 0; ok && i < n; i += 4)      /* reg_read takes at most four at a time */
+        ok = reg_read((uint16_t)(addr + i), out + i, n - i < 4 ? n - i : 4);
+    bus_unlock();
+    return ok;
+}
+
 bool radio_bench_rx_implicit(int len) {
     if (len < 0 || len > 255 || !bus_lock()) return false;
     s_rx_implicit = len;
