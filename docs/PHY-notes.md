@@ -5,6 +5,36 @@ gathered while waiting for hardware. Source: EBYTE *E220-900T22S User Manual* (o
 cdebyte.com). The E220-900T30x DMD uses shares this PHY register model; only the power
 table differs (30/27/24/21 dBm instead of 22/17/13/10).
 
+## 2026-09-25: sync low nibbles and preamble length against the one-symbol slip. Declared before running
+
+**Question.** Our receiver loses our packets by starting the data one symbol late, at the end of
+sync and SFD. Does any transmit setting that shapes that part of the packet change how often it
+happens? Two such settings are open: the low nibbles of the sync registers (undocumented; only 0, 4
+and 5 have ever been sent, 8 and above are undecodable by everyone) and the preamble length at our
+own receiver (20 symbols was tried there once, on 48 packets).
+
+**Bench.** As above, unchanged; the T-Deck in its explicit state, expecting 8 preamble symbols,
+sync 0x5454.
+
+**Run.** `bench/interleave.py`, 70 packets per arm, palindromic rounds shuffled by seed 20261024,
+gap 0.8 s. Heltec arms, every one through the same `sync=` register write before SetTx:
+`s50`..`s57` = `sync=5050` .. `sync=5757` (`s54` is the control), `p20` and `p30` = `preamble=20`
+and `preamble=30` with `sync=5454`; and `e22`, the reference.
+
+**Decision**, `bench/analyze_slip.py`, each Heltec arm against `s54` on the T-Deck's misses,
+one-sided Fisher exact test:
+
+- *removes the slip* if the arm misses at most 3 % while `s54` misses at least 10 %, p < 0.01 -
+  repeated under seed 20261025 and taken to the EBYTE receivers before anything is claimed;
+- *fewer misses* if at least 10 points fewer, p < 0.05 - repeated before it is claimed;
+- *not received* if the T-Deck takes under half and fewer than half of the misses are header
+  errors (the receiver does not accept that sync word);
+- *no change detected* otherwise.
+- Descriptive: every arm's delivery at the two E220s; header errors against silence among misses.
+
+**Invalid** if the E22 reaches the T-Deck below 90 %, a board drops out or fewer than 95 % of
+transmissions are acknowledged.
+
 ## 2026-09-25: what our receiver decodes from the packets it loses, read without a header check. Declared before running
 
 **Questions.** (1) Do the E22's packets carry the same PHY header fields as ours - coding rate and
