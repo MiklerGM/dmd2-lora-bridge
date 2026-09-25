@@ -5,6 +5,45 @@ gathered while waiting for hardware. Source: EBYTE *E220-900T22S User Manual* (o
 cdebyte.com). The E220-900T30x DMD uses shares this PHY register model; only the power
 table differs (30/27/24/21 dBm instead of 22/17/13/10).
 
+## 2026-09-25: does our receiver's loss follow the fractional frequency offset? Declared before running
+
+**Question.** The T-Deck loses 15-23 % of the Heltec's packets, all at the header, and none of the
+E22's. Does that loss depend on the fractional part - within one 244 Hz bin - of the frequency
+offset between the two? Proposed by two of the outside reviews collected on 2026-09-24 (kept
+outside the repository): a receiver sitting at one fixed fraction of a bin from a transmitter that
+is stable to 8 Hz would lose a steady share, while EBYTE receivers, whose own frequency wanders by
+about a bin from packet to packet, would average over the whole bin. `TUNE 8100` (2026-09-23)
+moved the fraction by 0.18 bin only, so this has not been tested.
+
+**Bench.** Forward direction. The Heltec and the E22 (the reference) transmit from the laptop, both
+with the small antennas. In the far room, 10 cm apart, the T-Deck (bench image
+`4884c71055d4c80e5ef22fac71e4aa9020daa2f6f634f28c351c8a008e9fba57`), the first E220 (antenna) and
+the second E220 (no antenna) receive. All five boards identified by boot banner on 2026-09-25.
+While the boards were being connected, the T-Deck received 535 and the Heltec 305 complete packets
+in about 12 minutes from a source not identified; after the banner check the channel was quiet for
+5 minutes (no header at either receiver, only noise preamble detections).
+
+**Run.** `bench/interleave.py`, arms `heltec` and `e22`, 540 packets each, palindromic rounds
+shuffled by seed 20261020, gap 0.8 s. The T-Deck cycles `TUNE 0, 31, 61, 92, 122, 153, 183, 214,
+244` in palindromic blocks of 20 packets - 54 blocks, three full cycles, order shuffled by the
+seed - and rests at `TUNE 0`. 244 Hz is one bin, so it repeats the fraction of 0.
+
+**Decision**, `bench/analyze_frac.py`, on the Heltec's delivery at the T-Deck per state. Statistic:
+the chi-square of homogeneity over the nine states, p from 20000 permutations of the state labels
+over blocks.
+
+- *Depends on the fractional offset* if p < 0.001 and the best and worst states differ by at least
+  25 points; claimed only if repeated under seed 20261021.
+- *No dependence detected* if p >= 0.01 and they differ by less than 20 points.
+- *Inconclusive* otherwise.
+- Descriptive: `TUNE 0` against `TUNE 244` (the effect should repeat per bin), the fraction of a
+  bin at each state, the EBYTE receivers' deliveries, the T-Deck's header and CRC errors.
+
+**Invalid** if a switch is not confirmed, a board drops out, fewer than 95 % of transmissions are
+acknowledged, the E22 reaches the T-Deck below 90 % in any state, or the median RegFreqError of the
+Heltec's receptions does not follow the step: every state within 15 Hz of the `TUNE 0` median
+shifted by that state's step, with one sign for all.
+
 ## 2026-09-24: what our receiver measured on the packets it lost, declared before running
 
 **Question.** When the T-Deck loses one of the Heltec's packets - by its own counters always at the
