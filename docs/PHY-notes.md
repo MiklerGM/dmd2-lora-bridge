@@ -44,6 +44,28 @@ acknowledged, the E22 reaches the T-Deck below 90 % in any state, or the median 
 Heltec's receptions does not follow the step: every state within 15 Hz of the `TUNE 0` median
 shifted by that state's step, with one sign for all.
 
+### Result: invalid - the receiver retunes in 122 Hz steps, so only two positions were reached
+
+`2026-09-25-frac-run1.json`, analysis `2026-09-25-frac-run1-analysis.json`, 08:23-08:45. All 54
+switches confirmed, 1080 of 1080 transmissions acknowledged, the E22 60/60 at the T-Deck in every
+state. **Invalid by the last rule:** the Heltec's median RegFreqError at the T-Deck read -17 Hz at
+`TUNE 0, 31, 61, 92, 122` and +106 Hz at `TUNE 153, 183, 214, 244` - two values, 123 Hz apart - and
+the E22's moved the same way (+8036 to +8042, then +8158 to +8166). The frequency word is written
+to the Hz (0.95 Hz per step), but the receiver's frequency moves in steps of 122 Hz: 128 of those
+steps, BW/4096, half a bin at 500 kHz, truncated rather than rounded (122 stays, 153 moves).
+**Receive tuning on an SX1262 cannot place a signal at a finer fraction of a bin than one half.**
+The declared scan therefore did not happen, and nothing is concluded about a fine dependence.
+
+Descriptive, from the two positions that were reached, half a bin apart (fraction 0.93 and 0.43 of
+a bin): the Heltec delivered 248/300 (82.7 %) and 201/240 (83.8 %) at the T-Deck, every miss a
+header error (91 of 91, no CRC error); the E22 300/300 and 240/240. A dependence strong at opposite
+phases of one bin would have shown between these two; one that is narrow, or equal at these two
+points, would not. The first E220 took the Heltec 130/540 and the E22 533/540, the second
+(no antenna) 143/540 and 539/540.
+
+A fine scan has to move the transmitter instead, if its frequency word is honoured to the Hz - to
+be checked first with the T-Deck's RegFreqError.
+
 ## 2026-09-24: what our receiver measured on the packets it lost, declared before running
 
 **Question.** When the T-Deck loses one of the Heltec's packets - by its own counters always at the
