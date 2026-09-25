@@ -35,6 +35,43 @@ quiet windows, seed 20261029. Captures qualify by the 2026-09-22 criteria.
 - **Valid** only if the other landmarks - preamble, sync, full downchirps, header - agree: their
   median absolute difference at most 15 us (otherwise the offsets did not cancel).
 
+### Result: invalid - `foff=8` put the Heltec on the other side of the carrier from the E22
+
+`2026-09-25-rssi-sfdend.json.gz` (outside git, `/home/morlov/projects/dmd2/bench-backup`, SHA-256
+`b2d6d3444aac6a381b1579cfa366e2a67efee3ea490bd3ca2d4b33172f5e244d`), 12:14-12:34, 350 captures;
++230 kHz qualified for neither arm and +200 kHz not for the Heltec (15/24 chains), so both drop.
+Every Heltec packet went out with `foff=8` (air 427 ms, as the offset path takes). The analyzer found
+no SFD landmark - the two arms' downchirp pulses were too far apart to cluster - so the pulses were
+read directly (post-hoc), E22 minus Heltec in microseconds:
+
+| slice | last preamble, sync, first data symbol | full downchirps | closing quarter |
+|---|---|---|---|
+| +140 kHz | -18 to -7 | -255, -254 | -262 |
+| +170 kHz | -18 to -9 | -253, -255 | -263 |
+| 0 kHz | -31 to -26 | -265, -264 | - |
+| -120 kHz | -16 to +9 | -277, -255 | - |
+
+Against 2026-09-24 (Heltec at 0 kHz) the downchirp difference doubled instead of vanishing: the two
+transmitters were on opposite sides of the scope's carrier. **Invalid by the declared rule** (the
+downchirps, among the other landmarks, disagree by about 260 us).
+
+A sign check settled it (`2026-09-25-sign-check.json`, T-Deck back on its bench image, 10 packets
+per arm): RegFreqError read the Heltec at -9 Hz plain, **-8069 Hz with `foff=8`**, **+8174 Hz
+with `foff=-8`**, and the E22 at **+8160 Hz**. A positive reading means the transmitter is *below*
+the receiver: **the E22 sits 8.16 kHz below our boards**, not above. (The 2026-09-22 note that
+`foff=+8` read +8147 Hz does not match today's image; today's is the one the scope confirms.) The
+C2 design still did what it meant - `TUNE 8100` moved our packets to the E22's side - and the
+post-jump "lead" and the SFD shift of earlier captures are this offset's artefact, as two reviews
+suggested.
+
+With the offset now known in sign and size, the artefact can be subtracted: 16.23 kHz between the
+two carriers moves downchirp crossings by 2 x 16230 / 122.07 = 266 us against upchirps. Measured
+-253 to -265 (median about -258): **a residual of about +8 us, zero at this resolution, for both
+full downchirps and the closing quarter alike**; the first data symbol matches to 30 us. Our SFD and
+its closing quarter sit where the E22's do, to 10-20 us - as they sat against the E220's on
+2026-09-24. Whatever makes receivers slip a symbol on our packets is not a timing displacement of
+the SFD's end at this scale.
+
 ## 2026-09-25: our transmitter away from the laptop - USB against a power bank. Declared before running
 
 **Question.** Two of the outside reviews point at the host: our boards are an ESP32-S3 on USB with
