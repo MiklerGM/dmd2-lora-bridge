@@ -5,6 +5,37 @@ gathered while waiting for hardware. Source: EBYTE *E220-900T22S User Manual* (o
 cdebyte.com). The E220-900T30x DMD uses shares this PHY register model; only the power
 table differs (30/27/24/21 dBm instead of 22/17/13/10).
 
+## 2026-09-25: does our receiver slip on our packets at 125 kHz? Declared before running
+
+**Question.** Semtech's erratum 15.1 describes "sensitivity degradation ... on any LoRa device, when
+receiving signals transmitted by the SX1261/2 with a LoRa BW of 500 kHz". Is the one-symbol slip
+our receiver makes on our packets specific to 500 kHz? The same pair, both ends rebuilt for SF12 /
+BW125 (`PHY_ALT_RATE`, LDRO on, which that symbol needs anyway). A time-domain defect of a few
+microseconds would matter less with 8 µs chips; a frequency-domain one of a few tens of hertz more,
+with 30.5 Hz bins.
+
+**No EBYTE reference is possible at this PHY.** The E22's bridge rebuilt for air rate 0
+(`-DE220_AIR_RATE=0`) wrote REG0 = 0x60 and read back 0x62: the module keeps 2.4 kbps, as the E220s
+are already known to (their indices 0-2 are all 2.4 kbps). The comparison is with today's runs at
+500 kHz on the same boards, where the T-Deck slipped on 14-27 % of the Heltec's packets
+(`frac-run1`, `impl-run1`, `slip-run1`), every miss a header error.
+
+**Bench.** As above; the Heltec and the T-Deck on `v0.1.0-116-gfe73bb6` built with
+`PHY_ALT_RATE` (Heltec `57109d51...`, T-Deck `7015618b...`), the E22 not used.
+
+**Run.** `bench/interleave.py`, one arm `heltec`, 120 packets, seed 20261026, gap 1.0 s (the
+Heltec answers after TxDone; a packet is about 2.3 s on the air).
+
+**Decision**, on the T-Deck's header errors among the Heltec's 120 packets:
+
+- *the slip needs 500 kHz* if there are at most 2 (under 2 %) - repeated with another 120 packets
+  before it is claimed;
+- *the slip is there at 125 kHz too* if there are at least 12 (10 %);
+- *reduced* in between, reported with a Fisher test against the pooled 500 kHz controls.
+
+**Invalid** if the T-Deck takes under half of the packets without header errors to account for the
+rest (the two ends not on the same PHY), or a board drops out.
+
 ## 2026-09-25: sync low nibbles and preamble length against the one-symbol slip. Declared before running
 
 **Question.** Our receiver loses our packets by starting the data one symbol late, at the end of
