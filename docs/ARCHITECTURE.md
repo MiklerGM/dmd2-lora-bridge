@@ -296,7 +296,13 @@ the first question with no: it is already transmitting from its own GNSS and is 
    reopen TX under that old request although the chip was partly changed. Invalidate that
    cache before the first hardware change and test a failure after the frequency write;
    `configured` must stay false until a complete successful apply. This remains unfixed.
-9. **EBYTE mode changes under traffic still need hardware validation.** The reverse-link run
-   in `bench/results/2026-09-21-reverse-link.json` captured a `C1 00 08` register-read request
-   on air and a transient failed health check. The UART mutex and AUX checks did not prevent
-   that configuration transaction from being treated as payload. This remains unfixed.
+9. **EBYTE mode changes right after a transmission leaked onto the air; fixed 2026-09-25.**
+   The reverse-link run in `bench/results/2026-09-21-reverse-link.json` first captured a
+   `C1 00 08` register-read request on air and a transient failed health check, and every later
+   bench run showed it (`C1 00 09` from an E22): about one health probe in six under traffic,
+   always 30-100 ms after the same module's own transmission ended, where the module takes the
+   M0/M1 change late although AUX already reads idle. Configuration mode is now entered only
+   after 500 ms without a transmission (`lock_quiet` in `e220.c`), and a probe that finds the
+   module busy retries on the next pass. Checked on hardware: 15 minutes of both bridges
+   transmitting every 2.4 s, 30 probes each, nothing on the air
+   (`bench/results/2026-09-25-probe-leak.tsv`; docs/PHY-notes.md).
