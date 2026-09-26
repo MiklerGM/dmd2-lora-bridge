@@ -306,3 +306,18 @@ the first question with no: it is already transmitting from its own GNSS and is 
    module busy retries on the next pass. Checked on hardware: 15 minutes of both bridges
    transmitting every 2.4 s, 30 probes each, nothing on the air
    (`bench/results/2026-09-25-probe-leak.tsv`; docs/PHY-notes.md).
+10. **A first BLE connection can stall for 30 s.** Seen twice on 2026-09-26 with a Samsung
+    S24, right after an app reinstall and right after unpairing one bridge and pairing the other:
+    the bridge logs `NimBLE: ATT handler not found; op=0x1d` as the phone connects - an ATT
+    indication from the phone's own GATT server, most likely Service Changed - and the phone
+    then never finishes discovery (once it reported MTU 23 while the bridge had 247). The app's
+    watchdog gives up after 30 s ("BLE connection did not produce a valid bonded status") and
+    the next connection, without that indication, is ready in about a second. The firmware is
+    peripheral-only (`CONFIG_BT_NIMBLE_ROLE_CENTRAL=n`), so NimBLE has no GATT client to
+    confirm the indication; enabling it is the first thing to try. Meanwhile the app's Radio row
+    says "connecting" for those 30 s while its log already says "BLE connected".
+11. **The bond store keeps stale address records.** With `CONFIG_BT_NIMBLE_MAX_BONDS=2`, a new
+    pairing on an E22 that had been unpaired before logged `ble_store_config_write_rpa_rec
+    rc=27` (store full): forgetting the phone does not seem to clear the peer-address records.
+    Reconnection after a bridge power cycle still worked (about 11 s, on its own). Check that
+    `FORGET` and the BOOT clear also remove those records, or raise the store size.
