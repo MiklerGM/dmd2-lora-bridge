@@ -251,6 +251,9 @@ class MainActivity : Activity() {
     private fun statusRow(label: String, value: TextView, action: View?) =
         LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
+            // Baseline alignment lines a two-line value up by its first line against the button
+            // and clips the second one; the Radio row wraps whenever a firmware string is shown.
+            isBaselineAligned = false
             setPadding(0, dp(3), 0, dp(3))
             addView(TextView(this@MainActivity).apply {
                 text = label
@@ -378,7 +381,7 @@ class MainActivity : Activity() {
             // Which backend, which mode, which firmware: on a bench with several boards,
             // "connected" on its own does not say which one is answering.
             else -> "${st.radio} ${st.mode.name.lowercase()}" +
-                (st.firmware.takeIf { it.isNotEmpty() }?.let { " · $it" } ?: "")
+                (st.firmware.takeIf { it.isNotEmpty() }?.let { "\n$it" } ?: "")
         }
     }
 
