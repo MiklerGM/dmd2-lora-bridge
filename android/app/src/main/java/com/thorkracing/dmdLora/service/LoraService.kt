@@ -30,6 +30,7 @@ class LoraService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private var beating = false
     private var foregroundReady = false
+    private var shownText: String? = null
 
     /** Frequent enough to release a held transmission and to re-apply config after a
      *  reconnect promptly, cheap enough to ignore. */
@@ -47,6 +48,7 @@ class LoraService : Service() {
             // a bridge whose LoRa module is dead is exactly as useless as one that is missing,
             // however healthy the Bluetooth link to it looks.
             Bridge.sendStatusUpdate(this@LoraService, connected = Radio.usable)
+            refreshNotification()
             handler.postDelayed(this, HEARTBEAT_MS)
         }
     }
@@ -60,7 +62,9 @@ class LoraService : Service() {
         // on API 34+. DMD2 can start us before the user has been through that dialog, and an
         // uncaught throw here takes the whole app down at exactly the wrong moment.
         try {
-            startForeground(NOTIFICATION_ID, notification())
+            val text = notificationText()
+            startForeground(NOTIFICATION_ID, notification(text))
+            shownText = text
             foregroundReady = true
             Session.serviceRunning = true
             EventLog.log("service created")
@@ -113,15 +117,26 @@ class LoraService : Service() {
         super.onDestroy()
     }
 
-    private fun notification(): Notification {
+    private fun notificationText(): String =
+        (Session.channel.takeIf { it >= 0 }?.let {
+            "ch $it · ${Bridge.freqLabel(it)}"
+        } ?: "waiting for DMD2 radio config") +
+            (Session.groupName?.let { " · $it" } ?: "")
+
+    /** DMD2's channel and group arrive after the service has started, so the text posted with
+     *  startForeground goes stale; the heartbeat brings it up to date. */
+    private fun refreshNotification() {
+        val text = notificationText()
+        if (!foregroundReady || text == shownText) return
+        shownText = text
+        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(text))
+    }
+
+    private fun notification(text: String): Notification {
         val open = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val text = (Session.channel.takeIf { it >= 0 }?.let {
-            "ch $it · ${Bridge.freqLabel(it)}"
-        } ?: "waiting for DMD2 radio config") +
-            (Session.groupName?.let { " · $it" } ?: "")
         return Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("LoRa Bridge for DMD2")
             .setContentText(text)
