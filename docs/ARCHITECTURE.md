@@ -321,3 +321,13 @@ the first question with no: it is already transmitting from its own GNSS and is 
     rc=27` (store full): forgetting the phone does not seem to clear the peer-address records.
     Reconnection after a bridge power cycle still worked (about 11 s, on its own). Check that
     `FORGET` and the BOOT clear also remove those records, or raise the store size.
+12. **DMD2 in the background is frozen by Android, and then sends us nothing.** DMD2 4.024 keeps
+    itself alive with its own location foreground service (`DmdBackgroundService`), started as
+    its screen goes away. It holds location only while in use and does not declare
+    `ACCESS_BACKGROUND_LOCATION`, so a start from the background is refused ("Cannot promote to
+    FGS ... background keep-alive will not run" in its log); the cached-app freezer then freezes
+    it, and positions stop until it is opened again. On 2026-09-26 it was refused three times
+    out of three when left through Recents and started once when left with Home, after which
+    it kept sending in the background. Every gap in the pre-trip phone check began with DMD2
+    frozen; our service and both bridges carried on. The fix belongs in DMD2: start that
+    service while the activity is still visible, or declare background location.
