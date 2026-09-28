@@ -275,11 +275,16 @@ the first question with no: it is already transmitting from its own GNSS and is 
 2. **BLE MTU.** The current largest wire payload is 200 unpadded-base64 characters (a maximum
    group packet is 187). MTU 247 carries a complete `TX` line, but the link still has to support
    fragmentation because the default characteristic payload is only 20 bytes.
-3. **TX pacing.** The stock implementation uses a slot/interval model (~1500 ms observed).
-   Transmitting faster risks collisions and is antisocial on a shared channel. Pace on Android.
+3. **TX pacing.** The stock implementation uses a slot/interval model: 1500 ms, plus 500 ms
+   for each LoRa rider beyond the first heard in the last 90 s (packet senders, and roster
+   entries with the has-LoRa bit). We pace the same way on Android (`Peers`); the stock
+   per-device slot offset and random jitter are not copied.
 4. **No relaying.** Relay is broken upstream (TTL is decremented without recomputing the CRC that
    covers it). Send TTL=2, ignore TTL on receive, never relay. Range comes from each packet
-   carrying the sender's full roster.
+   carrying the sender's full roster. For reference, DMD-LoRa 1.0.9 relays position packets
+   only (never chat), only while it hears at least two other senders, after a random 1-3 s,
+   and cancels if it hears another relay of the same packet first. A relay that recomputed the
+   CRC would be accepted by stock receivers, which would make ours the only working one.
 5. **Version drift.** The contract was recovered from specific DMD2/DMD-LoRa versions. Record the
    versions we test against; re-check after DMD2 updates.
 6. **Package collision.** Cannot be installed next to the genuine DMD-LoRa app.

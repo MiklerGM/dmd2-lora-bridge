@@ -6,6 +6,7 @@ import com.thorkracing.dmdLora.Bridge
 import com.thorkracing.dmdLora.EventLog
 import com.thorkracing.dmdLora.Prefs
 import com.thorkracing.dmdLora.Session
+import com.thorkracing.dmdLora.protocol.Codec
 import com.thorkracing.dmdLora.protocol.Regions
 
 /**
@@ -20,6 +21,7 @@ object Radio {
 
     private val router = WireRouter()
     private val scheduler = TxScheduler()
+    private val peers = Peers()
 
     // Chat does not share the latest-only position slot: it waits in its own queue and is
     // drained ahead of position updates.
@@ -167,6 +169,7 @@ object Radio {
             chat.clear()
             router.reset()
             scheduler.reset()
+            peers.clear()
             previous
         }
         old?.close()
@@ -314,6 +317,12 @@ object Radio {
         val l = link ?: return
         if (!l.connected) return
         val now = nowMs()
+
+        val interval = peers.intervalMs(now)
+        if (interval != scheduler.minIntervalMs) {
+            scheduler.minIntervalMs = interval
+            EventLog.log("TX interval now $interval ms (${peers.count(now)} LoRa rider(s) heard)")
+        }
 
         val statusExpired = synchronized(this) {
             val current = health
@@ -471,6 +480,7 @@ object Radio {
         val chats = chat.clear()
         scheduler.reset()
         router.reset()
+        peers.clear()
         if (announce && chats > 0) EventLog.log("$chats queued message(s) dropped with the group")
     }
 
@@ -483,6 +493,10 @@ object Radio {
         when (val action = router.route(wire, ride.groupId, ride.senderUserId)) {
             is RxAction.InjectRiders -> {
                 val g = action.group
+                val now = nowMs()
+                val own = ride.senderUserId?.takeIf { it.isNotEmpty() }?.let { Codec.uidHash(it) }
+                peers.heard(g.senderHash, now)
+                for (r in g.riders) if (r.hasLora && r.userIdHash != own) peers.heard(r.userIdHash, now)
                 EventLog.log("RX ${g.riders.size} rider(s) from ${"%04X".format(g.senderHash)}")
                 Bridge.sendGroupDataReceived(context, Bridge.ridersJson(g), ride.groupId)
             }

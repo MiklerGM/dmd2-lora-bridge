@@ -36,7 +36,7 @@ been on the air. `make check` runs the whole test suite, which needs neither a p
 | BLE link, bonding, reconnect, autostart | the previous contract was proven; the current `proto=2` handshake, trust gate and unpair flow need a new hardware pass |
 | Explicit bridge selection | implemented and host-tested where pure; multi-board behaviour is not yet checked on hardware |
 | Two E220s hearing each other | **not tried** — waiting on modules |
-| A real NOR7E hearing us, and us hearing it | **not tried**, and until it is, end-to-end compatibility is not claimed |
+| A real NOR7E hearing us, and us hearing it | **positions both ways**, first field test 2026-09-27 on an E220 bridge; chat and help not yet confirmed (`docs/ROADMAP.md`, M6) |
 
 The protocol was recovered by static analysis and matches on every byte we can check without a
 radio. Whether an E220 we configure ourselves lands on the same PHY as a NOR7E is the one

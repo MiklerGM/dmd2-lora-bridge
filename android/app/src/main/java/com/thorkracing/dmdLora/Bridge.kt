@@ -74,7 +74,9 @@ object Bridge {
                     .put("speed", r.speedKmh)
                     .put("status", r.status)
                     .put("position_age_s", r.positionAgeS)
-                    .put("direct", true)
+                    // Only the sender was heard first-hand; the rest of its roster is retold, and
+                    // DMD2 keeps a recent first-hand position against a retold one (PROTOCOL.md).
+                    .put("direct", r.userIdHash == group.senderHash)
             )
         }
         return arr

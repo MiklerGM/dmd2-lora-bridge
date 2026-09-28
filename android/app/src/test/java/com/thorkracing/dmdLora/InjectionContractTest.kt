@@ -48,6 +48,18 @@ class InjectionContractTest {
         assertTrue("sharing bit lost", o.getInt("status") and Codec.ST_SHARING != 0)
     }
 
+    /** DMD2 trusts a direct position over a retold one, so only the sender may claim it. */
+    @Test fun onlyTheSenderIsDirect() {
+        val riders = listOf(
+            TxRider("user-alpha", 47.4, 8.6, 0.0, Codec.ST_SHARING or Codec.ST_HAS_LORA, 0),
+            TxRider("user-bravo", 47.5, 8.7, 0.0, Codec.ST_SHARING or Codec.ST_HAS_LORA, 12),
+        )
+        val g = Codec.decode(Codec.encodeGroup(group, "user-alpha", riders, 4), group) as Decoded.Group
+        val json = Bridge.ridersJson(g)
+        assertTrue("the sender is heard first-hand", json.getJSONObject(0).getBoolean("direct"))
+        assertTrue("a roster entry is retold", !json.getJSONObject(1).getBoolean("direct"))
+    }
+
     @Test fun syntheticRiderIsShapedLikeARealOne() {
         val o: JSONObject = Bridge.syntheticRider(0x1234, 52.52, 13.405, 42.0).getJSONObject(0)
         assertEquals(0x1234, o.getInt("user_id_hash"))

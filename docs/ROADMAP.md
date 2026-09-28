@@ -284,6 +284,15 @@ Join a real group ride with one cooperating NOR7E owner. Internet off after join
 **Accept:** the NOR7E shows our position, and we show the NOR7E's, updating as both move.
 **Only after this may end-to-end compatibility be claimed.** Not before.
 
+**2026-09-27, first field test, owner's report (E220 bridge, internet off on both sides):**
+- positions: the NOR7E showed ours and we showed its — the bridge log has
+  `RX 2 rider(s) from 1986`, the NOR7E's own position plus ours retold;
+- chat from us reached the NOR7E; chat from the NOR7E was not seen in DMD2 on the phone. Not
+  yet known whether the bridge received it, which its log would show as `RX chat from …`;
+- "Send help" did not work as expected. In DMD2 4.013 the help alert is raised only from the
+  server's member list; over LoRa the flag only turns the rider's card red. Not yet checked
+  which of the two was seen.
+
 ---
 
 ## M7 — Make it survivable
@@ -291,6 +300,9 @@ Join a real group ride with one cooperating NOR7E owner. Internet off after join
 Only once M6 passes:
 
 - TX pacing that respects the slot/interval model; never transmit faster than the stock app.
+  **Interval done 2026-09-28**: 1500 ms plus 500 ms for each LoRa rider beyond the first heard
+  in the last 90 s, as DMD-LoRa 1.0.9 counts them. Its per-device slot offset and random jitter
+  are not copied.
 - Dedup ring, sequence handling, stale-position expiry.
 - ~~Works without a network.~~ **Verified 2026-09-09**, which is the premise the whole project
   rests on. With airplane mode on, no connected networks and `ping: Network is unreachable`,

@@ -53,6 +53,9 @@ Notes that decide whether a message is accepted:
 - Inbound `riders_json` is parsed with **`user_id_hash` (int)**, not `user_id`. Fields:
   `user_id_hash`, `lat`, `lon`, `speed`, `status`, and either `position_age_s` or `timestamp`.
 - **`status` bit 0 (sharing) must be set**, or the rider is discarded.
+- `direct` is true only for the rider who sent the packet; the rest of its roster is retold.
+  DMD2 lets a direct position override a retold one, but a retold one must be 30 s newer to
+  override a direct position heard in the last 30 s.
 - A rider whose `user_id_hash` equals `CRC-16(our own user id)` is skipped as self.
 - An unknown hash becomes a synthetic member displayed as `Rider XXXX`, kept fresh for 240 s
   and carried across DMD2's server polls.
