@@ -35,6 +35,8 @@ object Radio {
     private val configRetries = ConfigRetryBudget()
 
     @Volatile private var lastGateLogMs = 0L
+    @Volatile private var lastSummaryMs = 0L
+    private const val SUMMARY_INTERVAL_MS = 5 * 60_000L
     private const val GATE_LOG_INTERVAL_MS = 10_000L
 
     /**
@@ -227,7 +229,7 @@ object Radio {
             return gateReason()
         }
         if (send == null) return "held ${scheduler.waitMs(now)}ms"
-        if (l.send(send)) {
+        if (l.send(numbered(send))) {
             liveness.toBridge(now)
             return "queued to bridge"
         }
@@ -355,6 +357,12 @@ object Radio {
         if (!l.connected) return
         val now = nowMs()
 
+        // Every few minutes, the whole link per rider in one line: enough to read a ride back.
+        if (now - lastSummaryMs >= SUMMARY_INTERVAL_MS) {
+            lastSummaryMs = now
+            liveness.summary(now)?.let { EventLog.log(it) }
+        }
+
         val interval = peers.intervalMs(now)
         if (interval != scheduler.minIntervalMs) {
             scheduler.minIntervalMs = interval
@@ -417,7 +425,7 @@ object Radio {
             return
         }
         val wire = scheduler.poll(now) ?: return
-        if (l.send(wire)) {
+        if (l.send(numbered(wire))) {
             liveness.toBridge(now)
             EventLog.logThrottled("tx-release", "TX position queued to bridge · ${wire.take(10)}…")
         }
@@ -513,6 +521,13 @@ object Radio {
         Session.regionDesc = ""
     }
 
+    /** A position takes its sequence number as it goes to the bridge; see [Codec.withSeq]. */
+    private fun numbered(wire: String): String {
+        val group = queueGroupId ?: return wire
+        val packet = runCatching { Codec.fromWire(wire) }.getOrNull() ?: return wire
+        return Codec.toWire(Codec.withSeq(packet, group, Session.nextSeq()))
+    }
+
     /** Drop anything encoded for a group we are no longer in; it cannot be read by the new one. */
     private fun discardQueued(announce: Boolean) {
         val chats = chat.clear()
@@ -535,7 +550,11 @@ object Radio {
                 val now = nowMs()
                 val own = ride.senderUserId?.takeIf { it.isNotEmpty() }?.let { Codec.uidHash(it) }
                 peers.heard(g.senderHash, now)
-                liveness.heard(g.senderHash, g.riders.firstOrNull { it.userIdHash == g.senderHash }?.positionAgeS ?: -1, now)
+                liveness.heard(
+                    g.senderHash, g.seq, now,
+                    fixAgeS = g.riders.firstOrNull { it.userIdHash == g.senderHash }?.positionAgeS ?: -1,
+                    hasUsS = g.riders.firstOrNull { it.userIdHash == own }?.positionAgeS ?: -1,
+                )
                 for (r in g.riders) if (r.hasLora && r.userIdHash != own) peers.heard(r.userIdHash, now)
                 val via = if (g.relayed) " (relayed)" else ""
                 val ages = g.riders.joinToString(" ") { "%04X:%d".format(it.userIdHash, it.positionAgeS) }
@@ -544,6 +563,7 @@ object Radio {
             }
             is RxAction.InjectChat -> {
                 val c = action.chat
+                liveness.sawSeq(c.senderHash, c.seq, nowMs())
                 EventLog.log("RX chat from ${c.senderName.ifEmpty { "%04X".format(c.senderHash) }}: ${c.text}")
                 Bridge.sendChatReceived(context, c.senderName, c.senderHash, c.text)
             }

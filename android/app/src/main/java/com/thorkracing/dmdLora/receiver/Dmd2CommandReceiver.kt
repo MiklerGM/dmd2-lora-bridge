@@ -56,7 +56,8 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
             return
         }
 
-        val packet = Codec.encodeGroup(groupId, sender, riders, Session.nextSeq(), ttl = Codec.TX_TTL)
+        // Numbered when it is actually sent (Radio), so the numbers on the air have no gaps.
+        val packet = Codec.encodeGroup(groupId, sender, riders, seq = 0, ttl = Codec.TX_TTL)
         Session.packetsEncoded.incrementAndGet()
         val wire = Codec.toWire(packet)
         val outcome = Radio.transmit(wire)

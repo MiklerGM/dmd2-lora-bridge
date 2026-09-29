@@ -424,10 +424,11 @@ class MainActivity : Activity() {
         }
         val riders = live.senders(now)
         heardValue.text = if (riders.isEmpty()) "nobody yet" else riders.joinToString("\n") { (hash, h) ->
-            "%04X  %s ago".format(hash, Liveness.ago(now - h.atMs)) +
-                (if (h.fixAgeS >= 0) " · GPS ${Liveness.ago(h.fixAgeS * 1000L)} old" else "")
+            "%04X  ".format(hash) + live.describe(hash, h, now)
         }
-        val stale = problems.any { it.startsWith("air") || it.contains(" GPS ") && !it.startsWith("own") }
+        val stale = problems.any {
+            it.startsWith("air") || it.contains(" lost us ") || it.contains(" GPS ") && !it.startsWith("own")
+        }
         heardValue.setTextColor(if (riders.isEmpty()) C.MUTED else if (stale) C.WARN else C.OK)
     }
 

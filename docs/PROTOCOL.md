@@ -76,7 +76,7 @@ Big-endian. Group packet total length is `14 + 14n` bytes for `n` riders (`n ≤
 | 2 | 1 | TTL — the stock app sends `2`; we send `1` so it does not relay ours (ARCHITECTURE item 4). A stock relay has it decremented and the CRC left stale: accept a CRC that matches TTL+1 as a relay. Never relay |
 | 3 | 1 | type: `0` = group, `1` = chat |
 | 4 | 2 | `CRC-16(sender_user_id)` |
-| 6 | 2 | sequence number, incrementing |
+| 6 | 2 | sequence number, +1 per transmitted packet (the stock app numbers at transmission; we number a held position when it is sent), so gaps are losses |
 | 8 | 4 | `CRC-32(group_id)` — the group selector |
 
 ### Body

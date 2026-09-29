@@ -180,6 +180,15 @@ class CodecTest {
             (Codec.decode(twice, GROUP) as Decoded.Error).reason)
     }
 
+    /** A held position is numbered when sent; renumbering must give the packet that number
+     *  would have produced from the start. */
+    @Test fun renumberingMatchesEncodingWithThatNumber() {
+        val riders = listOf(TxRider("user-alpha", 47.4, 8.6, 12.0, Codec.ST_SHARING, 3))
+        val held = Codec.encodeGroup(GROUP, "user-alpha", riders, seq = 0)
+        assertArrayEquals(Codec.encodeGroup(GROUP, "user-alpha", riders, seq = 0xBEEF),
+            Codec.withSeq(held, GROUP, 0xBEEF))
+    }
+
     // ---- region / channel ----
 
     @Test fun channelMatchesDmd2Logic() {

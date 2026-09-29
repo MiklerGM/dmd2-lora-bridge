@@ -9,7 +9,7 @@ class LivenessTest {
         val l = Liveness()
         assertEquals("nothing heard from DMD2 yet is not a fault", emptyList<String>(), l.problems(0))
         l.fromDmd(1, 1_000)
-        l.heard(0x1986, 2, 1_000)
+        l.heard(0x1986, 1, 1_000, fixAgeS = 2, hasUsS = 3)
         assertEquals(emptyList<String>(), l.problems(3_000))
         assertEquals(1, l.hearing(3_000))
     }
@@ -28,14 +28,42 @@ class LivenessTest {
 
         // The tablet on 2026-09-29: packets every two seconds, the fix inside them 12 min old.
         val t = Liveness()
-        t.heard(0x0B80, 734, 0)
+        t.heard(0x0B80, 1, 0, fixAgeS = 734, hasUsS = -1)
         assertEquals(listOf("0B80 GPS 12 min old"), t.problems(1_000))
 
         val q = Liveness()
-        q.heard(0x1986, 1, 0)
+        q.heard(0x1986, 1, 0, fixAgeS = 1, hasUsS = 2)
         assertEquals(listOf("air quiet 2 min"), q.problems(130_000))
         assertEquals(0, q.hearing(130_000))
         assertEquals("half an hour on, the group is gone, not silent", emptyList<String>(), q.problems(31 * 60_000L))
+    }
+
+    @Test fun theyStillHearUsIsReadFromTheirRoster() {
+        val l = Liveness()
+        l.heard(0x1986, 1, 1_000, fixAgeS = 1, hasUsS = 3)
+        assertEquals(emptyList<String>(), l.problems(1_000))
+        l.heard(0x1986, 2, 3_000, fixAgeS = 1, hasUsS = 125)
+        assertEquals("we hear them, they stopped hearing us", listOf("1986 lost us 2 min"), l.problems(3_000))
+    }
+
+    @Test fun receptionCountsTheGapsInTheirNumbers() {
+        val l = Liveness()
+        // Sent 1..20, we got every other one: 10 of 19 numbers from the first to the last.
+        for (seq in 1..20 step 2) l.heard(0x1986, seq, seq * 2_000L, fixAgeS = 1, hasUsS = 1)
+        assertEquals(10 to 19, l.reception(0x1986, 40_000))
+        // Numbering carries on past 65535 without looking like a restart.
+        val w = Liveness()
+        for (seq in listOf(65530, 65532, 65534, 0, 2, 4, 6, 8, 10, 12)) w.heard(1, seq, 1_000, 1, 1)
+        assertEquals(10 to 19, w.reception(1, 1_000))
+        // A restarted sender numbers anew; that is not ten thousand lost packets.
+        w.heard(1, 40_000, 2_000, 1, 1)
+        assertEquals("too little since the restart to say", null, w.reception(1, 2_000))
+        assertEquals("fewer than ten numbers is no measurement", null, Liveness().reception(9, 0))
+        // A relay of a packet we missed arrives after its successors: counted, not a restart.
+        val r = Liveness()
+        for (seq in (1..12) - 5) r.heard(2, seq, 1_000, 1, 1)
+        r.heard(2, 5, 1_500, 1, 1)
+        assertEquals(12 to 12, r.reception(2, 1_500))
     }
 
     @Test fun agesAreCoarseSoTheNotificationDoesNotFlicker() {

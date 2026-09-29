@@ -172,6 +172,26 @@ object Codec {
         return Decoded.Group(version, ttl, senderHash, seq, gHash, riders, relayed)
     }
 
+    /**
+     * The same packet under another sequence number. A position is encoded when DMD2 hands it
+     * over but may be held or superseded by pacing, so it takes its number only when it is sent:
+     * then consecutive numbers are consecutive transmissions, and a receiver can count the gaps.
+     */
+    fun withSeq(packet: ByteArray, groupId: String, seq: Int): ByteArray {
+        val end = packet.size - 2
+        val plain = packet.copyOf()
+        xorBody(plain, end, groupKey(groupId))
+        plain[6] = (seq shr 8).toByte()
+        plain[7] = seq.toByte()
+        val crc = crc16(plain, end)
+        return packet.copyOf().also {
+            it[6] = plain[6]
+            it[7] = plain[7]
+            it[end] = (crc shr 8).toByte()
+            it[end + 1] = crc.toByte()
+        }
+    }
+
     // ---- internals ----
 
     private fun header(buf: Buf, groupId: String, sender: String, seq: Int, type: Int, ttl: Int) {
