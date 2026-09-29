@@ -30,13 +30,19 @@ class LoraService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private var beating = false
     private var foregroundReady = false
-    private var shownText: String? = null
+    private var shown: Shown? = null
+
+    private enum class Severity { OK, WARN, BAD }
+
+    /** What the notification says, and how loudly. */
+    private data class Shown(val text: String, val severity: Severity)
 
     /** Frequent enough to release a held transmission and to re-apply config after a
      *  reconnect promptly, cheap enough to ignore. */
     private val flusher = object : Runnable {
         override fun run() {
             Radio.tick()
+            refreshNotification()
             handler.postDelayed(this, FLUSH_MS)
         }
     }
@@ -63,9 +69,9 @@ class LoraService : Service() {
         // on API 34+. DMD2 can start us before the user has been through that dialog, and an
         // uncaught throw here takes the whole app down at exactly the wrong moment.
         try {
-            val text = notificationText()
-            startForeground(NOTIFICATION_ID, notification(text))
-            shownText = text
+            val s = state()
+            startForeground(NOTIFICATION_ID, notification(s))
+            shown = s
             foregroundReady = true
             Session.serviceRunning = true
             EventLog.log("service created")
@@ -124,27 +130,56 @@ class LoraService : Service() {
         } ?: "waiting for DMD2 radio config") +
             (Session.groupName?.let { " · $it" } ?: "")
 
-    /** DMD2's channel and group arrive after the service has started, so the text posted with
-     *  startForeground goes stale; the heartbeat brings it up to date. */
-    private fun refreshNotification() {
-        val text = notificationText()
-        if (!foregroundReady || text == shownText) return
-        shownText = text
-        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(text))
+    /**
+     * Red when there is no working radio while the service runs - no bridge in reach, or a
+     * bridge whose module is not answering - and amber while the bridge is there but not yet
+     * cleared to transmit. The same rules as the app's Radio row, except that a bridge being
+     * searched for is red here: on the road that is not a start-up moment, it is a lost bridge.
+     */
+    private fun state(): Shown {
+        val base = notificationText()
+        val link = if (Session.radioAttached) Radio.linkState else "off"
+        val air = Radio.airState()
+        val severity = when {
+            link != "connected" -> Severity.BAD
+            Radio.txReady -> Severity.OK
+            Radio.usable -> Severity.WARN
+            else -> Severity.BAD
+        }
+        val radio = air?.substringBefore('\n') ?: "bridge $link"
+        return Shown(if (severity == Severity.OK) base else "$radio · $base", severity)
     }
 
-    private fun notification(text: String): Notification {
+    /** DMD2's channel and group, and the bridge's state, all change after start; posted again
+     *  only when what it says has changed. */
+    private fun refreshNotification() {
+        val s = state()
+        if (!foregroundReady || s == shown) return
+        shown = s
+        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(s))
+    }
+
+    private fun notification(s: Shown): Notification {
         val open = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        return Notification.Builder(this, CHANNEL_ID)
+        val b = Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("LoRa Bridge for DMD2")
-            .setContentText(text)
-            .setSmallIcon(android.R.drawable.ic_menu_compass)
+            .setContentText(s.text)
+            // The status bar shows only the icon, so a lost bridge has to change its shape.
+            .setSmallIcon(
+                if (s.severity == Severity.BAD) android.R.drawable.stat_notify_error
+                else android.R.drawable.ic_menu_compass
+            )
             .setContentIntent(open)
             .setOngoing(true)
-            .build()
+        when (s.severity) {
+            Severity.BAD -> b.setColor(RED).setColorized(true)
+            Severity.WARN -> b.setColor(AMBER)
+            Severity.OK -> {}
+        }
+        return b.build()
     }
 
     private fun createChannel() {
@@ -162,6 +197,8 @@ class LoraService : Service() {
         private const val NOTIFICATION_ID = 1001
         private const val HEARTBEAT_MS = 10_000L
         private const val FLUSH_MS = 500L
+        private const val RED = 0xFFC62828.toInt()
+        private const val AMBER = 0xFFF9A825.toInt()
 
         fun start(context: Context) {
             val i = Intent(context, LoraService::class.java).setAction(DmdLora.ACTION_START)

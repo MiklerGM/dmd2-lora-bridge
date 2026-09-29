@@ -288,7 +288,7 @@ class MainActivity : Activity() {
         // The link and the radio are two different things: a bridge whose module is dead is a
         // perfectly healthy Bluetooth device, and saying only "connected" hid exactly that.
         val link = if (Session.radioAttached) Radio.linkState else "off"
-        val air = airState()
+        val air = Radio.airState()
         radioValue.text = if (air == null) link else "$link · $air"
         radioValue.setTextColor(
             when {
@@ -357,36 +357,6 @@ class MainActivity : Activity() {
             }
         )
         powerButton.setTextColor(if (limit < PowerLevel.WEAKEST) C.ON_ACCENT else C.TEXT)
-    }
-
-    /**
-     * What is wrong with the radio rather than with the Bluetooth link, or null when nothing
-     * is. A bridge whose radio is dead, whose build may not transmit, or which is beaconing
-     * its own position is a perfectly connected Bluetooth device either way.
-     */
-    private fun airState(): String? {
-        if (Radio.link?.connected != true) return null   // the link state already explains that
-        val st = Radio.bridgeStatus
-        return when {
-            Radio.bridgeUnsupported -> "unsupported firmware"
-            st == null -> "waiting for status"
-            st.mode != BridgeMode.BRIDGE -> "${st.mode.name.lowercase()} mode — not a bridge"
-            !st.online -> "no radio"
-            !st.tx -> "${st.radio}, transmit disabled in this build"
-            // The usual stall after an app restart, and it is not the group that is missing:
-            // DMD2 sends group data every second while never having announced a frequency.
-            // Without a region nothing is derived, on purpose, so name the thing to go and do.
-            Radio.desiredRequest == null && Session.regionDesc.isEmpty() ->
-                "${st.radio}, no frequency from DMD2 — reshare there"
-            Radio.desiredRequest == null -> "${st.radio}, waiting for group"
-            !Radio.configOwnedByGroup -> "${st.radio}, waiting for group after config"
-            !st.configured -> "${st.radio}, waiting for config"
-            !Radio.txReady -> "${st.radio}, config mismatch"
-            // Which backend, which mode, which firmware: on a bench with several boards,
-            // "connected" on its own does not say which one is answering.
-            else -> "${st.radio} ${st.mode.name.lowercase()}" +
-                (st.firmware.takeIf { it.isNotEmpty() }?.let { "\n$it" } ?: "")
-        }
     }
 
     /**

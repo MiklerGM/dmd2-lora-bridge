@@ -122,6 +122,36 @@ object Radio {
     /** What the transport is doing, for the status line. */
     val linkState: String get() = link?.state ?: "no link"
 
+    /**
+     * What the radio behind a connected link is doing, for the status row and the notification;
+     * null while the link itself is not up, whose own state already explains that. A bridge whose
+     * radio is dead, or whose build may not transmit, is a perfectly connected Bluetooth device.
+     */
+    fun airState(): String? {
+        if (link?.connected != true) return null
+        val st = bridgeStatus
+        return when {
+            bridgeUnsupported -> "unsupported firmware"
+            st == null -> "waiting for status"
+            st.mode != BridgeMode.BRIDGE -> "${st.mode.name.lowercase()} mode — not a bridge"
+            !st.online -> "no radio"
+            !st.tx -> "${st.radio}, transmit disabled in this build"
+            // The usual stall after an app restart, and it is not the group that is missing:
+            // DMD2 sends group data every second while never having announced a frequency.
+            // Without a region nothing is derived, on purpose, so name the thing to go and do.
+            desiredRequest == null && Session.regionDesc.isEmpty() ->
+                "${st.radio}, no frequency from DMD2 — reshare there"
+            desiredRequest == null -> "${st.radio}, waiting for group"
+            !configOwnedByGroup -> "${st.radio}, waiting for group after config"
+            !st.configured -> "${st.radio}, waiting for config"
+            !txReady -> "${st.radio}, config mismatch"
+            // Which backend, which mode, which firmware: on a bench with several boards,
+            // "connected" on its own does not say which one is answering.
+            else -> "${st.radio} ${st.mode.name.lowercase()}" +
+                (st.firmware.takeIf { it.isNotEmpty() }?.let { "\n$it" } ?: "")
+        }
+    }
+
     /** Run a transport callback only while that exact transport still owns this object. */
     private fun fromCurrent(source: RadioLink, action: () -> Unit) = synchronized(this) {
         if (link === source) action()
