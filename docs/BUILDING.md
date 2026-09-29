@@ -293,7 +293,7 @@ families. Measured, it is not: on index 2 it hears an E220 perfectly well, and t
 
 | Environment | Radio | State |
 |---|---|---|
-| `esp32dev`, `esp32s3`, `esp32c3` | EBYTE **E220 or E22** over UART | E220 proven carrying group traffic; E22 proven on the bench, full bridge path untested |
+| `esp32dev`, `esp32s3`, `esp32c3` | EBYTE **E220 or E22** over UART | both proven with a real NOR7E in the field: E220 on 2026-09-27, E22 for a riding day on 2026-09-28 |
 | `heltec_sx1262` | bare SX1262 over SPI | receives perfectly, **transmits badly** - see PHY-notes |
 
 The two EBYTE parts are one driver **and one image**. The E22 is the E220 with NETID inserted at

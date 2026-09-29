@@ -293,6 +293,13 @@ Join a real group ride with one cooperating NOR7E owner. Internet off after join
   server's member list; over LoRa the flag only turns the rider's card red. Not yet checked
   which of the two was seen.
 
+**2026-09-28, a full riding day on the E22 bridge (v0.1.0-131), owner's report:** positions kept
+working with no internet, in town and out of it. The gap between updates sometimes reached
+about 30 s; which direction, and why, is not known. Candidates: a BLE reconnect between phone
+and bridge (11-13 s, or 30 s with the stall in ARCHITECTURE item 10), range, and power - the
+app defaults to the weakest step, 10 dBm on an E22, while a NOR7E asks for the strongest, up to
+30 dBm on its E220-900T30S.
+
 ---
 
 ## M7 — Make it survivable
