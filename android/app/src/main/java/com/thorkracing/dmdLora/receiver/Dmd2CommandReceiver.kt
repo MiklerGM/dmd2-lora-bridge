@@ -62,9 +62,12 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
         // pacing, while the radio was connected.
         // Key on the kind of outcome, not the text: "held 918ms" differs every time, so
         // including the number made every line unique and the throttle a no-op.
+        // Each rider's position age as DMD2 hands it to us, in seconds: a rider shown as "updated
+        // minutes ago" while moving is carrying a large one, and this says who put it there.
+        val ages = riders.joinToString(" ") { "%04X:%d".format(Codec.uidHash(it.userId), it.positionAgeS) }
         EventLog.logThrottled(
             "tx-" + outcome.substringBefore(' '),
-            "TX ${riders.size} rider(s) ${packet.size}B · $outcome · ${wire.take(10)}…",
+            "TX ${riders.size} rider(s) ${packet.size}B · $outcome · ${wire.take(10)}… · age $ages",
         )
     }
 
