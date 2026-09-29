@@ -13,6 +13,15 @@ object Codec {
     const val MAGIC: Int = 0xD2
     const val VERSION: Int = 3
     const val DEFAULT_TTL: Int = 2
+
+    /**
+     * What we send. The stock app sends 2 and relays anything above 1 when it hears two or more
+     * other senders - with the TTL decremented and the CRC left stale, so no receiver that missed
+     * the original can read the relay. Each of those relays also pushes its own position back
+     * by a whole interval, and a tablet in a busy group can end up sending little but relays.
+     * TTL 1 keeps our packets out of that.
+     */
+    const val TX_TTL: Int = 1
     const val TYPE_GROUP: Int = 0
     const val TYPE_CHAT: Int = 1
     const val MAX_RIDERS: Int = 9
@@ -126,8 +135,13 @@ object Codec {
         val want = be16(packet, end)
         val buf = packet.copyOf()
         xorBody(buf, end, groupKey(groupId))
-        val got = crc16(buf, end)
-        if (got != want) return Decoded.Error("CRC_MISMATCH")
+        // A stock relay still carries the CRC of the TTL it was first sent with, one higher.
+        // Checking against that too turns a relay nobody could read into one we can.
+        val relayed = crc16(buf, end) != want
+        if (relayed) {
+            buf[2] = (ttl + 1).toByte()
+            if (crc16(buf, end) != want) return Decoded.Error("CRC_MISMATCH")
+        }
 
         if (type and 1 != 0) {
             val nameLen = buf[HEADER_LEN].toInt() and 0xFF
@@ -137,6 +151,7 @@ object Codec {
                 version, ttl, senderHash, seq, gHash,
                 senderName = String(buf, nameStart, nameLen, Charsets.UTF_8),
                 text = String(buf, nameStart + nameLen, end - nameStart - nameLen, Charsets.UTF_8),
+                relayed = relayed,
             )
         }
 
@@ -154,7 +169,7 @@ object Codec {
                 positionAgeS = be24(buf, o + 11),
             )
         }
-        return Decoded.Group(version, ttl, senderHash, seq, gHash, riders)
+        return Decoded.Group(version, ttl, senderHash, seq, gHash, riders, relayed)
     }
 
     // ---- internals ----

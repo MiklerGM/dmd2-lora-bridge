@@ -279,12 +279,17 @@ the first question with no: it is already transmitting from its own GNSS and is 
    for each LoRa rider beyond the first heard in the last 90 s (packet senders, and roster
    entries with the has-LoRa bit). We pace the same way on Android (`Peers`); the stock
    per-device slot offset and random jitter are not copied.
-4. **No relaying.** Relay is broken upstream (TTL is decremented without recomputing the CRC that
-   covers it). Send TTL=2, ignore TTL on receive, never relay. Range comes from each packet
-   carrying the sender's full roster. For reference, DMD-LoRa 1.0.9 relays position packets
-   only (never chat), only while it hears at least two other senders, after a random 1-3 s,
-   and cancels if it hears another relay of the same packet first. A relay that recomputed the
-   CRC would be accepted by stock receivers, which would make ours the only working one.
+4. **No relaying, and none of ours invited.** Relay is broken upstream: TTL is decremented
+   without recomputing the CRC that covers it, so only a receiver that already heard the
+   original gets the relay, and drops it as a duplicate. DMD-LoRa 1.0.9 relays position
+   packets only (never chat), only while it hears at least two other senders, after a random
+   1-3 s, and cancels if it hears another relay of the same packet first. Each relay also
+   counts as its last transmission, so its own position waits a whole interval after every
+   relay; in a busy group a device can end up sending mostly relays. That is the likeliest
+   reading of 2026-09-28, when one tablet heard our chat and positions but sent no position of
+   its own. So we send TTL=1, which the stock app never relays, and we never relay. On receive
+   we check the CRC against TTL+1 as well: a stock relay then reads, marked `(relayed)` in the
+   log. Range otherwise comes from each packet carrying the sender's full roster.
 5. **Version drift.** The contract was recovered from specific DMD2/DMD-LoRa versions. Record the
    versions we test against; re-check after DMD2 updates.
 6. **Package collision.** Cannot be installed next to the genuine DMD-LoRa app.
@@ -336,3 +341,9 @@ the first question with no: it is already transmitting from its own GNSS and is 
     it kept sending in the background. Every gap in the pre-trip phone check began with DMD2
     frozen; our service and both bridges carried on. The fix belongs in DMD2: start that
     service while the activity is still visible, or declare background location.
+13. **The bridge can hang.** Once on 2026-09-28, on the E22 bridge while riding: only the power
+    LED lit, none of the firmware's flashes, and the phone could not find it over Bluetooth.
+    A power cycle fixed it. A crash would have rebooted by itself (`PANIC_PRINT_REBOOT`), but a
+    hung task does not: `CONFIG_ESP_TASK_WDT_PANIC` is off, so the task watchdog only prints.
+    Next: make the watchdog reset the board, report the reset reason in `ST`, and try to
+    reproduce with a module that stops answering.

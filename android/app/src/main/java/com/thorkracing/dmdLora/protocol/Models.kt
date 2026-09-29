@@ -30,11 +30,14 @@ sealed class Decoded {
     data class Group(
         val version: Int, val ttl: Int, val senderHash: Int, val seq: Int,
         val groupHash: Long, val riders: List<RxRider>,
+        /** Heard through a stock relay rather than from the sender. */
+        val relayed: Boolean = false,
     ) : Decoded()
 
     data class Chat(
         val version: Int, val ttl: Int, val senderHash: Int, val seq: Int,
         val groupHash: Long, val senderName: String, val text: String,
+        val relayed: Boolean = false,
     ) : Decoded()
 
     data class Error(val reason: String) : Decoded()

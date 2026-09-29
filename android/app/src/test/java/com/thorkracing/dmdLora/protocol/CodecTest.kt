@@ -166,11 +166,18 @@ class CodecTest {
         assertEquals("WRONG_VERSION(9)", (Codec.decode(hex(V1_HEX).also { it[1] = 9 }, GROUP) as Decoded.Error).reason)
     }
 
-    /** Relaying decrements TTL without recomputing the CRC that covers it, so a relayed
-     *  packet fails at the next hop. We must never relay. */
-    @Test fun decrementingTtlBreaksTheCrc() {
+    /** The stock relay decrements TTL without recomputing the CRC that covers it. We check
+     *  the CRC against the TTL it was sent with, so such a relay still reads - marked as one. */
+    @Test fun aStockRelayDecodesAndSaysSo() {
         val relayed = hex(V1_HEX).also { it[2] = (it[2] - 1).toByte() }
-        assertEquals("CRC_MISMATCH", (Codec.decode(relayed, GROUP) as Decoded.Error).reason)
+        val d = Codec.decode(relayed, GROUP) as Decoded.Group
+        assertTrue(d.relayed)
+        assertEquals(1, d.ttl)
+        assertEquals(2, d.riders.size)
+        assertTrue("an original is not a relay", !(Codec.decode(hex(V1_HEX), GROUP) as Decoded.Group).relayed)
+        val twice = hex(V1_HEX).also { it[2] = (it[2] - 2).toByte() }
+        assertEquals("only the one hop the stock app makes", "CRC_MISMATCH",
+            (Codec.decode(twice, GROUP) as Decoded.Error).reason)
     }
 
     // ---- region / channel ----

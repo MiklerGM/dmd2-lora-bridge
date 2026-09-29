@@ -300,6 +300,13 @@ and bridge (11-13 s, or 30 s with the stall in ARCHITECTURE item 10), range, and
 app defaults to the weakest step, 10 dBm on an E22, while a NOR7E asks for the strongest, up to
 30 dBm on its E220-900T30S.
 
+Same day, more from the owner: help works over LoRa; chat is unreliable (nothing acknowledges
+a packet, so v0.1.0-133 sends each of our lines three times); the bridge hung once
+(ARCHITECTURE item 13); and in a group with several tablets one tablet heard our chat and
+positions but its own position did not go out. The likeliest reading is the stock relay
+starving its own transmissions (ARCHITECTURE item 4); from v0.1.0-134 we send TTL=1 so that
+our packets no longer feed it, and read stock relays instead of dropping them.
+
 ---
 
 ## M7 — Make it survivable

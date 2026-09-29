@@ -496,7 +496,8 @@ object Radio {
                 val own = ride.senderUserId?.takeIf { it.isNotEmpty() }?.let { Codec.uidHash(it) }
                 peers.heard(g.senderHash, now)
                 for (r in g.riders) if (r.hasLora && r.userIdHash != own) peers.heard(r.userIdHash, now)
-                EventLog.log("RX ${g.riders.size} rider(s) from ${"%04X".format(g.senderHash)}")
+                val via = if (g.relayed) " (relayed)" else ""
+                EventLog.log("RX ${g.riders.size} rider(s) from ${"%04X".format(g.senderHash)}$via")
                 Bridge.sendGroupDataReceived(context, Bridge.ridersJson(g), ride.groupId)
             }
             is RxAction.InjectChat -> {

@@ -54,7 +54,7 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
             return
         }
 
-        val packet = Codec.encodeGroup(groupId, sender, riders, Session.nextSeq())
+        val packet = Codec.encodeGroup(groupId, sender, riders, Session.nextSeq(), ttl = Codec.TX_TTL)
         Session.packetsEncoded.incrementAndGet()
         val wire = Codec.toWire(packet)
         val outcome = Radio.transmit(wire)
@@ -79,6 +79,7 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
             Session.myDisplayName ?: "Rider %04X".format(Codec.uidHash(Session.senderUserId.orEmpty())),
             text,
             Session.nextSeq(),
+            ttl = Codec.TX_TTL,
         )
         EventLog.log("TX chat ${packet.size} B ${Radio.transmitChat(Codec.toWire(packet))}")
     }
