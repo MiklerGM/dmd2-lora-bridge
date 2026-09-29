@@ -69,6 +69,8 @@ class MainActivity : Activity() {
     private lateinit var lonField: EditText
     private lateinit var speedField: EditText
     private lateinit var walkButton: Button
+    private lateinit var gpsButton: Button
+    private var gpsCheck: GpsCheck? = null
 
     private var walking = false
     private var openPanel = Panel.NONE
@@ -113,6 +115,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        gpsCheck?.stop()
         EventLog.onChange = null
         ui.removeCallbacks(walk)
         ui.removeCallbacks(statusTick)
@@ -165,6 +168,7 @@ class MainActivity : Activity() {
         lonField = field("13.404954", "lon")
         speedField = field("42", "km/h")
         walkButton = styled("Walk", C.CONTROL) { toggleWalk() }
+        gpsButton = styled("GPS check", C.CONTROL) { toggleGpsCheck() }
 
         toolsPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -189,6 +193,13 @@ class MainActivity : Activity() {
                 addView(styled("Inject", C.CONTROL) { inject() }, cell(1f))
                 addView(walkButton, cell(1f))
             })
+            addView(TextView(this@MainActivity).apply {
+                text = "Compares this device's GPS with the position DMD2 hands us, into the log"
+                textSize = 10f
+                setTextColor(C.MUTED)
+                setPadding(dp(2), dp(8), 0, dp(4))
+            })
+            addView(gpsButton, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         }
 
         autostartButton = styled("", C.CONTROL) { toggleAutostart() }
@@ -574,6 +585,30 @@ class MainActivity : Activity() {
             getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
         }.getOrDefault(false)
 
+    private fun toggleGpsCheck() {
+        gpsCheck?.let { it.stop(); return }
+        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(
+                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
+                REQ_GPS,
+            )
+            return
+        }
+        gpsCheck = GpsCheck(this) {
+            gpsCheck = null
+            gpsButton.text = "GPS check"
+        }.also { it.start() }
+        gpsButton.text = "Stop GPS check"
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQ_GPS) return
+        // GPS_PROVIDER needs the precise permission; "approximate" alone is not enough.
+        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) toggleGpsCheck()
+        else EventLog.log("GPS check needs precise location permission")
+    }
+
     private fun requestBlePermissions() {
         val needed = listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
             .filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
@@ -668,4 +703,8 @@ class MainActivity : Activity() {
             .getOrNull().orEmpty()
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    private companion object {
+        const val REQ_GPS = 2
+    }
 }

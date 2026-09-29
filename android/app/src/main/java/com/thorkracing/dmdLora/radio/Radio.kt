@@ -361,6 +361,7 @@ object Radio {
         if (now - lastSummaryMs >= SUMMARY_INTERVAL_MS) {
             lastSummaryMs = now
             liveness.summary(now)?.let { EventLog.log(it) }
+            liveness.dump().forEach { EventLog.log(it) }
         }
 
         val interval = peers.intervalMs(now)
@@ -554,6 +555,7 @@ object Radio {
                     g.senderHash, g.seq, now,
                     fixAgeS = g.riders.firstOrNull { it.userIdHash == g.senderHash }?.positionAgeS ?: -1,
                     hasUsS = g.riders.firstOrNull { it.userIdHash == own }?.positionAgeS ?: -1,
+                    riders = g.riders,
                 )
                 for (r in g.riders) if (r.hasLora && r.userIdHash != own) peers.heard(r.userIdHash, now)
                 val via = if (g.relayed) " (relayed)" else ""

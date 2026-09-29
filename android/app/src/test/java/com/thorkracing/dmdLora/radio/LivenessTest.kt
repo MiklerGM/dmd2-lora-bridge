@@ -5,10 +5,12 @@ import org.junit.Test
 
 class LivenessTest {
 
+    private fun own(ageS: Int) = com.thorkracing.dmdLora.protocol.TxRider("me", 47.4, 8.6, 30.0, 17, ageS)
+
     @Test fun freshChainHasNothingToSay() {
         val l = Liveness()
         assertEquals("nothing heard from DMD2 yet is not a fault", emptyList<String>(), l.problems(0))
-        l.fromDmd(1, 1_000)
+        l.fromDmd(own(1), "[]", 1_000)
         l.heard(0x1986, 1, 1_000, fixAgeS = 2, hasUsS = 3)
         assertEquals(emptyList<String>(), l.problems(3_000))
         assertEquals(1, l.hearing(3_000))
@@ -17,13 +19,13 @@ class LivenessTest {
     @Test fun eachLinkThatGoesQuietIsNamed() {
         val l = Liveness()
         // Zero means "never" here; the monotonic clock is well past it by the time we run.
-        l.fromDmd(1, 1_000)
+        l.fromDmd(own(1), "[]", 1_000)
         assertEquals(listOf("DMD2 silent 15 s"), l.problems(17_000))
 
-        l.fromDmd(null, 20_000)
+        l.fromDmd(null, "[]", 20_000)
         assertEquals(listOf("own position not shared"), l.problems(20_000))
 
-        l.fromDmd(70, 30_000)
+        l.fromDmd(own(70), "[]", 30_000)
         assertEquals("the fix keeps ageing between DMD2's calls", listOf("own GPS 1 min old"), l.problems(35_000))
 
         // The tablet on 2026-09-29: packets every two seconds, the fix inside them 12 min old.

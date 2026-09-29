@@ -1,5 +1,8 @@
 package com.thorkracing.dmdLora.radio
 
+import com.thorkracing.dmdLora.protocol.RxRider
+import com.thorkracing.dmdLora.protocol.TxRider
+
 /**
  * When each link of the chain last showed signs of life: DMD2 handing us a position, a packet
  * going to the bridge, a packet heard from each rider. The notification and the status panel
@@ -68,10 +71,18 @@ class Liveness {
         private set
     private val heard = HashMap<Int, Heard>()
     private val seqs = HashMap<Int, Seqs>()
+    private val lastPacket = HashMap<Int, List<RxRider>>()
 
-    /** DMD2 handed us a position; [ownFixAgeS] is how old our own fix was in it, if we were in it. */
-    fun fromDmd(ownFixAgeS: Int?, nowMs: Long) {
-        ownFixS = ownFixAgeS ?: -1
+    /** Our own rider as DMD2 last handed it over, and the riders_json it came in, verbatim. */
+    @Volatile var own: TxRider? = null
+        private set
+    @Volatile private var dmdJson = ""
+
+    /** DMD2 handed us riders; [own] is ours among them, if DMD2 put us in. */
+    fun fromDmd(own: TxRider?, json: String, nowMs: Long) {
+        this.own = own
+        ownFixS = own?.positionAgeS ?: -1
+        dmdJson = json
         dmdAtMs = nowMs
     }
 
@@ -79,9 +90,10 @@ class Liveness {
 
     /** A group packet from [sender]. */
     @Synchronized
-    fun heard(sender: Int, seq: Int, nowMs: Long, fixAgeS: Int, hasUsS: Int) {
+    fun heard(sender: Int, seq: Int, nowMs: Long, fixAgeS: Int, hasUsS: Int, riders: List<RxRider> = emptyList()) {
         heard[sender] = Heard(nowMs, fixAgeS, hasUsS)
         seqs.getOrPut(sender) { Seqs() }.add(seq, nowMs)
+        lastPacket[sender] = riders
     }
 
     /** Any other packet from [sender]: it used up a sequence number all the same. */
@@ -94,6 +106,9 @@ class Liveness {
     fun clear() {
         heard.clear()
         seqs.clear()
+        lastPacket.clear()
+        own = null
+        dmdJson = ""
         dmdAtMs = 0L
         ownFixS = -1
         bridgeAtMs = 0L
@@ -138,6 +153,21 @@ class Liveness {
             if (h.fixAgeS * 1000L > FIX_OLD_MS) add("%04X GPS %s old".format(hash, ago(h.fixAgeS * 1000L)))
             // We hear them, but they last heard us this long ago.
             if (h.hasUsS * 1000L > FIX_OLD_MS) add("%04X lost us %s".format(hash, ago(h.hasUsS * 1000L)))
+        }
+    }
+
+    /**
+     * The raw material, for the log every few minutes: what DMD2 last handed us, verbatim, and
+     * what each rider last sent, decoded. Positions included on purpose - comparing them is
+     * the point - so a log with these lines is as private as a track.
+     */
+    @Synchronized
+    fun dump(): List<String> = buildList {
+        if (dmdJson.isNotEmpty()) add("DMD2 sent: $dmdJson")
+        for ((sender, riders) in lastPacket.entries.sortedBy { it.key }) {
+            add("last from %04X: ".format(sender) + riders.joinToString(" · ") {
+                "%04X %.6f,%.6f %.1f km/h st %d age %d".format(it.userIdHash, it.lat, it.lon, it.speedKmh, it.status, it.positionAgeS)
+            })
         }
     }
 

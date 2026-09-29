@@ -50,7 +50,7 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
 
         learnOwnName(json, sender)
         val riders = parseRiders(json)
-        Radio.liveness.fromDmd(riders.firstOrNull { it.userId == sender }?.positionAgeS, SystemClock.elapsedRealtime())
+        Radio.liveness.fromDmd(riders.firstOrNull { it.userId == sender }, json, SystemClock.elapsedRealtime())
         if (riders.isEmpty()) {
             EventLog.log("TX skipped — no usable riders in riders_json")
             return
