@@ -2,6 +2,7 @@ package com.thorkracing.dmdLora
 
 import android.Manifest
 import android.app.Activity
+import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -12,6 +13,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.provider.MediaStore
 import android.provider.Settings
 import android.text.SpannableStringBuilder
 import android.text.Spanned
@@ -98,6 +100,7 @@ class MainActivity : Activity() {
         setContentView(buildUi())
         showPanel(Panel.NONE)
 
+        EventLog.persistTo(filesDir)
         EventLog.onChange = { ui.post { renderLog() } }
         EventLog.log("UI started; waiting for DMD2 to talk to us")
         renderLog()
@@ -210,6 +213,7 @@ class MainActivity : Activity() {
             addView(LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 setPadding(0, dp(4), 0, 0)
+                addView(styled("Share log", C.CONTROL) { shareLog() }, cell(1f))
                 addView(styled("Clear log", C.CONTROL) { EventLog.clear() }, cell(1f))
             })
         }
@@ -428,6 +432,38 @@ class MainActivity : Activity() {
         "scanning", "connecting", "pairing" -> C.WARN
         "bluetooth off", "no permission", "not found" -> C.DANGER
         else -> C.MUTED
+    }
+
+    /**
+     * Put the whole kept log in Downloads and offer to send it. Downloads needs no permission for
+     * a file this app creates, and its content URI can be handed to a share target directly.
+     */
+    private fun shareLog() {
+        val name = "lora-bridge-log-" +
+            java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date()) + ".txt"
+        val values = ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, name)
+            put(MediaStore.Downloads.MIME_TYPE, "text/plain")
+            put(MediaStore.Downloads.IS_PENDING, 1)
+        }
+        val uri = try {
+            contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)?.also { u ->
+                contentResolver.openOutputStream(u)?.use { EventLog.copyTo(it) }
+                contentResolver.update(u, ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null)
+            }
+        } catch (e: Exception) {
+            null
+        }
+        if (uri == null) {
+            EventLog.log("log could not be saved to Downloads")
+            return
+        }
+        EventLog.log("log saved to Downloads/$name")
+        val send = Intent(Intent.ACTION_SEND)
+            .setType("text/plain")
+            .putExtra(Intent.EXTRA_STREAM, uri)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        startActivity(Intent.createChooser(send, "Share log"))
     }
 
     private fun renderLog() {

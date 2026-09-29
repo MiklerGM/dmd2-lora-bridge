@@ -57,6 +57,7 @@ class LoraService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        EventLog.persistTo(filesDir)
         createChannel()
         // A connectedDevice foreground service needs the Bluetooth permission already granted
         // on API 34+. DMD2 can start us before the user has been through that dialog, and an

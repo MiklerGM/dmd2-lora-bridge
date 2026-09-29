@@ -34,6 +34,23 @@ class ChatQueueTest {
     }
 }
 
+class ChatRepeatTest {
+
+    @Test fun `each line goes out three times with a gap, then leaves the queue`() {
+        val q = ChatQueue(random = kotlin.random.Random(7))
+        q.add("hi", 0)
+        q.add("next", 0)
+        assertEquals("hi", q.due(0))
+        assertEquals(1, q.sent(0))
+        assertNull("a repeat waits at least a second", q.due(999))
+        assertEquals("and at most three", "hi", q.due(3_000))
+        assertEquals(2, q.sent(3_000))
+        assertEquals("hi", q.due(6_000))
+        assertEquals(3, q.sent(6_000))
+        assertEquals("after the third it is done", "next", q.due(6_000))
+    }
+}
+
 class BondHealthTest {
 
     @Test fun `only repeated protected-write rejection means the key is stale`() {

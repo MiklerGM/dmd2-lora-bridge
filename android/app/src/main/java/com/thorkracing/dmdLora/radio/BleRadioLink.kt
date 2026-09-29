@@ -756,6 +756,10 @@ class BleRadioLink(context: Context) : RadioLink {
                 updateVerifiedLink()
                 onStatus?.invoke(status)
             }
+            // The bridge's word that a packet really left the module: "TXD ok <bytes> <ms>".
+            // One per transmission, so the screen shows a heartbeat and the file keeps them all;
+            // anything but ok is shown every time.
+            line.startsWith("TXD ok ") -> EventLog.logThrottled("tx-air", "bridge: $line")
             else -> EventLog.log("bridge: $line")
         }
     }

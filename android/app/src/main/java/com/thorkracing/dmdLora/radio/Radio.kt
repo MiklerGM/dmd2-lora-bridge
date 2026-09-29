@@ -369,19 +369,18 @@ object Radio {
         }
 
         // One transmission per pacing window: chat first (rare, must not drop), else position.
-        if (chatWaiting) {
-            if (scheduler.tryPace(now)) {
-                val wire = chat.peek()
-                if (wire != null && l.send(wire)) {
-                    chat.poll()
-                    EventLog.log("TX chat queued to bridge")
-                }
+        // Between the repeats of a chat line, positions go out as usual.
+        val chatNow = chat.due(now)
+        if (chatNow != null) {
+            if (scheduler.tryPace(now) && l.send(chatNow)) {
+                val n = chat.sent(now)
+                EventLog.log("TX chat queued to bridge ($n of ${ChatQueue.SENDS}) · ${chatNow.take(10)}…")
             }
             return
         }
         val wire = scheduler.poll(now) ?: return
         if (l.send(wire)) {
-            EventLog.logThrottled("tx-release", "TX position queued to bridge")
+            EventLog.logThrottled("tx-release", "TX position queued to bridge · ${wire.take(10)}…")
         }
     }
 
