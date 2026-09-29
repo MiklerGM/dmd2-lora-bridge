@@ -23,6 +23,9 @@ object Radio {
     private val scheduler = TxScheduler()
     private val peers = Peers()
 
+    /** When each part of the chain last did something, for the notification and the panel. */
+    val liveness = Liveness()
+
     // Chat does not share the latest-only position slot: it waits in its own queue and is
     // drained ahead of position updates.
     private val chat = ChatQueue()
@@ -200,6 +203,7 @@ object Radio {
             router.reset()
             scheduler.reset()
             peers.clear()
+            liveness.clear()
             previous
         }
         old?.close()
@@ -223,7 +227,10 @@ object Radio {
             return gateReason()
         }
         if (send == null) return "held ${scheduler.waitMs(now)}ms"
-        if (l.send(send)) return "queued to bridge"
+        if (l.send(send)) {
+            liveness.toBridge(now)
+            return "queued to bridge"
+        }
         // The transport retired between readiness and queue admission. Position is periodic;
         // dropping it is safer than retaining an untimestamped value across an unbounded gap.
         return "dropped — radio link changed"
@@ -403,6 +410,7 @@ object Radio {
         val chatNow = chat.due(now)
         if (chatNow != null) {
             if (scheduler.tryPace(now) && l.send(chatNow)) {
+                liveness.toBridge(now)
                 val n = chat.sent(now)
                 EventLog.log("TX chat queued to bridge ($n of ${ChatQueue.SENDS}) · ${chatNow.take(10)}…")
             }
@@ -410,6 +418,7 @@ object Radio {
         }
         val wire = scheduler.poll(now) ?: return
         if (l.send(wire)) {
+            liveness.toBridge(now)
             EventLog.logThrottled("tx-release", "TX position queued to bridge · ${wire.take(10)}…")
         }
     }
@@ -510,6 +519,7 @@ object Radio {
         scheduler.reset()
         router.reset()
         peers.clear()
+        liveness.clear()
         if (announce && chats > 0) EventLog.log("$chats queued message(s) dropped with the group")
     }
 
@@ -525,6 +535,7 @@ object Radio {
                 val now = nowMs()
                 val own = ride.senderUserId?.takeIf { it.isNotEmpty() }?.let { Codec.uidHash(it) }
                 peers.heard(g.senderHash, now)
+                liveness.heard(g.senderHash, g.riders.firstOrNull { it.userIdHash == g.senderHash }?.positionAgeS ?: -1, now)
                 for (r in g.riders) if (r.hasLora && r.userIdHash != own) peers.heard(r.userIdHash, now)
                 val via = if (g.relayed) " (relayed)" else ""
                 val ages = g.riders.joinToString(" ") { "%04X:%d".format(it.userIdHash, it.positionAgeS) }

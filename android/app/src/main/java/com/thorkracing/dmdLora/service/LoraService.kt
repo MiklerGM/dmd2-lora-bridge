@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import com.thorkracing.dmdLora.Bridge
 import com.thorkracing.dmdLora.DmdLora
 import com.thorkracing.dmdLora.EventLog
@@ -133,21 +134,27 @@ class LoraService : Service() {
     /**
      * Red when there is no working radio while the service runs - no bridge in reach, or a
      * bridge whose module is not answering - and amber while the bridge is there but not yet
-     * cleared to transmit. The same rules as the app's Radio row, except that a bridge being
+     * cleared to transmit, or while something upstream or on the air has gone quiet. The same rules as the app's Radio row, except that a bridge being
      * searched for is red here: on the road that is not a start-up moment, it is a lost bridge.
      */
     private fun state(): Shown {
-        val base = notificationText()
+        val now = SystemClock.elapsedRealtime()
         val link = if (Session.radioAttached) Radio.linkState else "off"
-        val air = Radio.airState()
+        val connected = link == "connected"
+        val problems = Radio.liveness.problems(now)
         val severity = when {
-            link != "connected" -> Severity.BAD
-            Radio.txReady -> Severity.OK
-            Radio.usable -> Severity.WARN
-            else -> Severity.BAD
+            !connected -> Severity.BAD
+            !Radio.txReady && !Radio.usable -> Severity.BAD
+            !Radio.txReady || problems.isNotEmpty() -> Severity.WARN
+            else -> Severity.OK
         }
-        val radio = air?.substringBefore('\n') ?: "bridge $link"
-        return Shown(if (severity == Severity.OK) base else "$radio · $base", severity)
+        val parts = mutableListOf<String>()
+        if (!connected || !Radio.txReady) parts += Radio.airState()?.substringBefore('\n') ?: "bridge $link"
+        parts += problems
+        parts += notificationText()
+        // Riders heard in the last minute: the one number that says the air is alive.
+        if (connected) parts += "hearing ${Radio.liveness.hearing(now)}"
+        return Shown(parts.joinToString(" · "), severity)
     }
 
     /** DMD2's channel and group, and the bridge's state, all change after start; posted again
@@ -167,6 +174,7 @@ class LoraService : Service() {
         val b = Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("LoRa Bridge for DMD2")
             .setContentText(s.text)
+            .setStyle(Notification.BigTextStyle().bigText(s.text))
             // The status bar shows only the icon, so a lost bridge has to change its shape.
             .setSmallIcon(
                 if (s.severity == Severity.BAD) android.R.drawable.stat_notify_error

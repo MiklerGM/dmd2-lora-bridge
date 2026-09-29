@@ -307,6 +307,16 @@ positions but its own position did not go out. The likeliest reading is the stoc
 starving its own transmissions (ARCHITECTURE item 4); from v0.1.0-134 we send TTL=1 so that
 our packets no longer feed it, and read stock relays instead of dropping them.
 
+**2026-09-29, logs from both of our apps** (phone BF07 on the E220, a second tablet 0B80 on the
+E22, the NOR7E 1986): each of our devices received about 45% of the other's packets; nine
+stock relays were read. At about 16:30 the phone and the NOR7E both stopped echoing the
+tablet within 30 s of each other, which DMD2 does once a rider's position is older than
+10 minutes: from about 16:20 the tablet's DMD2 kept handing over its own position with a
+growing age, while the packets themselves kept arriving - "updated minutes ago" on every map.
+The two apps' clocks agreed to 0.1 s (NOR7E packets heard by both), so it was not a clock.
+From v0.1.0-136 the log carries every rider's position age; from v0.1.0-137 the notification
+and the status panel name a stale fix, a silent DMD2 and a quiet air as they happen.
+
 ---
 
 ## M7 — Make it survivable

@@ -13,6 +13,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import android.provider.MediaStore
 import android.provider.Settings
 import android.text.SpannableStringBuilder
@@ -27,6 +28,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.thorkracing.dmdLora.radio.Radio
+import com.thorkracing.dmdLora.radio.Liveness
 import com.thorkracing.dmdLora.radio.BridgeMode
 import com.thorkracing.dmdLora.radio.PowerLevel
 import com.thorkracing.dmdLora.service.LoraService
@@ -44,6 +46,8 @@ class MainActivity : Activity() {
     private lateinit var radioValue: TextView
     private lateinit var groupValue: TextView
     private lateinit var trafficValue: TextView
+    private lateinit var dmdValue: TextView
+    private lateinit var heardValue: TextView
     private lateinit var serviceAction: Button
     private lateinit var unpairAction: Button
 
@@ -126,6 +130,8 @@ class MainActivity : Activity() {
         radioValue = valueText()
         groupValue = valueText()
         trafficValue = valueText()
+        dmdValue = valueText()
+        heardValue = valueText()
 
         // One control per row, next to the thing it acts on: the service action sits with the
         // service state, unpairing sits with the radio it would disconnect.
@@ -149,6 +155,8 @@ class MainActivity : Activity() {
             addView(statusRow("Radio", radioValue, unpairAction))
             addView(bridgePicker)
             addView(statusRow("Group", groupValue, null))
+            addView(statusRow("DMD2", dmdValue, null))
+            addView(statusRow("Heard", heardValue, null))
             addView(statusRow("Traffic", trafficValue, null))
         }
 
@@ -318,6 +326,7 @@ class MainActivity : Activity() {
             "   $channelText"
         trafficValue.text =
             "Encoded ${Session.packetsEncoded.get()}   RX→DMD2 ${Session.groupDataReceived.get()}"
+        renderLiveness()
 
         val auto = Prefs.autostart(this)
         autostartButton.text = if (auto) "Autostart: on" else "Autostart: off"
@@ -397,6 +406,31 @@ class MainActivity : Activity() {
     }
 
     /** Green when working, amber while it is getting there, red when it needs a human. */
+    /** Each part of the chain with how long ago it last did something; amber when it went quiet. */
+    private fun renderLiveness() {
+        val now = SystemClock.elapsedRealtime()
+        val live = Radio.liveness
+        val problems = live.problems(now)
+        if (live.dmdAtMs == 0L) {
+            dmdValue.text = "no positions from DMD2 yet"
+            dmdValue.setTextColor(C.MUTED)
+        } else {
+            val own = live.ownFixAgeS(now)
+            dmdValue.text = "position ${Liveness.ago(now - live.dmdAtMs)} ago · " +
+                (if (own >= 0) "own GPS ${Liveness.ago(own * 1000L)} old" else "own position not shared") +
+                (if (live.bridgeAtMs != 0L) "\nto bridge ${Liveness.ago(now - live.bridgeAtMs)} ago" else "")
+            val quiet = problems.any { it.startsWith("DMD2") || it.startsWith("own") }
+            dmdValue.setTextColor(if (quiet) C.WARN else C.OK)
+        }
+        val riders = live.senders(now)
+        heardValue.text = if (riders.isEmpty()) "nobody yet" else riders.joinToString("\n") { (hash, h) ->
+            "%04X  %s ago".format(hash, Liveness.ago(now - h.atMs)) +
+                (if (h.fixAgeS >= 0) " · GPS ${Liveness.ago(h.fixAgeS * 1000L)} old" else "")
+        }
+        val stale = problems.any { it.startsWith("air") || it.contains(" GPS ") && !it.startsWith("own") }
+        heardValue.setTextColor(if (riders.isEmpty()) C.MUTED else if (stale) C.WARN else C.OK)
+    }
+
     private fun stateColor(state: String): Int = when (state) {
         "connected" -> C.OK
         "scanning", "connecting", "pairing" -> C.WARN

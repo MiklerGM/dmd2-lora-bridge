@@ -3,6 +3,7 @@ package com.thorkracing.dmdLora.receiver
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.SystemClock
 import com.thorkracing.dmdLora.Bridge
 import com.thorkracing.dmdLora.DmdLora
 import com.thorkracing.dmdLora.EventLog
@@ -49,6 +50,7 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
 
         learnOwnName(json, sender)
         val riders = parseRiders(json)
+        Radio.liveness.fromDmd(riders.firstOrNull { it.userId == sender }?.positionAgeS, SystemClock.elapsedRealtime())
         if (riders.isEmpty()) {
             EventLog.log("TX skipped — no usable riders in riders_json")
             return

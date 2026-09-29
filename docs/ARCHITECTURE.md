@@ -347,3 +347,9 @@ the first question with no: it is already transmitting from its own GNSS and is 
     hung task does not: `CONFIG_ESP_TASK_WDT_PANIC` is off, so the task watchdog only prints.
     Next: make the watchdog reset the board, report the reset reason in `ST`, and try to
     reproduce with a module that stops answering.
+14. **The E220 misses its health probe in a busy group.** On 2026-09-29 the phone's E220
+    bridge reported `online=0` 51 times in four hours, in pairs 30 s apart (the probe period);
+    each time the app re-sent CFG and the radio was back within 0.4-5 s. Short outages, but
+    each costs a CFG, which on an E220 is a flash write. Likely the module was busy receiving
+    when the probe switched it to configuration mode. Next: treat one unanswered probe as
+    busy and retry, and declare the module down only after several in a row.
