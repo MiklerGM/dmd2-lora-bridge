@@ -594,11 +594,14 @@ class MainActivity : Activity() {
             )
             return
         }
-        gpsCheck = GpsCheck(this) {
+        // Set before start(): a device without GPS finishes inside start() itself.
+        val check = GpsCheck(this) {
             gpsCheck = null
             gpsButton.text = "GPS check"
-        }.also { it.start() }
+        }
+        gpsCheck = check
         gpsButton.text = "Stop GPS check"
+        check.start()
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
