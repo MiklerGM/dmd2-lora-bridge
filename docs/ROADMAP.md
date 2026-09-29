@@ -327,6 +327,11 @@ Only once M6 passes:
   **Interval done 2026-09-28**: 1500 ms plus 500 ms for each LoRa rider beyond the first heard
   in the last 90 s, as DMD-LoRa 1.0.9 counts them. Its per-device slot offset and random jitter
   are not copied.
+- **Open after the 2026-09 trip.** Firmware: report each transmission that really left the
+  module (`TXD ok <bytes> <ms>`, which the app already logs), reset on a hung task
+  (ARCHITECTURE item 13), and retry the E220 health probe before declaring the module down
+  (item 14). App: the GPS check should say plainly that DMD2 sends nothing while no bridge is
+  ready, instead of "DMD2 has not given us our own position".
 - Dedup ring, sequence handling, stale-position expiry.
 - ~~Works without a network.~~ **Verified 2026-09-09**, which is the premise the whole project
   rests on. With airplane mode on, no connected networks and `ping: Network is unreachable`,
