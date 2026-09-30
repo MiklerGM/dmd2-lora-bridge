@@ -317,6 +317,17 @@ The two apps' clocks agreed to 0.1 s (NOR7E packets heard by both), so it was no
 From v0.1.0-136 the log carries every rider's position age; from v0.1.0-137 the notification
 and the status panel name a stale fix, a silent DMD2 and a quiet air as they happen.
 
+**2026-09-30, the stale tablet explained.** With v0.1.0-140 the tablet's packets carried its
+own position age as exactly 3600 s, the same in consecutive packets: not a fix that stopped,
+which would keep ageing, but two clocks an hour apart. The owner then found that the tablet
+shows an hour less when set to GPS time than to network time. DMD2 computes its own fix's age
+as the device clock minus the fix's GNSS timestamp, both absolute, so every fresh fix looked
+an hour old to everyone - a moving marker "updated an hour ago", and dropped from everyone's
+echoes past 10 minutes. The likeliest cause is a time zone an hour west of the real one with
+the clock set by hand to look right. A device whose clock disagrees with its GPS time breaks
+DMD2 LoRa sharing whatever bridge it uses; GPS check in the app shows it as a fix whose age by
+GNSS time differs from its age by the device clock.
+
 ---
 
 ## M7 — Make it survivable
