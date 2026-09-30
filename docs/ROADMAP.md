@@ -335,9 +335,9 @@ between 10:48 and 10:50, and GMT+3 then made the display look right on a clock a
 From then on its DMD2 held other riders frozen with age 0 and retold them so: NOR7E and the
 phone 12-18 km behind from about 11:30 to 12:15, and NOR7E again 4-33 km behind from 16:20 to
 17:48, the second time with no clock step, most likely server data against the slow clock.
-The phone's DMD2 took those retellings whenever it had not heard NOR7E for 30 s. v0.1.0-141
+The phone's DMD2 took those retellings whenever it had not heard NOR7E for 30 s. v0.1.0-143
 filters such retellings both ways and caps our own age by movement (ARCHITECTURE item 15).
-For a device like this tablet: automatic network time and time zone, with v0.1.0-141 or later
+For a device like this tablet: automatic network time and time zone, with v0.1.0-143 or later
 on it so the app corrects the hour-old ages, never switch the time source during a ride, and
 restart DMD2 after any clock change.
 

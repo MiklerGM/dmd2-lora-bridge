@@ -361,7 +361,7 @@ the first question with no: it is already transmitting from its own GNSS and is 
     their own first-hand data whenever that rider has been silent for 30 s. On 2026-09-30 the
     tablet (its clock stepped by an hour several times that morning, then set an hour behind to
     match its GPS) held NOR7E and the phone 10-30 km behind for up to 90 minutes, and every map
-    in the group jumped. From v0.1.0-141 the app does not pass on, in either direction, a
+    in the group jumped. From v0.1.0-143 the app does not pass on, in either direction, a
     retold position that would mean faster than about 250 km/h from the rider's own last report
     (`FirstHand`), and caps our own position's age by how long ago our coordinates moved
     (`OwnFix`), so a device whose GPS clock and system clock disagree no longer sends fresh
