@@ -26,6 +26,12 @@ object Radio {
     /** When each part of the chain last did something, for the notification and the panel. */
     val liveness = Liveness()
 
+    /** Each rider's own last position, to judge positions retold by others against. */
+    val firstHand = FirstHand()
+
+    /** Our own position's age, from our coordinates as much as from DMD2's clock arithmetic. */
+    val ownFix = OwnFix()
+
     // Chat does not share the latest-only position slot: it waits in its own queue and is
     // drained ahead of position updates.
     private val chat = ChatQueue()
@@ -206,6 +212,8 @@ object Radio {
             scheduler.reset()
             peers.clear()
             liveness.clear()
+            firstHand.clear()
+            ownFix.clear()
             previous
         }
         old?.close()
@@ -536,6 +544,7 @@ object Radio {
         router.reset()
         peers.clear()
         liveness.clear()
+        firstHand.clear()
         if (announce && chats > 0) EventLog.log("$chats queued message(s) dropped with the group")
     }
 
@@ -561,7 +570,20 @@ object Radio {
                 val via = if (g.relayed) " (relayed)" else ""
                 val ages = g.riders.joinToString(" ") { "%04X:%d".format(it.userIdHash, it.positionAgeS) }
                 EventLog.log("RX ${g.riders.size} rider(s) from ${"%04X".format(g.senderHash)}$via · age $ages")
-                Bridge.sendGroupDataReceived(context, Bridge.ridersJson(g), ride.groupId)
+                g.riders.firstOrNull { it.userIdHash == g.senderHash }?.let {
+                    firstHand.heard(it.userIdHash, it.lat, it.lon, it.positionAgeS, now)
+                }
+                val kept = g.riders.filter { r ->
+                    if (r.userIdHash == g.senderHash || r.userIdHash == own) return@filter true
+                    val why = firstHand.implausible(r.userIdHash, r.lat, r.lon, r.positionAgeS, now) ?: return@filter true
+                    EventLog.logThrottled(
+                        "retold-in-%04X-%04X".format(g.senderHash, r.userIdHash),
+                        "not passing %04X as retold by %04X: %s".format(r.userIdHash, g.senderHash, why),
+                        60_000L,
+                    )
+                    false
+                }
+                Bridge.sendGroupDataReceived(context, Bridge.ridersJson(g.copy(riders = kept)), ride.groupId)
             }
             is RxAction.InjectChat -> {
                 val c = action.chat

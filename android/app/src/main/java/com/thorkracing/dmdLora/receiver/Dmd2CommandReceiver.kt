@@ -49,8 +49,9 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
         Radio.configureForGroup(context, groupId)
 
         learnOwnName(json, sender)
-        val riders = parseRiders(json)
-        Radio.liveness.fromDmd(riders.firstOrNull { it.userId == sender }, json, SystemClock.elapsedRealtime())
+        val now = SystemClock.elapsedRealtime()
+        val riders = checked(parseRiders(json), sender, now)
+        Radio.liveness.fromDmd(riders.firstOrNull { it.userId == sender }, json, now)
         if (riders.isEmpty()) {
             EventLog.log("TX skipped — no usable riders in riders_json")
             return
@@ -151,6 +152,31 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
             "own display name not in roster (me=${senderUserId.take(8)}, ids=${seen.map { it.take(8) }})",
             60_000L,
         )
+    }
+
+    /**
+     * What goes on the air is not always what DMD2 hands over. Our own position's age is capped
+     * by how long ago our coordinates last moved ([com.thorkracing.dmdLora.radio.OwnFix]), and a
+     * rider DMD2 would retell far from where that rider itself last said it was is left out
+     * ([com.thorkracing.dmdLora.radio.FirstHand]): passing it on would move them on every map.
+     */
+    private fun checked(riders: List<TxRider>, sender: String, now: Long): List<TxRider> = riders.mapNotNull { r ->
+        if (r.userId == sender) {
+            val age = Radio.ownFix.ageS(r.lat, r.lon, r.positionAgeS, now)
+            if (r.positionAgeS - age > 60) {
+                EventLog.logThrottled(
+                    "own-age",
+                    "own position: DMD2 says ${r.positionAgeS} s old, but it moved ${age} s ago — sending ${age} s " +
+                        "(this device's GPS clock and system clock disagree?)",
+                    60_000L,
+                )
+            }
+            return@mapNotNull r.copy(positionAgeS = age)
+        }
+        val hash = Codec.uidHash(r.userId)
+        val why = Radio.firstHand.implausible(hash, r.lat, r.lon, r.positionAgeS, now) ?: return@mapNotNull r
+        EventLog.logThrottled("retold-out-%04X".format(hash), "not retelling %04X: DMD2 has it %s".format(hash, why), 60_000L)
+        null
     }
 
     /** DMD2 sends full user ids outbound; the wire carries only their 16-bit hashes. */

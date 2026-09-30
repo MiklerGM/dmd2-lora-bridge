@@ -2,6 +2,7 @@ package com.thorkracing.dmdLora.radio
 
 import com.thorkracing.dmdLora.protocol.RxRider
 import com.thorkracing.dmdLora.protocol.TxRider
+import java.util.Locale
 
 /**
  * When each link of the chain last showed signs of life: DMD2 handing us a position, a packet
@@ -166,7 +167,8 @@ class Liveness {
         if (dmdJson.isNotEmpty()) add("DMD2 sent: $dmdJson")
         for ((sender, riders) in lastPacket.entries.sortedBy { it.key }) {
             add("last from %04X: ".format(sender) + riders.joinToString(" · ") {
-                "%04X %.6f,%.6f %.1f km/h st %d age %d".format(it.userIdHash, it.lat, it.lon, it.speedKmh, it.status, it.positionAgeS)
+                String.format(Locale.US, "%04X %.6f,%.6f %.1f km/h st %d age %d",
+                    it.userIdHash, it.lat, it.lon, it.speedKmh, it.status, it.positionAgeS)
             })
         }
     }

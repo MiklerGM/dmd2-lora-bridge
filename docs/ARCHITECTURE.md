@@ -353,3 +353,17 @@ the first question with no: it is already transmitting from its own GNSS and is 
     each costs a CFG, which on an E220 is a flash write. Likely the module was busy receiving
     when the probe switched it to configuration mode. Next: treat one unanswered probe as
     busy and retry, and declare the module down only after several in a row.
+15. **DMD2 freezes positions stamped in the future, and retells them as brand new.** DMD2
+    keeps each rider's position time on its own device clock. If that time lands in the future
+    - the clock steps back, or data with true timestamps meets a clock that runs behind - its
+    age is clamped to 0, newer positions are refused as older, and the frozen one is retold to
+    everyone with age 0 until the clock catches up, up to an hour. Other DMD2s accept age 0 over
+    their own first-hand data whenever that rider has been silent for 30 s. On 2026-09-30 the
+    tablet (its clock stepped by an hour several times that morning, then set an hour behind to
+    match its GPS) held NOR7E and the phone 10-30 km behind for up to 90 minutes, and every map
+    in the group jumped. From v0.1.0-141 the app does not pass on, in either direction, a
+    retold position that would mean faster than about 250 km/h from the rider's own last report
+    (`FirstHand`), and caps our own position's age by how long ago our coordinates moved
+    (`OwnFix`), so a device whose GPS clock and system clock disagree no longer sends fresh
+    fixes as an hour old. The fixes that belong in DMD2: age a fix by the monotonic clock
+    (`Location.getElapsedRealtimeNanos`), and treat a future timestamp as invalid, not as now.
