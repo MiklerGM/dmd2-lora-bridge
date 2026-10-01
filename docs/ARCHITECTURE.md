@@ -367,7 +367,7 @@ the first question with no: it is already transmitting from its own GNSS and is 
     (`OwnFix`), so a device whose GPS clock and system clock disagree no longer sends fresh
     fixes as an hour old. The fixes that belong in DMD2: age a fix by the monotonic clock
     (`Location.getElapsedRealtimeNanos`), and treat a future timestamp as invalid, not as now.
-    From v0.1.0-145 every age the app passes on is one it can defend on its own monotonic
+    From v0.1.0-146 every age the app passes on is one it can defend on its own monotonic
     clock (`radio/Ages.kt`; reasoning in `/home/morlov/projects/dmd2/research-clocks-synthesis-2026-10-01.md`):
     a retold position cannot get younger than the time since we first saw that point, if the
     rider is at speed or has since reported itself elsewhere (`RetoldAge`, on receive and send,
