@@ -45,7 +45,7 @@ class LivenessTest {
         l.heard(0x1986, 1, 1_000, fixAgeS = 1, hasUsS = 3)
         assertEquals(emptyList<String>(), l.problems(1_000))
         l.heard(0x1986, 2, 3_000, fixAgeS = 1, hasUsS = 125)
-        assertEquals("we hear them, they stopped hearing us", listOf("1986 lost us 2 min"), l.problems(3_000))
+        assertEquals("we hear them, but they show us where we were", listOf("1986 has you 2 min old"), l.problems(3_000))
     }
 
     @Test fun receptionCountsTheGapsInTheirNumbers() {
@@ -66,6 +66,15 @@ class LivenessTest {
         for (seq in (1..12) - 5) r.heard(2, seq, 1_000, 1, 1)
         r.heard(2, 5, 1_500, 1, 1)
         assertEquals(12 to 12, r.reception(2, 1_500))
+    }
+
+    @Test fun aClockSetBackIsShownForAsLongAsDmd2StaysFrozen() {
+        val l = Liveness()
+        assertEquals(null, l.clockSample(wallMs = 1_000_000, monoMs = 1_000))
+        assertEquals("drift is not a step", null, l.clockSample(1_500_900, 501_000))
+        assertEquals(-3_600_000L, l.clockSample(wallMs = 1_500_900 - 3_600_000 + 500, monoMs = 501_500))
+        assertEquals(listOf("clock set back 60 min — rejoin the group in DMD2"), l.problems(600_000))
+        assertEquals("an hour later DMD2 has caught up", emptyList<String>(), l.problems(501_500 + 3_600_001))
     }
 
     @Test fun agesAreCoarseSoTheNotificationDoesNotFlicker() {

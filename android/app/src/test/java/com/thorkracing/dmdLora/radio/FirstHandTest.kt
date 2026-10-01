@@ -28,12 +28,4 @@ class FirstHandTest {
         assertNull("600 m in 20 s is a fast bike, not a jump",
             f.implausible(0x1986, here.first + 0.0054, here.second, 0, 20_000))
     }
-
-    @Test fun ownAgeIsCappedByHowLongAgoWeMoved() {
-        val o = OwnFix()
-        assertEquals("the first sight takes DMD2's word", 3600, o.ageS(54.0, 20.0, 3600, 1_000))
-        assertEquals("moved: a second old, whatever the clocks say", 0, o.ageS(54.0001, 20.0, 3601, 2_000))
-        assertEquals("standing still, it ages", 10, o.ageS(54.0001, 20.0, 3611, 12_000))
-        assertEquals("never older than DMD2 says", 0, o.ageS(54.0001, 20.0, 0, 30_000))
-    }
 }

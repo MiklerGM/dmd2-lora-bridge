@@ -233,6 +233,9 @@ object Codec {
         else -> toInt()
     }
 
+    // Truncated, as the stock app does, so our packets match its reference vectors byte for byte.
+    // A decode/encode round trip therefore moves about half of all points by one LSB (2-3 m);
+    // RetoldAge matches points with that tolerance.
     internal fun encodeLat(lat: Double): Int =
         (((if (lat.isNaN()) 0.0 else lat.coerceIn(-90.0, 90.0)) + 90.0) * LAT_SCALE)
             .toIntClamped().coerceIn(0, 0xFFFFFF)

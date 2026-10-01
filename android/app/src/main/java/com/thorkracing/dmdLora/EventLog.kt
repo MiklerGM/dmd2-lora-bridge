@@ -1,5 +1,6 @@
 package com.thorkracing.dmdLora
 
+import android.os.SystemClock
 import android.util.Log
 import java.io.File
 import java.io.IOException
@@ -7,6 +8,7 @@ import java.io.OutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 
 /**
  * Operational log. The screen keeps the last [MAX] lines; a file keeps the whole ride, so a
@@ -40,7 +42,8 @@ object EventLog {
      */
     @Synchronized
     fun logThrottled(key: String, msg: String, intervalMs: Long = 15_000L) {
-        val now = System.currentTimeMillis()
+        // Monotonic: on the wall clock a step back silenced these lines for as long as the step.
+        val now = SystemClock.elapsedRealtime()
         val last = lastLogged[key]
         val show = last == null || now - last >= intervalMs
         if (show) lastLogged[key] = now
@@ -49,6 +52,13 @@ object EventLog {
 
     private fun write(msg: String, screen: Boolean) {
         val now = Date()
+        // A formatter keeps the time zone it was made with; follow a change of zone instead of
+        // stamping lines an hour off until the next restart.
+        val zone = TimeZone.getDefault()
+        if (stamp.timeZone != zone) {
+            stamp.timeZone = zone
+            fileStamp.timeZone = zone
+        }
         if (screen) {
             Log.d(DmdLora.TAG, msg)
             lines.addLast("${stamp.format(now)}  $msg")

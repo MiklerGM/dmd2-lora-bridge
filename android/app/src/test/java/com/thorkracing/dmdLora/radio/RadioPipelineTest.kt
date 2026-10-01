@@ -124,3 +124,12 @@ class TxSchedulerPaceTest {
         assertEquals("pos", s.poll(11_500))
     }
 }
+
+class TxJitterTest {
+    @Test fun `each window waits a random extra of at most the jitter`() {
+        val p = TxPacer(minIntervalMs = 1_500, maxJitterMs = 300, random = kotlin.random.Random(3))
+        org.junit.Assert.assertTrue(p.allow(0))
+        org.junit.Assert.assertFalse("never earlier than the interval", p.allow(1_499))
+        org.junit.Assert.assertTrue("never later than interval plus jitter", p.allow(1_800))
+    }
+}

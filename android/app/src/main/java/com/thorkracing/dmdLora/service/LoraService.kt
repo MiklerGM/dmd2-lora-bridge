@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.provider.Settings
 import android.os.SystemClock
 import com.thorkracing.dmdLora.Bridge
 import com.thorkracing.dmdLora.DmdLora
@@ -55,12 +56,30 @@ class LoraService : Service() {
             // a bridge whose LoRa module is dead is exactly as useless as one that is missing,
             // however healthy the Bluetooth link to it looks.
             Bridge.sendStatusUpdate(this@LoraService, connected = Radio.usable)
+            checkClock()
             refreshNotification()
             handler.postDelayed(this, HEARTBEAT_MS)
         }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    /**
+     * This device's clock against network time, where Android knows it (API 33+, from the last
+     * network sync; no request of its own). DMD2 compares positions on this clock, and one that is
+     * off freezes riders whenever server data arrives (ARCHITECTURE item 15).
+     */
+    private fun checkClock() {
+        if (Build.VERSION.SDK_INT >= 33) {
+            Radio.liveness.networkOffsetS = try {
+                ((System.currentTimeMillis() - SystemClock.currentNetworkTimeClock().millis()) / 1000).toInt()
+            } catch (e: Exception) {
+                null // no network time yet
+            }
+        }
+        val auto = Settings.Global.getInt(contentResolver, Settings.Global.AUTO_TIME, 1) == 1
+        if (!auto) EventLog.logThrottled("auto-time", "automatic date and time is off on this device", 3_600_000L)
+    }
 
     override fun onCreate() {
         super.onCreate()

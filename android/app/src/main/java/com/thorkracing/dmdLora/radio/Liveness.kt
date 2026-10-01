@@ -70,6 +70,14 @@ class Liveness {
     @Volatile private var ownFixS = -1
     @Volatile var bridgeAtMs = 0L
         private set
+
+    /** This device's wall clock minus network time, in seconds; null while unknown. */
+    @Volatile var networkOffsetS: Int? = null
+
+    private var wallMinusMonoMs = Long.MIN_VALUE
+    private var stepBackS = 0
+    private var stepBackUntilMs = 0L
+    private val staleLocal = HashMap<Int, Pair<Int, Long>>() // rider -> (age DMD2 here understates by, when)
     private val heard = HashMap<Int, Heard>()
     private val seqs = HashMap<Int, Seqs>()
     private val lastPacket = HashMap<Int, List<RxRider>>()
@@ -89,6 +97,29 @@ class Liveness {
 
     fun toBridge(nowMs: Long) { bridgeAtMs = nowMs }
 
+    /**
+     * Watch the wall clock against the monotonic one; returns the size of a step, in ms, when the
+     * wall clock was just set. A step back of N minutes makes DMD2 hold every rider frozen for N
+     * minutes - its stored position times are suddenly in the future - so that one is shown.
+     */
+    @Synchronized
+    fun clockSample(wallMs: Long, monoMs: Long): Long? {
+        val offset = wallMs - monoMs
+        val prev = wallMinusMonoMs
+        wallMinusMonoMs = offset
+        if (prev == Long.MIN_VALUE || kotlin.math.abs(offset - prev) <= CLOCK_STEP_MS) return null
+        val step = offset - prev
+        if (step < -60_000L) {
+            stepBackS = (-step / 1000).toInt()
+            stepBackUntilMs = monoMs - step
+        }
+        return step
+    }
+
+    /** DMD2 on this device holds [rider] older than it claims: by [byS], seen at [nowMs]. */
+    @Synchronized
+    fun staleHere(rider: Int, byS: Int, nowMs: Long) { staleLocal[rider] = byS to nowMs }
+
     /** A group packet from [sender]. */
     @Synchronized
     fun heard(sender: Int, seq: Int, nowMs: Long, fixAgeS: Int, hasUsS: Int, riders: List<RxRider> = emptyList()) {
@@ -107,6 +138,7 @@ class Liveness {
     fun clear() {
         heard.clear()
         seqs.clear()
+        staleLocal.clear()
         lastPacket.clear()
         own = null
         dmdJson = ""
@@ -134,6 +166,17 @@ class Liveness {
 
     /** What has gone quiet or stale, worst first; empty when everything is fresh. */
     fun problems(nowMs: Long): List<String> = buildList {
+        synchronized(this@Liveness) {
+            if (nowMs < stepBackUntilMs) add("clock set back ${ago(stepBackS * 1000L)} — rejoin the group in DMD2")
+            networkOffsetS?.takeIf { kotlin.math.abs(it) > 60 }?.let {
+                add("clock ${ago(kotlin.math.abs(it) * 1000L)} ${if (it > 0) "ahead of" else "behind"} network time")
+            }
+            for ((rider, v) in staleLocal) {
+                if (nowMs - v.second <= 30_000L) {
+                    add("DMD2 here holds %04X %s old — rejoin the group".format(rider, ago(v.first * 1000L)))
+                }
+            }
+        }
         if (dmdAtMs != 0L) {
             val own = ownFixAgeS(nowMs)
             when {
@@ -152,8 +195,8 @@ class Liveness {
             // Their packets arrive but the position inside stopped moving: their DMD2 lost its
             // fix, and it shows on everyone's map as "updated minutes ago".
             if (h.fixAgeS * 1000L > FIX_OLD_MS) add("%04X GPS %s old".format(hash, ago(h.fixAgeS * 1000L)))
-            // We hear them, but they last heard us this long ago.
-            if (h.hasUsS * 1000L > FIX_OLD_MS) add("%04X lost us %s".format(hash, ago(h.hasUsS * 1000L)))
+            // We hear them, but where they show us is this old.
+            if (h.hasUsS * 1000L > FIX_OLD_MS) add("%04X has you %s old".format(hash, ago(h.hasUsS * 1000L)))
         }
     }
 
@@ -198,6 +241,8 @@ class Liveness {
         const val MAX_SEQ_JUMP = 3_000
         /** After this long without a packet a rider is assumed gone, not silent. */
         const val FORGET_MS = 30 * 60_000L
+        /** Wall and monotonic clocks drift apart by milliseconds; a jump over this is a step. */
+        const val CLOCK_STEP_MS = 2_000L
 
         /** Coarse on purpose: the notification is posted again only when its text changes. */
         fun ago(ms: Long): String {

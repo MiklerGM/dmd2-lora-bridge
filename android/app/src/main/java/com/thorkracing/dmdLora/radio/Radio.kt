@@ -7,6 +7,8 @@ import com.thorkracing.dmdLora.EventLog
 import com.thorkracing.dmdLora.Prefs
 import com.thorkracing.dmdLora.Session
 import com.thorkracing.dmdLora.protocol.Codec
+import com.thorkracing.dmdLora.protocol.RxRider
+import com.thorkracing.dmdLora.protocol.Decoded
 import com.thorkracing.dmdLora.protocol.Regions
 
 /**
@@ -20,7 +22,7 @@ object Radio {
         private set
 
     private val router = WireRouter()
-    private val scheduler = TxScheduler()
+    private val scheduler = TxScheduler(TxPacer(maxJitterMs = 300L))
     private val peers = Peers()
 
     /** When each part of the chain last did something, for the notification and the panel. */
@@ -29,8 +31,14 @@ object Radio {
     /** Each rider's own last position, to judge positions retold by others against. */
     val firstHand = FirstHand()
 
-    /** Our own position's age, from our coordinates as much as from DMD2's clock arithmetic. */
+    /** Our own position's age, from evidence of new fixes rather than DMD2's clock arithmetic. */
     val ownFix = OwnFix()
+
+    /** Each sender's own age, capped by its movement between packets. */
+    private val senderAge = SenderAge()
+
+    /** Retold positions re-dated by evidence, so that a frozen copy cannot pass as new. */
+    val retoldAge = RetoldAge(firstHand)
 
     // Chat does not share the latest-only position slot: it waits in its own queue and is
     // drained ahead of position updates.
@@ -214,6 +222,8 @@ object Radio {
             liveness.clear()
             firstHand.clear()
             ownFix.clear()
+            senderAge.clear()
+            retoldAge.clear()
             previous
         }
         old?.close()
@@ -365,11 +375,19 @@ object Radio {
         if (!l.connected) return
         val now = nowMs()
 
+        liveness.clockSample(System.currentTimeMillis(), now)?.let { step ->
+            EventLog.log(
+                "device clock stepped %+d s".format(step / 1000) +
+                    if (step < -60_000L) " — DMD2 now holds every rider frozen that long; rejoin the group" else ""
+            )
+        }
+
         // Every few minutes, the whole link per rider in one line: enough to read a ride back.
         if (now - lastSummaryMs >= SUMMARY_INTERVAL_MS) {
             lastSummaryMs = now
             liveness.summary(now)?.let { EventLog.log(it) }
             liveness.dump().forEach { EventLog.log(it) }
+            retoldAge.prune(now)
         }
 
         val interval = peers.intervalMs(now)
@@ -545,7 +563,45 @@ object Radio {
         peers.clear()
         liveness.clear()
         firstHand.clear()
+        senderAge.clear()
+        retoldAge.clear()
         if (announce && chats > 0) EventLog.log("$chats queued message(s) dropped with the group")
+    }
+
+    /**
+     * The age a received rider is passed on with, or null to leave it out. The sender's own entry
+     * is aged by its movement ([SenderAge]); a relay arrives at least a second after the original.
+     * A retold entry, our own included, is raised to what the evidence proves ([RetoldAge]); for
+     * us that is how long ago we really were there, the true "has us". A retold entry the
+     * evidence cannot judge yet is checked against the rider's own report ([FirstHand]).
+     */
+    private fun dated(r: RxRider, g: Decoded.Group, own: Int?, now: Long): RxRider? {
+        if (r.userIdHash == g.senderHash) {
+            val age = if (g.relayed) r.positionAgeS + 1 else senderAge.ageS(r.userIdHash, r.lat, r.lon, r.positionAgeS, now)
+            firstHand.heard(r.userIdHash, r.lat, r.lon, age, now, r.speedKmh, r.status)
+            return r.copy(positionAgeS = age)
+        }
+        val age = retoldAge.ageS(r.userIdHash, r.lat, r.lon, r.speedKmh, r.positionAgeS, now)
+        if (r.userIdHash != own) {
+            if (age - r.positionAgeS > 60) {
+                EventLog.logThrottled(
+                    "redated-%04X-%04X".format(g.senderHash, r.userIdHash),
+                    "re-dated %04X as retold by %04X: %d → %d s (a frozen copy)".format(
+                        r.userIdHash, g.senderHash, r.positionAgeS, age),
+                    60_000L,
+                )
+            }
+            val why = firstHand.implausible(r.userIdHash, r.lat, r.lon, age, now)
+            if (why != null) {
+                EventLog.logThrottled(
+                    "retold-in-%04X-%04X".format(g.senderHash, r.userIdHash),
+                    "not passing %04X as retold by %04X: %s".format(r.userIdHash, g.senderHash, why),
+                    60_000L,
+                )
+                return null
+            }
+        }
+        return r.copy(positionAgeS = age)
     }
 
     private fun onWire(context: Context, wire: String) {
@@ -560,30 +616,21 @@ object Radio {
                 val now = nowMs()
                 val own = ride.senderUserId?.takeIf { it.isNotEmpty() }?.let { Codec.uidHash(it) }
                 peers.heard(g.senderHash, now)
-                liveness.heard(
-                    g.senderHash, g.seq, now,
-                    fixAgeS = g.riders.firstOrNull { it.userIdHash == g.senderHash }?.positionAgeS ?: -1,
-                    hasUsS = g.riders.firstOrNull { it.userIdHash == own }?.positionAgeS ?: -1,
-                    riders = g.riders,
-                )
-                for (r in g.riders) if (r.hasLora && r.userIdHash != own) peers.heard(r.userIdHash, now)
                 val via = if (g.relayed) " (relayed)" else ""
                 val ages = g.riders.joinToString(" ") { "%04X:%d".format(it.userIdHash, it.positionAgeS) }
-                EventLog.log("RX ${g.riders.size} rider(s) from ${"%04X".format(g.senderHash)}$via · age $ages")
-                g.riders.firstOrNull { it.userIdHash == g.senderHash }?.let {
-                    firstHand.heard(it.userIdHash, it.lat, it.lon, it.positionAgeS, now)
+                EventLog.log("RX ${g.riders.size} rider(s) from ${"%04X".format(g.senderHash)} #${g.seq}$via · age $ages")
+                val dated = g.riders.mapNotNull { r -> dated(r, g, own, now) }
+                for (r in g.riders) {
+                    retoldAge.saw(r.userIdHash, r.lat, r.lon, now)
+                    if (r.hasLora && r.userIdHash != own) peers.heard(r.userIdHash, now)
                 }
-                val kept = g.riders.filter { r ->
-                    if (r.userIdHash == g.senderHash || r.userIdHash == own) return@filter true
-                    val why = firstHand.implausible(r.userIdHash, r.lat, r.lon, r.positionAgeS, now) ?: return@filter true
-                    EventLog.logThrottled(
-                        "retold-in-%04X-%04X".format(g.senderHash, r.userIdHash),
-                        "not passing %04X as retold by %04X: %s".format(r.userIdHash, g.senderHash, why),
-                        60_000L,
-                    )
-                    false
-                }
-                Bridge.sendGroupDataReceived(context, Bridge.ridersJson(g.copy(riders = kept)), ride.groupId)
+                liveness.heard(
+                    g.senderHash, g.seq, now,
+                    fixAgeS = dated.firstOrNull { it.userIdHash == g.senderHash }?.positionAgeS ?: -1,
+                    hasUsS = dated.firstOrNull { it.userIdHash == own }?.positionAgeS ?: -1,
+                    riders = dated,
+                )
+                Bridge.sendGroupDataReceived(context, Bridge.ridersJson(g.copy(riders = dated)), ride.groupId)
             }
             is RxAction.InjectChat -> {
                 val c = action.chat

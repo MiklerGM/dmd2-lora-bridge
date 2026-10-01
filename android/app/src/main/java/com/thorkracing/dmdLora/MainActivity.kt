@@ -427,8 +427,12 @@ class MainActivity : Activity() {
             dmdValue.setTextColor(C.MUTED)
         } else {
             val own = live.ownFixAgeS(now)
+            val behind = Radio.ownFix.gpsBehindS
             dmdValue.text = "position ${Liveness.ago(now - live.dmdAtMs)} ago · " +
                 (if (own >= 0) "own GPS ${Liveness.ago(own * 1000L)} old" else "own position not shared") +
+                // The X70's GPS clock ran an hour behind its system clock; the app corrects our
+                // own age for it, but the rider should know the device is like that.
+                (if (behind > 60) "\nGPS clock ${Liveness.ago(behind * 1000L)} behind (corrected)" else "") +
                 (if (live.bridgeAtMs != 0L) "\nto bridge ${Liveness.ago(now - live.bridgeAtMs)} ago" else "")
             val quiet = problems.any { it.startsWith("DMD2") || it.startsWith("own") }
             dmdValue.setTextColor(if (quiet) C.WARN else C.OK)
@@ -438,7 +442,7 @@ class MainActivity : Activity() {
             "%04X  ".format(hash) + live.describe(hash, h, now)
         }
         val stale = problems.any {
-            it.startsWith("air") || it.contains(" lost us ") || it.contains(" GPS ") && !it.startsWith("own")
+            it.startsWith("air") || it.contains(" has you ") || it.contains(" GPS ") && !it.startsWith("own")
         }
         heardValue.setTextColor(if (riders.isEmpty()) C.MUTED else if (stale) C.WARN else C.OK)
     }

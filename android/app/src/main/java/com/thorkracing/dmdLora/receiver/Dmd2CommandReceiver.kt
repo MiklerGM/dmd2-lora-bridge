@@ -155,28 +155,62 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
     }
 
     /**
-     * What goes on the air is not always what DMD2 hands over. Our own position's age is capped
-     * by how long ago our coordinates last moved ([com.thorkracing.dmdLora.radio.OwnFix]), and a
-     * rider DMD2 would retell far from where that rider itself last said it was is left out
-     * ([com.thorkracing.dmdLora.radio.FirstHand]): passing it on would move them on every map.
+     * What goes on the air is not always what DMD2 hands over: every age is one we can defend on
+     * our own monotonic clock.
+     * - Our own: from evidence of new fixes ([com.thorkracing.dmdLora.radio.OwnFix]), so a device
+     *   whose GPS clock is off sends fresh fixes as fresh.
+     * - Others: raised to what the evidence proves ([com.thorkracing.dmdLora.radio.RetoldAge]).
+     *   A DMD2 frozen on a stale copy then retells it ageing, and stock DMD2s keep their newer
+     *   data. Where we heard that rider ourselves in the last minute, its own report goes out
+     *   instead, so our packets stay useful while our DMD2 is stuck.
+     * - Past DMD2's own 10-minute echo horizon, or implausibly far from the rider's own report
+     *   ([com.thorkracing.dmdLora.radio.FirstHand]), an entry is left out.
      */
     private fun checked(riders: List<TxRider>, sender: String, now: Long): List<TxRider> = riders.mapNotNull { r ->
+        val hash = Codec.uidHash(r.userId)
+        Radio.retoldAge.saw(hash, r.lat, r.lon, now)
         if (r.userId == sender) {
-            val age = Radio.ownFix.ageS(r.lat, r.lon, r.positionAgeS, now)
+            val age = Radio.ownFix.ageS(r.lat, r.lon, r.speedKmh, r.timestampS, r.positionAgeS, now)
             if (r.positionAgeS - age > 60) {
                 EventLog.logThrottled(
                     "own-age",
-                    "own position: DMD2 says ${r.positionAgeS} s old, but it moved ${age} s ago — sending ${age} s " +
-                        "(this device's GPS clock and system clock disagree?)",
+                    "own position: DMD2 says ${r.positionAgeS} s old, but the fix is ${age} s old — sending ${age} s " +
+                        "(this device's GPS clock is behind its system clock)",
                     60_000L,
                 )
             }
+            // Our own track, so that others' echoes of us can be dated: the true "has us".
+            Radio.firstHand.heard(hash, r.lat, r.lon, age, now, r.speedKmh, r.status)
             return@mapNotNull r.copy(positionAgeS = age)
         }
-        val hash = Codec.uidHash(r.userId)
-        val why = Radio.firstHand.implausible(hash, r.lat, r.lon, r.positionAgeS, now) ?: return@mapNotNull r
-        EventLog.logThrottled("retold-out-%04X".format(hash), "not retelling %04X: DMD2 has it %s".format(hash, why), 60_000L)
-        null
+        val age = Radio.retoldAge.ageS(hash, r.lat, r.lon, r.speedKmh, r.positionAgeS, now)
+        if (age - r.positionAgeS > 60) {
+            Radio.liveness.staleHere(hash, age - r.positionAgeS, now)
+            val heard = Radio.firstHand.report(hash, now, 60_000L)
+            if (heard != null) {
+                EventLog.logThrottled(
+                    "retell-own-%04X".format(hash),
+                    "DMD2 here holds %04X %d s old; retelling its own report instead".format(hash, age),
+                    60_000L,
+                )
+                return@mapNotNull r.copy(
+                    lat = heard.lat, lon = heard.lon, speedKmh = heard.speedKmh, status = heard.status,
+                    positionAgeS = ((now - heard.atMs) / 1000).toInt(),
+                )
+            }
+            EventLog.logThrottled(
+                "retell-aged-%04X".format(hash),
+                "DMD2 here holds %04X frozen: retelling it %d s old, not %d".format(hash, age, r.positionAgeS),
+                60_000L,
+            )
+        }
+        if (age > ECHO_HORIZON_S) return@mapNotNull null
+        val why = Radio.firstHand.implausible(hash, r.lat, r.lon, age, now)
+        if (why != null) {
+            EventLog.logThrottled("retold-out-%04X".format(hash), "not retelling %04X: DMD2 has it %s".format(hash, why), 60_000L)
+            return@mapNotNull null
+        }
+        r.copy(positionAgeS = age)
     }
 
     /** DMD2 sends full user ids outbound; the wire carries only their 16-bit hashes. */
@@ -200,6 +234,7 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
                     speedKmh = o.optDouble("speed", 0.0),
                     status = o.optInt("status", 0),
                     positionAgeS = o.optLong("position_age_s", 0L).toInt(),
+                    timestampS = o.optLong("timestamp", 0L),
                 )
             )
         }
@@ -212,5 +247,10 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
             val s = v?.toString().orEmpty()
             "$k=" + if (s.length > 120) s.take(120) + "…(${s.length})" else s
         }
+    }
+
+    private companion object {
+        /** DMD2 itself stops echoing a rider whose position is older than this. */
+        const val ECHO_HORIZON_S = 600
     }
 }

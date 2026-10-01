@@ -8,6 +8,8 @@ data class TxRider(
     val speedKmh: Double = 0.0,
     val status: Int = 0,
     val positionAgeS: Int = 0,
+    /** DMD2's `timestamp`, epoch seconds: for our own rider, the GPS fix's time. Not sent on air. */
+    val timestampS: Long = 0,
 )
 
 /** A rider recovered from the air. Identity is a 16-bit hash — the id itself is not transmitted. */
