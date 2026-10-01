@@ -76,6 +76,15 @@ class CodecTest {
         assertEquals(14 + 14 * 9, Codec.encodeGroup(GROUP, SENDER, riders, 1).size)
     }
 
+    @Test fun pastTheCapOurOwnAndTheFreshestGoOut() {
+        // DMD2 may list us last; the stalest of the others are the ones left out.
+        val riders = (0 until 12).map { TxRider("rider-$it", 50.0, 10.0, positionAgeS = 100 - it) } +
+            TxRider(SENDER, 50.0, 10.0, positionAgeS = 500)
+        val sent = (Codec.decode(Codec.encodeGroup(GROUP, SENDER, riders, 1), GROUP) as Decoded.Group).riders.map { it.userIdHash }
+        assertEquals(Codec.uidHash(SENDER), sent.first())
+        assertEquals((11 downTo 4).map { Codec.uidHash("rider-$it") }, sent.drop(1))
+    }
+
     @Test fun encodesReferenceSingleRiderPacket() {
         val pkt = Codec.encodeGroup(
             GROUP, SENDER, listOf(TxRider("rider-one", 52.520008, 13.404954, 88.8, 1, 0)), seq = 1,

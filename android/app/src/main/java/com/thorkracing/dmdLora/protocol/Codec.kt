@@ -83,7 +83,12 @@ object Codec {
         seq: Int,
         ttl: Int = DEFAULT_TTL,
     ): ByteArray {
-        val take = riders.take(MAX_RIDERS)
+        // Past the cap, which nine. The stock app keeps DMD2's first nine, and DMD2 does not list
+        // the sender first (on 2026-10-01 the phone came third of three), so in a group of ten or
+        // more a rider could leave its own position out of its own packets. Ours first, then the
+        // freshest. Up to nine, DMD2's order as is, byte for byte the stock packet.
+        val take = if (riders.size <= MAX_RIDERS) riders
+        else riders.sortedWith(compareBy({ it.userId != senderUserId }, { it.positionAgeS })).take(MAX_RIDERS)
         val buf = Buf(HEADER_LEN + take.size * RIDER_LEN + 2)
         header(buf, groupId, senderUserId, seq, TYPE_GROUP, ttl)
         for (r in take) {

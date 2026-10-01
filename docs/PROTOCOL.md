@@ -92,6 +92,9 @@ Big-endian. Group packet total length is `14 + 14n` bytes for `n` riders (`n ≤
 | 1 | status | bitfield (below) |
 | 3 | position age | `u24`, seconds |
 
+At most nine riders, 140 bytes. The stock app keeps the first nine in DMD2's order, which need
+not include the sender's own; past nine we send ours first, then the freshest.
+
 **Chat (type 1)**: one length byte, then the sender name (≤31 bytes UTF-8), then the message
 (name + message ≤135 bytes), truncated on UTF-8 boundaries.
 
