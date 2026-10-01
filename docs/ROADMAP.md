@@ -339,7 +339,10 @@ The phone's DMD2 took those retellings whenever it had not heard NOR7E for 30 s.
 filters such retellings both ways and caps our own age by movement (ARCHITECTURE item 15).
 For a device like this tablet: automatic network time and time zone, with v0.1.0-143 or later
 on it so the app corrects the hour-old ages, never switch the time source during a ride, and
-restart DMD2 after any clock change.
+after any clock change, turn automatic time back on and leave and rejoin the group in DMD2.
+A DMD2 restart is probably not enough: 4.013 keeps member position times in its
+`cached_members` and restores them at start (code reading, untested). Three independent
+reviews of the clock problem and a synthesis: `/home/morlov/projects/dmd2/research-clocks-*.md`.
 
 ---
 
