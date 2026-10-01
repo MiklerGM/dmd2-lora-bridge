@@ -344,6 +344,16 @@ A DMD2 restart is probably not enough: 4.013 keeps member position times in its
 `cached_members` and restores them at start (code reading, untested). Three independent
 reviews of the clock problem and a synthesis: `/home/morlov/projects/dmd2/research-clocks-*.md`.
 
+**2026-10-01, v0.1.0-146 on both, a full day.** Positions worked; the owner reported a bridge
+that sometimes needed re-plugging after power-up and updates that stalled for 30-60 s. Both
+from the logs: the E220 bridge hung twice right after power-up, by the timing at the engine
+start (ARCHITECTURE item 13), and the stalls were our phone and tablet transmitting in step and
+deafening each other, not a lost modem - in every 30-s gap the sender kept transmitting and the
+receiver's radio was up (item 16). The tablet, online from 13:45 with its clock an hour behind,
+held other riders between server updates (item 15). v0.1.0-148: pacing windows drawn from
+1.5-3.0 s, an alert when the bridge drops right after power-up, Time check in Tools, and held
+transmissions and repeated warnings kept out of the log file, which had pushed the morning out.
+
 ---
 
 ## M7 — Make it survivable
@@ -352,13 +362,15 @@ Only once M6 passes:
 
 - TX pacing that respects the slot/interval model; never transmit faster than the stock app.
   **Interval done 2026-09-28**: 1500 ms plus 500 ms for each LoRa rider beyond the first heard
-  in the last 90 s, as DMD-LoRa 1.0.9 counts them. Its per-device slot offset and random jitter
-  are not copied.
+  in the last 90 s, as DMD-LoRa 1.0.9 counts them. Its per-device slot offset is not copied;
+  from v0.1.0-148 each window is drawn between 1.5 s and 1.5 times that interval, since two of
+  our devices on one beat fell into step and deafened each other (ARCHITECTURE item 16).
 - **Open after the 2026-09 trip.** Firmware: report each transmission that really left the
   module (`TXD ok <bytes> <ms>`, which the app already logs), reset on a hung task
   (ARCHITECTURE item 13), and retry the E220 health probe before declaring the module down
-  (item 14). App: the GPS check should say plainly that DMD2 sends nothing while no bridge is
-  ready, instead of "DMD2 has not given us our own position".
+  (item 14). Bench: dip the bridge's supply while it runs, to reproduce the hang at engine
+  start (item 13). App: the GPS check should say plainly that DMD2 sends nothing while no
+  bridge is ready, instead of "DMD2 has not given us our own position".
 - Dedup ring, sequence handling, stale-position expiry.
 - ~~Works without a network.~~ **Verified 2026-09-09**, which is the premise the whole project
   rests on. With airplane mode on, no connected networks and `ping: Network is unreachable`,

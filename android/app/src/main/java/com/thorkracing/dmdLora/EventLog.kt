@@ -13,7 +13,7 @@ import java.util.TimeZone
 /**
  * Operational log. The screen keeps the last [MAX] lines; a file keeps the whole ride, so a
  * fault seen on the road can still be read that evening. The file also gets every line the
- * screen throttles away.
+ * screen throttles away, except repeats that say nothing new (see [logThrottled]).
  */
 object EventLog {
     private const val MAX = 400
@@ -39,15 +39,18 @@ object EventLog {
     /**
      * For events that repeat every cycle. They matter the first time and then only as a
      * heartbeat, so at 1 Hz they drown out the one line you are waiting for - on the screen.
+     * [everyLineToFile] false throttles the file as well, for a state repeated rather than an
+     * event: on 2026-10-01 such repeats and held transmissions filled two thirds of a day's log,
+     * and the 8 MB it keeps no longer reached back to the morning.
      */
     @Synchronized
-    fun logThrottled(key: String, msg: String, intervalMs: Long = 15_000L) {
+    fun logThrottled(key: String, msg: String, intervalMs: Long = 15_000L, everyLineToFile: Boolean = true) {
         // Monotonic: on the wall clock a step back silenced these lines for as long as the step.
         val now = SystemClock.elapsedRealtime()
         val last = lastLogged[key]
         val show = last == null || now - last >= intervalMs
         if (show) lastLogged[key] = now
-        write(msg, screen = show)
+        if (show || everyLineToFile) write(msg, screen = show)
     }
 
     private fun write(msg: String, screen: Boolean) {

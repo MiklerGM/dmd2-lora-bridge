@@ -20,6 +20,7 @@ import com.thorkracing.dmdLora.MainActivity
 import com.thorkracing.dmdLora.Prefs
 import com.thorkracing.dmdLora.Session
 import com.thorkracing.dmdLora.radio.BleRadioLink
+import com.thorkracing.dmdLora.radio.EarlyDrop
 import com.thorkracing.dmdLora.radio.Radio
 
 /**
@@ -33,6 +34,8 @@ class LoraService : Service() {
     private var beating = false
     private var foregroundReady = false
     private var shown: Shown? = null
+    private val earlyDrop = EarlyDrop()
+    private var hungShown = false
 
     private enum class Severity { OK, WARN, BAD }
 
@@ -44,6 +47,7 @@ class LoraService : Service() {
     private val flusher = object : Runnable {
         override fun run() {
             Radio.tick()
+            watchForHang()
             refreshNotification()
             handler.postDelayed(this, FLUSH_MS)
         }
@@ -78,7 +82,7 @@ class LoraService : Service() {
             }
         }
         val auto = Settings.Global.getInt(contentResolver, Settings.Global.AUTO_TIME, 1) == 1
-        if (!auto) EventLog.logThrottled("auto-time", "automatic date and time is off on this device", 3_600_000L)
+        if (!auto) EventLog.logThrottled("auto-time", "automatic date and time is off on this device", 3_600_000L, everyLineToFile = false)
     }
 
     override fun onCreate() {
@@ -135,6 +139,7 @@ class LoraService : Service() {
 
     override fun onDestroy() {
         Session.serviceRunning = false
+        getSystemService(NotificationManager::class.java).cancel(HUNG_ID)
         handler.removeCallbacks(heartbeat)
         handler.removeCallbacks(flusher)
         Radio.detach()
@@ -176,6 +181,38 @@ class LoraService : Service() {
         return Shown(parts.joinToString(" · "), severity)
     }
 
+    /**
+     * A bridge gone within a minute of connecting has so far always been a hung board that only
+     * re-plugging brings back ([EarlyDrop]). The ongoing notification turns red either way, but
+     * nobody pulls the shade down while riding: this one pops up over DMD2.
+     */
+    private fun watchForHang() {
+        val connected = Radio.connected
+        val nm = getSystemService(NotificationManager::class.java)
+        if (earlyDrop.update(connected, SystemClock.elapsedRealtime())) {
+            EventLog.log("bridge dropped right after power-up and has not come back — re-plug it")
+            val open = PendingIntent.getActivity(
+                this, 0, Intent(this, MainActivity::class.java),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+            nm.notify(
+                HUNG_ID,
+                Notification.Builder(this, ALERT_CHANNEL_ID)
+                    .setContentTitle("LoRa bridge lost after power-up")
+                    .setContentText("It dropped right after starting and is not back. Re-plug the bridge.")
+                    .setSmallIcon(android.R.drawable.stat_notify_error)
+                    .setColor(RED)
+                    .setContentIntent(open)
+                    .setAutoCancel(true)
+                    .build(),
+            )
+            hungShown = true
+        } else if (connected && hungShown) {
+            nm.cancel(HUNG_ID)
+            hungShown = false
+        }
+    }
+
     /** DMD2's channel and group, and the bridge's state, all change after start; posted again
      *  only when what it says has changed. */
     private fun refreshNotification() {
@@ -212,16 +249,21 @@ class LoraService : Service() {
     private fun createChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val nm = getSystemService(NotificationManager::class.java)
-        if (nm.getNotificationChannel(CHANNEL_ID) != null) return
-        nm.createNotificationChannel(
+        if (nm.getNotificationChannel(CHANNEL_ID) == null) nm.createNotificationChannel(
             NotificationChannel(CHANNEL_ID, "LoRa bridge", NotificationManager.IMPORTANCE_LOW)
                 .apply { description = "Keeps the DMD2 LoRa bridge alive" }
+        )
+        if (nm.getNotificationChannel(ALERT_CHANNEL_ID) == null) nm.createNotificationChannel(
+            NotificationChannel(ALERT_CHANNEL_ID, "Bridge alerts", NotificationManager.IMPORTANCE_HIGH)
+                .apply { description = "A bridge that needs a hand, such as re-plugging after a hang" }
         )
     }
 
     companion object {
         private const val CHANNEL_ID = "lora_bridge"
         private const val NOTIFICATION_ID = 1001
+        private const val ALERT_CHANNEL_ID = "bridge_alerts"
+        private const val HUNG_ID = 1002
         private const val HEARTBEAT_MS = 10_000L
         private const val FLUSH_MS = 500L
         private const val RED = 0xFFC62828.toInt()

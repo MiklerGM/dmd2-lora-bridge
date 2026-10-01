@@ -69,9 +69,12 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
         // Each rider's position age as DMD2 hands it to us, in seconds: a rider shown as "updated
         // minutes ago" while moving is carrying a large one, and this says who put it there.
         val ages = riders.joinToString(" ") { "%04X:%d".format(Codec.uidHash(it.userId), it.positionAgeS) }
+        // A held one is DMD2's next update waiting for the pacer. Every one of them made half of
+        // each log file; the throttled ones are enough, as what goes out is logged on release.
         EventLog.logThrottled(
             "tx-" + outcome.substringBefore(' '),
             "TX ${riders.size} rider(s) ${packet.size}B · $outcome · ${wire.take(10)}… · age $ages",
+            everyLineToFile = !outcome.startsWith("held"),
         )
     }
 
@@ -151,6 +154,7 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
             "own-name",
             "own display name not in roster (me=${senderUserId.take(8)}, ids=${seen.map { it.take(8) }})",
             60_000L,
+            everyLineToFile = false,
         )
     }
 
@@ -177,6 +181,7 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
                     "own position: DMD2 says ${r.positionAgeS} s old, but the fix is ${age} s old — sending ${age} s " +
                         "(this device's GPS clock is behind its system clock)",
                     60_000L,
+                    everyLineToFile = false,
                 )
             }
             // Our own track, so that others' echoes of us can be dated: the true "has us".
@@ -192,6 +197,7 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
                     "retell-own-%04X".format(hash),
                     "DMD2 here holds %04X %d s old; retelling its own report instead".format(hash, age),
                     60_000L,
+                    everyLineToFile = false,
                 )
                 return@mapNotNull r.copy(
                     lat = heard.lat, lon = heard.lon, speedKmh = heard.speedKmh, status = heard.status,
@@ -202,12 +208,13 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
                 "retell-aged-%04X".format(hash),
                 "DMD2 here holds %04X frozen: retelling it %d s old, not %d".format(hash, age, r.positionAgeS),
                 60_000L,
+                everyLineToFile = false,
             )
         }
         if (age > ECHO_HORIZON_S) return@mapNotNull null
         val why = Radio.firstHand.implausible(hash, r.lat, r.lon, age, now)
         if (why != null) {
-            EventLog.logThrottled("retold-out-%04X".format(hash), "not retelling %04X: DMD2 has it %s".format(hash, why), 60_000L)
+            EventLog.logThrottled("retold-out-%04X".format(hash), "not retelling %04X: DMD2 has it %s".format(hash, why), 60_000L, everyLineToFile = false)
             return@mapNotNull null
         }
         r.copy(positionAgeS = age)

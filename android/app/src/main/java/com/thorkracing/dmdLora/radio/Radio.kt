@@ -22,7 +22,7 @@ object Radio {
         private set
 
     private val router = WireRouter()
-    private val scheduler = TxScheduler(TxPacer(maxJitterMs = 300L))
+    private val scheduler = TxScheduler(TxPacer(spread = true))
     private val peers = Peers()
 
     /** When each part of the chain last did something, for the notification and the panel. */
@@ -35,7 +35,7 @@ object Radio {
     val ownFix = OwnFix()
 
     /** Each sender's own age, capped by its movement between packets. */
-    private val senderAge = SenderAge()
+    val senderAge = SenderAge()
 
     /** Retold positions re-dated by evidence, so that a frozen copy cannot pass as new. */
     val retoldAge = RetoldAge(firstHand)
@@ -391,9 +391,12 @@ object Radio {
         }
 
         val interval = peers.intervalMs(now)
-        if (interval != scheduler.minIntervalMs) {
-            scheduler.minIntervalMs = interval
-            EventLog.log("TX interval now $interval ms (${peers.count(now)} LoRa rider(s) heard)")
+        if (interval != scheduler.intervalMs) {
+            scheduler.intervalMs = interval
+            EventLog.log(
+                "TX interval now $interval ms, each one drawn from ${TxPacer.FLOOR_MS}-${maxOf(TxPacer.FLOOR_MS, interval * 3 / 2)} " +
+                    "(${peers.count(now)} LoRa rider(s) heard)"
+            )
         }
 
         val statusExpired = synchronized(this) {
@@ -589,6 +592,7 @@ object Radio {
                     "re-dated %04X as retold by %04X: %d → %d s (a frozen copy)".format(
                         r.userIdHash, g.senderHash, r.positionAgeS, age),
                     60_000L,
+                    everyLineToFile = false,
                 )
             }
             val why = firstHand.implausible(r.userIdHash, r.lat, r.lon, age, now)
@@ -597,6 +601,7 @@ object Radio {
                     "retold-in-%04X-%04X".format(g.senderHash, r.userIdHash),
                     "not passing %04X as retold by %04X: %s".format(r.userIdHash, g.senderHash, why),
                     60_000L,
+                    everyLineToFile = false,
                 )
                 return null
             }

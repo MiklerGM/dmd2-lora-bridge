@@ -347,6 +347,14 @@ the first question with no: it is already transmitting from its own GNSS and is 
     hung task does not: `CONFIG_ESP_TASK_WDT_PANIC` is off, so the task watchdog only prints.
     Next: make the watchdog reset the board, report the reset reason in `ST`, and try to
     reproduce with a module that stops answering.
+    Twice more on 2026-10-01, on the E220 bridge (classic ESP32), and the same way both times: it
+    came up with the ignition, connected, dropped 22-26 s later (a BLE supervision timeout, so the
+    board itself went quiet) and never advertised again until re-plugged - 42 and 25 minutes of
+    riding without it. The timing points at the engine start, the starter's voltage dip; the
+    other seven power-ups that day were fine. Next on the bench: dip the supply while it runs,
+    and if that hangs it, a larger capacitor on EN or a supervisor. From v0.1.0-148 the app pops
+    up an alert over DMD2 when a bridge drops within a minute of connecting and is not back 30 s
+    later (`EarlyDrop`): on that day it would have fired both times and at no other drop.
 14. **The E220 misses its health probe in a busy group.** On 2026-09-29 the phone's E220
     bridge reported `online=0` 51 times in four hours, in pairs 30 s apart (the probe period);
     each time the app re-sent CFG and the radio was back within 0.4-5 s. Short outages, but
@@ -378,3 +386,25 @@ the first question with no: it is already transmitting from its own GNSS and is 
     names a clock set back, a clock off network time, and a DMD2 here holding a frozen rider. A
     DMD2 restart probably does not clear a freeze - 4.013 restores member times from its
     `cached_members` - leaving and rejoining the group does (untested).
+    On 2026-10-01 the tablet went online at about 13:45 with its clock still an hour behind; from
+    then on its DMD2 moved the other riders only when server data came, every 45-60 s and at
+    times not for 3-13 minutes, however fresh the LoRa packets (at 17:56 it showed the phone
+    6.6 km back while it rode alongside). The app retold the riders' own reports instead some
+    8,600 times, so nobody else's map suffered, but rejoining cannot help there: the next server
+    update freezes them again. From v0.1.0-148 the notification points to Time check in Tools
+    (`TimeCheck`), which sets this device's clock against network time where Android shares it
+    (13+) and against the GPS receiver's own clock, and says what to do. An hour-off fix time
+    whose receiver clock is off too cannot be caught offline.
+16. **Two of our devices fall into step and deafen each other.** On 2026-10-01 the phone and the
+    tablet heard 28% of each other's packets, against 33-44% from the NOR7E, and the gaps of
+    30-90 s came in both directions at once. Matching sequence numbers across both logs: when
+    the two sent within -0.25 to +0.55 s of each other, neither heard the other, being on the
+    air itself - 0% of some 1,800 such packets, 46% of the rest. Both paced alike, 2.0 s plus
+    up to 0.3 s released on a 0.5 s tick, so once in step they stayed there, up to 29 packets
+    running; in the 92 gaps of 30 s or more a median 64% of the packets were sent in step,
+    against 32% overall. The NOR7E, on its own 1.7 s beat, slides through such a window in a
+    packet or two. From v0.1.0-148 each pacing window is drawn between 1.5 s and 1.5 times the
+    stock interval (1.5-3.0 s with two riders heard): the same rate on no beat. A model fitted
+    to that day has 30-s gaps halving, 16 to 8 an hour, and 60-s gaps nearly gone, 1.6 to 0.15;
+    one device updated gets most of that. The average gap stays near 8 s: the channel is
+    collision-limited.

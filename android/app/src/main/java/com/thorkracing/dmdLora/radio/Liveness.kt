@@ -120,6 +120,11 @@ class Liveness {
     @Synchronized
     fun staleHere(rider: Int, byS: Int, nowMs: Long) { staleLocal[rider] = byS to nowMs }
 
+    /** The riders DMD2 here was last seen holding stale, within 30 s: by how much, in seconds. */
+    @Synchronized
+    fun heldStale(nowMs: Long): Map<Int, Int> =
+        staleLocal.filterValues { nowMs - it.second <= 30_000L }.mapValues { it.value.first }
+
     /** A group packet from [sender]. */
     @Synchronized
     fun heard(sender: Int, seq: Int, nowMs: Long, fixAgeS: Int, hasUsS: Int, riders: List<RxRider> = emptyList()) {
@@ -171,10 +176,10 @@ class Liveness {
             networkOffsetS?.takeIf { kotlin.math.abs(it) > 60 }?.let {
                 add("clock ${ago(kotlin.math.abs(it) * 1000L)} ${if (it > 0) "ahead of" else "behind"} network time")
             }
-            for ((rider, v) in staleLocal) {
-                if (nowMs - v.second <= 30_000L) {
-                    add("DMD2 here holds %04X %s old — rejoin the group".format(rider, ago(v.first * 1000L)))
-                }
+            // Not "rejoin the group": on 2026-10-01 it came from a clock an hour behind with internet
+            // on, and rejoining only waits for the next server update to freeze them again.
+            for ((rider, byS) in heldStale(nowMs)) {
+                add("DMD2 here holds %04X %s old — see Time check in Tools".format(rider, ago(byS * 1000L)))
             }
         }
         if (dmdAtMs != 0L) {

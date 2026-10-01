@@ -71,6 +71,9 @@ class MainActivity : Activity() {
     private lateinit var walkButton: Button
     private lateinit var gpsButton: Button
     private var gpsCheck: GpsCheck? = null
+    private lateinit var timeButton: Button
+    private var timeCheck: TimeCheck? = null
+    private var timeAsked = false // once: without precise location it still runs, minus the GPS clocks
 
     private var walking = false
     private var openPanel = Panel.NONE
@@ -116,6 +119,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         gpsCheck?.stop()
+        timeCheck?.stop()
         EventLog.onChange = null
         ui.removeCallbacks(walk)
         ui.removeCallbacks(statusTick)
@@ -169,6 +173,7 @@ class MainActivity : Activity() {
         speedField = field("42", "km/h")
         walkButton = styled("Walk", C.CONTROL) { toggleWalk() }
         gpsButton = styled("GPS check", C.CONTROL) { toggleGpsCheck() }
+        timeButton = styled("Time check", C.CONTROL) { toggleTimeCheck() }
 
         toolsPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -194,12 +199,17 @@ class MainActivity : Activity() {
                 addView(walkButton, cell(1f))
             })
             addView(TextView(this@MainActivity).apply {
-                text = "Compares this device's GPS with the position DMD2 hands us, into the log"
+                text = "Into the log: this device's GPS against the position DMD2 hands us, " +
+                    "and its clocks against each other, GPS time and network time"
                 textSize = 10f
                 setTextColor(C.MUTED)
                 setPadding(dp(2), dp(8), 0, dp(4))
             })
-            addView(gpsButton, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                addView(gpsButton, cell(1f))
+                addView(timeButton, cell(1f))
+            })
         }
 
         autostartButton = styled("", C.CONTROL) { toggleAutostart() }
@@ -608,8 +618,34 @@ class MainActivity : Activity() {
         check.start()
     }
 
+    /** Most of it needs no permission; without precise location it skips the GPS clocks and says so. */
+    private fun toggleTimeCheck() {
+        timeCheck?.let { it.stop(); return }
+        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
+            !timeAsked
+        ) {
+            timeAsked = true
+            requestPermissions(
+                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
+                REQ_TIME,
+            )
+            return
+        }
+        val check = TimeCheck(this) {
+            timeCheck = null
+            timeButton.text = "Time check"
+        }
+        timeCheck = check
+        timeButton.text = "Stop time check"
+        check.start()
+    }
+
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_TIME) {
+            toggleTimeCheck()
+            return
+        }
         if (requestCode != REQ_GPS) return
         // GPS_PROVIDER needs the precise permission; "approximate" alone is not enough.
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) toggleGpsCheck()
@@ -713,5 +749,6 @@ class MainActivity : Activity() {
 
     private companion object {
         const val REQ_GPS = 2
+        const val REQ_TIME = 3
     }
 }

@@ -99,6 +99,10 @@ class SenderAge {
         return age
     }
 
+    /** By how much each sender's own ages ran over its movement, as last learnt: its GPS clock's lag. */
+    @Synchronized
+    fun offsets(): Map<Int, Int> = last.mapValues { it.value.offsetS }
+
     @Synchronized
     fun clear() = last.clear()
 }

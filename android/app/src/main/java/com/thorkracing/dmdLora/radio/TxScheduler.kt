@@ -11,9 +11,9 @@ class TxScheduler(private val pacer: TxPacer = TxPacer()) {
 
     private var pending: String? = null
 
-    var minIntervalMs: Long
-        get() = pacer.minIntervalMs
-        set(value) { pacer.minIntervalMs = value }
+    var intervalMs: Long
+        get() = pacer.intervalMs
+        set(value) { pacer.intervalMs = value }
 
     /**
      * Returns the payload to transmit now, or retains it behind the short pacing window.

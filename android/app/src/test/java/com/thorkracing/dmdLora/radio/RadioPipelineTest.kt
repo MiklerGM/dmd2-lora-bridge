@@ -34,7 +34,7 @@ class DedupTest {
 class TxPacerTest {
 
     @Test fun holdsOffUntilTheIntervalHasPassed() {
-        val p = TxPacer(minIntervalMs = 1_500)
+        val p = TxPacer(intervalMs = 1_500)
         assertTrue(p.allow(10_000))
         assertFalse(p.allow(10_100))
         assertFalse(p.allow(11_499))
@@ -42,7 +42,7 @@ class TxPacerTest {
     }
 
     @Test fun reportsHowLongToWait() {
-        val p = TxPacer(minIntervalMs = 1_500)
+        val p = TxPacer(intervalMs = 1_500)
         p.allow(10_000)
         assertEquals(1_400, p.waitMs(10_100))
         assertEquals(0, p.waitMs(12_000))
@@ -125,11 +125,29 @@ class TxSchedulerPaceTest {
     }
 }
 
-class TxJitterTest {
-    @Test fun `each window waits a random extra of at most the jitter`() {
-        val p = TxPacer(minIntervalMs = 1_500, maxJitterMs = 300, random = kotlin.random.Random(3))
-        org.junit.Assert.assertTrue(p.allow(0))
-        org.junit.Assert.assertFalse("never earlier than the interval", p.allow(1_499))
-        org.junit.Assert.assertTrue("never later than interval plus jitter", p.allow(1_800))
+class TxSpreadTest {
+    /** The windows two in-step devices draw: the stock floor up to 1.5x the interval, all of it used. */
+    private fun windows(intervalMs: Long): List<Long> {
+        val p = TxPacer(intervalMs = intervalMs, spread = true, random = kotlin.random.Random(3))
+        var t = 1_000L
+        assertTrue(p.allow(t))
+        return List(300) {
+            val from = t
+            do t += 10 while (!p.allow(t))
+            t - from
+        }
+    }
+
+    @Test fun `two riders heard - windows spread 1_5 to 3 s`() {
+        val w = windows(2_000)
+        assertTrue("never faster than the stock app", w.min() >= TxPacer.FLOOR_MS)
+        assertTrue("never slower than half again the interval", w.max() <= 3_000)
+        assertTrue("wide enough to break a run in step: ${w.min()}..${w.max()}", w.min() < 1_600 && w.max() > 2_900)
+        assertEquals("about the stock rate", 2_250.0, w.average(), 100.0)
+    }
+
+    @Test fun `alone or with one rider - never faster than the stock floor`() {
+        val w = windows(1_500)
+        assertTrue(w.min() >= TxPacer.FLOOR_MS && w.max() <= 2_250)
     }
 }
