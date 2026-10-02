@@ -354,6 +354,22 @@ held other riders between server updates (item 15). v0.1.0-148: pacing windows d
 1.5-3.0 s, an alert when the bridge drops right after power-up, Time check in Tools, and held
 transmissions and repeated warnings kept out of the log file, which had pushed the morning out.
 
+**2026-10-02, v0.1.0-149 on both, the last riding day of the trip.** The tablet's clock is
+fixed: Time check found automatic time off and the clock 46 s behind network time, then in step
+once automatic time was on, and its DMD2 held no rider stale all day (8,600 such lines the day
+before). Pacing on no beat worked: runs of in-step packets between phone and tablet were at most
+12 long (29 the day before), seven of eight or more (64); tablet and NOR7E heard each other at 49%
+with 0.5 gaps of 30 s an hour. The phone's E220 bridge was the trouble. Connected but deaf and
+mute for long stretches (09:56-10:44, 13:00-14:25, 14:40-14:52): the phone heard the others at
+1-10% of their rate and the tablet did not hear the phone at all, while the tablet heard the
+NOR7E at about 50% with all three within 10-300 m. The switches were abrupt and both ways at
+once, nothing in the app or the bridge coincided with them, and none of it happened on 10-01: a
+suspect antenna or connector (the owner had doubts about it too, unconfirmed) or supply - an
+E220 at 30 dBm draws about an ampere from 5 V while transmitting. The bridge also died twice
+when moving off after a stop with it still powered (10:44, 16 minutes; 15:00, 31 minutes and on),
+most likely engine restarts with the ignition on; `EarlyDrop` stayed quiet, as it only watches
+the first minute after power-up. Field tests paused after this day.
+
 ---
 
 ## M7 — Make it survivable
@@ -369,7 +385,10 @@ Only once M6 passes:
   module (`TXD ok <bytes> <ms>`, which the app already logs), reset on a hung task
   (ARCHITECTURE item 13), and retry the E220 health probe before declaring the module down
   (item 14). Bench: dip the bridge's supply while it runs, to reproduce the hang at engine
-  start (item 13). App: the GPS check should say plainly that DMD2 sends nothing while no
+  start (item 13); inspect the phone's E220 bridge's antenna and connector and set its reception
+  against the E22's (10-02); try it on a power bank. App: alert when the bridge has been gone a
+  minute while the phone's own GPS says it is moving, which would have caught 10-02's hangs that
+  `EarlyDrop` misses; a listen-before-talk trial on our bridges. App: the GPS check should say plainly that DMD2 sends nothing while no
   bridge is ready, instead of "DMD2 has not given us our own position".
 - Dedup ring, sequence handling, stale-position expiry.
 - ~~Works without a network.~~ **Verified 2026-09-09**, which is the premise the whole project
