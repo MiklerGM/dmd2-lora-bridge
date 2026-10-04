@@ -19,8 +19,9 @@ interface RadioLink {
     /** Ask the bridge to report its status again. */
     fun requestStatus()
 
-    /** Called for every complete wire string received from the air. */
-    var onWire: ((String) -> Unit)?
+    /** Called for every complete wire string received from the air, with its RSSI in dBm when
+     *  the bridge measured it. */
+    var onWire: ((String, Int?) -> Unit)?
 
     /**
      * Called with each status the bridge reports, or with null when it reported one this app

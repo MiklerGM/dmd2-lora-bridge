@@ -123,7 +123,10 @@ class BleRadioLink(context: Context) : RadioLink {
         foundName?.let { rememberBridge(it) }
     }
 
-    override var onWire: ((String) -> Unit)? = null
+    override var onWire: ((String, Int?) -> Unit)? = null
+
+    /** The bridge sends `RSSI <dBm>` just before the RX it belongs to; held until that RX. */
+    private var pendingRssi: Int? = null
     override var onStatus: ((BridgeStatus?) -> Unit)? = null
     override var onConnected: (() -> Unit)? = null
 
@@ -720,9 +723,14 @@ class BleRadioLink(context: Context) : RadioLink {
 
     private fun dispatch(line: String) {
         when {
+            // Lines from the bridge's other tasks can come between the two, so it is kept for
+            // the next RX rather than for the next line. Implausible values are no measurement.
+            line.startsWith("RSSI ") -> pendingRssi = line.substring(5).toIntOrNull()?.takeIf { it in -200..0 }
             line.startsWith("RX ") -> {
+                val rssi = pendingRssi
+                pendingRssi = null
                 if (validBondedStatus) {
-                    onWire?.invoke(line.substring(3))
+                    onWire?.invoke(line.substring(3), rssi)
                 } else {
                     EventLog.logThrottled(
                         "ble-untrusted-rx", "ignoring RX before bridge status is verified",

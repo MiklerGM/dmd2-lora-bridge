@@ -181,7 +181,7 @@ object Radio {
         // close() clears the old callback fields, but a callback already copied by another
         // thread can still arrive. Capturing the source and checking it under the same monitor
         // as the swap prevents an old board from supplying status or RX to a new board.
-        newLink.onWire = { wire -> fromCurrent(newLink) { onWire(app, wire) } }
+        newLink.onWire = { wire, rssi -> fromCurrent(newLink) { onWire(app, wire, rssi) } }
         newLink.onStatus = { s -> fromCurrent(newLink) { onBridgeStatus(s) } }
         newLink.onConnected = { fromCurrent(newLink) { onBridgeConnected() } }
         val old = synchronized(this) {
@@ -609,7 +609,7 @@ object Radio {
         return r.copy(positionAgeS = age)
     }
 
-    private fun onWire(context: Context, wire: String) {
+    private fun onWire(context: Context, wire: String, rssi: Int? = null) {
         if (!usable) {
             EventLog.logThrottled("rx-radio-gated", "RX ignored — ${gateReason()}")
             return
@@ -623,7 +623,8 @@ object Radio {
                 peers.heard(g.senderHash, now)
                 val via = if (g.relayed) " (relayed)" else ""
                 val ages = g.riders.joinToString(" ") { "%04X:%d".format(it.userIdHash, it.positionAgeS) }
-                EventLog.log("RX ${g.riders.size} rider(s) from ${"%04X".format(g.senderHash)} #${g.seq}$via · age $ages")
+                val level = rssi?.let { " · $it dBm" }.orEmpty()
+                EventLog.log("RX ${g.riders.size} rider(s) from ${"%04X".format(g.senderHash)} #${g.seq}$via · age $ages$level")
                 val dated = g.riders.mapNotNull { r -> dated(r, g, own, now) }
                 for (r in g.riders) {
                     retoldAge.saw(r.userIdHash, r.lat, r.lon, now)
@@ -640,7 +641,8 @@ object Radio {
             is RxAction.InjectChat -> {
                 val c = action.chat
                 liveness.sawSeq(c.senderHash, c.seq, nowMs())
-                EventLog.log("RX chat from ${c.senderName.ifEmpty { "%04X".format(c.senderHash) }}: ${c.text}")
+                val level = rssi?.let { " ($it dBm)" }.orEmpty()
+                EventLog.log("RX chat from ${c.senderName.ifEmpty { "%04X".format(c.senderHash) }}$level: ${c.text}")
                 Bridge.sendChatReceived(context, c.senderName, c.senderHash, c.text)
             }
             // Duplicates are the normal case, not a fault: every rider rebroadcasts its roster.
