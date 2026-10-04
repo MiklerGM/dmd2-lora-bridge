@@ -589,9 +589,27 @@ A fourth read, of `ef20149`, found two — both of them regressions from the rou
 
 ---
 
+## M8 — Off-the-shelf boards first, then the rest  *(decided 2026-10-04)*
+
+- **First: ready-made boards.** An ESP32-S3 + SX1262 board - Heltec, T-Beam, T3-S3, T-Deck,
+  ideally a kit with a battery - flashed from a browser and paired, with no module to wire. The
+  gate is our own transmission: EBYTE receivers, the NOR7E's E220 among them, take our SX1262
+  packets at 10-25 % while they take EBYTE's own SX1262 at 77-100 % (PHY-notes). Next on the bench:
+  RTL-SDR captures of the E22 against our boards over a cabled bench, to see what our frame does
+  differently around the sync word and SFD. A battery also rides through the supply dips that hung
+  the E220 bridge at engine starts.
+- **Then:** a browser flasher (ESP Web Tools over our merged images, usable already for the E220
+  and E22 bridges), and perhaps switching one board between this firmware and stock Meshtastic -
+  two app partitions side by side. Meshtastic as a protocol stays out of scope, below.
+- **Parallel track: USB OTG instead of Bluetooth,** so a tablet takes the radio as a wired
+  peripheral. Either the same line protocol over the board's USB serial - a second transport beside
+  BLE in the firmware, a `UsbRadioLink` in the app - or a bare EBYTE module on a USB-UART adapter
+  driven by the app itself, the way DMD's own companion drives the module inside a NOR7E. Mind the
+  power: an E220 at 30 dBm wants about an ampere at 5 V while transmitting, more than OTG gives.
+
 ## Explicitly out of scope
 
-- Relaying / mesh. Broken upstream; we send TTL=2 and never relay.
+- Relaying / mesh. Broken upstream; we send TTL=1 and never relay.
 - Any change to DMD2, root, repacking, or asking NOR7E owners to change anything.
 - Meshtastic / MeshCore / the DMD-LoRa Open API — each is a *different* protocol or a mode
   that disables the stock group exchange. They do not reach the goal.
