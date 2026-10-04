@@ -8,7 +8,9 @@
  *
  *   phone -> bridge                   bridge -> phone
  *   -------------------------------   -------------------------------------------
- *   TX <base64>                       RX <base64>       one packet off the air
+ *   TX <base64>                       TXD ok <bytes> <ms> / TXD fail <bytes>
+ *                                     RX <base64>       one packet off the air,
+ *                                                       after RSSI <dBm> where known
  *   CFG channel=N power_level=N lbt=N OK / ERR <reason>
  *   STATUS                            ST proto=2 radio=... (see send_status)
  *   PING <n>                          PONG <n chars>    forces a long, fragmented line
@@ -32,13 +34,17 @@
 #include "driver/gpio.h"
 #include "radio.h"
 #include "led.h"
+#include "esp_attr.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_task_wdt.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "nvs_flash.h"
+#include "probe.h"
 #include "wire_payload.h"
 
 #define TAG "bridge"
@@ -92,6 +98,54 @@ _Static_assert(MIN_POWER_INDEX >= 0 && MIN_POWER_INDEX <= 3,
 #define PAIR_HOLD_MS 3000
 
 static char s_fw[48] = "";       /* written once at startup, read-only afterwards */
+
+/* ---- why the board last started, and who watches it ------------------------ */
+
+/*
+ * The reset reason goes into every status, so a bridge that restarted on its own - a brownout at
+ * an engine start, a watchdog - says so in the phone's log instead of passing for a fresh
+ * power-up. A restart this firmware chooses leaves a note in RTC memory, which survives a
+ * software restart but not a power loss; the magic tells a note from what power-up left there.
+ */
+#define RESTART_NOTE_MAGIC 0x5E70A000u
+enum { RESTART_FOR_BLE = 1, RESTART_FOR_BOND = 2 };
+static RTC_NOINIT_ATTR uint32_t s_restart_note;
+static const char *s_reset = "other";   /* written once at startup, read-only afterwards */
+
+static void restart_for(uint32_t why) {
+    s_restart_note = RESTART_NOTE_MAGIC | why;
+    esp_restart();
+}
+
+static const char *reset_name(void) {
+    const uint32_t note = s_restart_note;
+    s_restart_note = 0;
+    switch (esp_reset_reason()) {
+        case ESP_RST_POWERON: return "poweron";
+        case ESP_RST_BROWNOUT: return "brownout";
+        case ESP_RST_PANIC: return "panic";
+        case ESP_RST_INT_WDT: return "int_wdt";
+        case ESP_RST_TASK_WDT: return "task_wdt";
+        case ESP_RST_WDT: return "wdt";
+        case ESP_RST_EXT: return "pin";
+        case ESP_RST_SW:
+            if (note == (RESTART_NOTE_MAGIC | RESTART_FOR_BLE)) return "ble_stuck";
+            if (note == (RESTART_NOTE_MAGIC | RESTART_FOR_BOND)) return "bond_reset";
+            return "sw";
+        default: return "other";
+    }
+}
+
+/*
+ * Every task here that loops on its own is watched, and one that stops feeding the watchdog for
+ * CONFIG_ESP_TASK_WDT_TIMEOUT_S reboots the board (CONFIG_ESP_TASK_WDT_PANIC): a reboot is back
+ * on the air in seconds, a hung bridge only when someone re-plugs it (ARCHITECTURE item 13). A
+ * build without the watchdog runs unwatched rather than not at all.
+ */
+static void watch_this_task(void) {
+    esp_err_t err = esp_task_wdt_add(NULL);
+    if (err != ESP_OK) ESP_LOGW(TAG, "task watchdog unavailable: %s", esp_err_to_name(err));
+}
 
 typedef struct {
     char *payload;        /* owned by the queue */
@@ -200,6 +254,11 @@ static void send_status_locked(void) {
                                     dbm[s.req.power_level]),
                       sizeof(out));
     }
+    /* Since when, and why: a reboot mid-ride shows as a small up= with a reason other than
+     * poweron. Android reads tokens it knows and ignores the rest, so older apps are fine. */
+    at = clamp_at(at + snprintf(out + at, sizeof(out) - (size_t)at, " reset=%s up=%lu", s_reset,
+                                (unsigned long)(esp_timer_get_time() / 1000000)),
+                  sizeof(out));
     /* Last, and space-free by contract: radio_identity() must strip spaces so a radio
      * cannot inject tokens into a line the phone parses by token. */
     snprintf(out + at, sizeof(out) - (size_t)at, " fw=%s", s_fw[0] ? s_fw : "?");
@@ -335,11 +394,15 @@ static void on_ble_bonds_cleared(void) {
 static void tx_task(void *arg) {
     (void)arg;
     tx_item_t item;
+    watch_this_task();
     for (;;) {
-        if (xQueueReceive(s_tx_queue, &item, portMAX_DELAY) == pdTRUE) {
+        esp_task_wdt_reset();
+        /* Bounded, so an idle radio still feeds the watchdog. */
+        if (xQueueReceive(s_tx_queue, &item, pdMS_TO_TICKS(5000)) == pdTRUE) {
             size_t len = strlen(item.payload);
             bool current;
             bool sent = false;
+            uint32_t took_ms = 0;
 
             /* The final state check and the UART write are one operation relative to CFG.
              * If CFG got the lock first, its generation makes this queued packet stale; the
@@ -353,7 +416,9 @@ static void tx_task(void *arg) {
             /* No terminator: the module closes the packet on the UART idle gap, so a stray
              * newline here would travel as part of the payload and corrupt it for everyone. */
             if (current) {
+                const int64_t t0 = esp_timer_get_time();
                 sent = radio_send((const uint8_t *)item.payload, len);
+                took_ms = (uint32_t)((esp_timer_get_time() - t0) / 1000);
                 if (!sent) {
                     /* The bytes or the idle transition were not confirmed. Leave online as the
                      * last observed fact, but close both TX and RX until CFG/verify recovers.
@@ -375,12 +440,25 @@ static void tx_task(void *arg) {
             } else if (sent) {
                 /* "0g" is a useful diagnostic prefix for current DMD packets, not validation;
                  * Android owns the complete header, group and protocol-CRC checks. */
-                ESP_LOGI(TAG, "tx %u bytes: %.12s...", (unsigned)len, item.payload);
+                ESP_LOGI(TAG, "tx %u bytes in %lu ms: %.12s...", (unsigned)len,
+                         (unsigned long)took_ms, item.payload);
+                /*
+                 * The phone's word that a packet really left: the module took every byte and went
+                 * idle again. The time runs from handing it the bytes to idle - the UART, then
+                 * the air - plus any wait for a reception it was still delivering. Not proof
+                 * that anyone received it.
+                 */
+                char txd[40];
+                snprintf(txd, sizeof(txd), "TXD ok %u %lu", (unsigned)len, (unsigned long)took_ms);
+                ble_nus_send_line(txd);
             } else {
                 /* Logging a transmission whose UART/AUX completion was not confirmed, and
                  * flashing for it, is how a board with a dead radio looks busy and healthy. */
                 ESP_LOGW(TAG, "tx dropped: radio write did not complete (%u bytes)",
                          (unsigned)len);
+                char txd[40];
+                snprintf(txd, sizeof(txd), "TXD fail %u", (unsigned)len);
+                ble_nus_send_line(txd);
                 send_status();
             }
             free(item.payload);
@@ -539,7 +617,19 @@ static void pair_button_task(void *arg) {
     const TickType_t poll = pdMS_TO_TICKS(100);
     int held_ms = 0;
     bool fired = false;
+    int supervise_ms = 0;
+    watch_this_task();
     for (;;) {
+        esp_task_wdt_reset();
+#ifndef BENCH_NO_BLE
+        if ((supervise_ms += 100) >= 1000) {
+            supervise_ms = 0;
+            if (ble_nus_supervise()) {
+                ESP_LOGE(TAG, "bluetooth stuck - restarting");
+                restart_for(RESTART_FOR_BLE);
+            }
+        }
+#endif
         bool button_down = gpio_get_level((gpio_num_t)PIN_PAIR_BUTTON) == 0;
         if (button_down) {
             held_ms += 100;
@@ -561,7 +651,7 @@ static void pair_button_task(void *arg) {
             vTaskDelay(pdMS_TO_TICKS(4000));
             if (gpio_get_level((gpio_num_t)PIN_PAIR_BUTTON) != 0) {
                 ESP_LOGW(TAG, "bond reset complete - restarting BLE controller");
-                esp_restart();
+                restart_for(RESTART_FOR_BOND);
             }
         }
         vTaskDelay(poll);
@@ -574,8 +664,11 @@ static void rx_task(void *arg) {
     static char line[OUT_LINE_MAX];
 #ifndef BENCH_OBSERVE
     TickType_t last_probe = xTaskGetTickCount();
+    unsigned probe_misses = 0;
 #endif
+    watch_this_task();
     for (;;) {
+        esp_task_wdt_reset();
         /*
          * Ask the backend what it is holding, on a timer, whichever way it is currently
          * believed to be. An online= that goes to 1 once and stays there for ever is a lie: a
@@ -597,7 +690,9 @@ static void rx_task(void *arg) {
         /* Bench observation leaves the module in normal mode after boot: this probe is the one
          * periodic trip through configuration mode, and it is under test. */
         snap = state_snapshot();
-        TickType_t due = pdMS_TO_TICKS(snap.online ? RADIO_PROBE_MS : RADIO_RETRY_MS);
+        /* After a miss, ask again soon: see probe.h. */
+        TickType_t due = pdMS_TO_TICKS(snap.online && probe_misses == 0 ? RADIO_PROBE_MS
+                                                                         : RADIO_RETRY_MS);
         if (xTaskGetTickCount() - last_probe >= due) {
             bool changed = false;
             state_lock();
@@ -617,16 +712,21 @@ static void rx_task(void *arg) {
                  * because it has been wrong for a while would put a green status on a radio
                  * transmitting somewhere else, which is the whole failure this exists to catch.
                  */
-                bool online = (st != RADIO_NO_ANSWER);
-                bool configured = (st == RADIO_OK);
-                changed = (online != s_state.online) || (configured != s_state.configured);
-                /* The first transition away from a confirmed radio invalidates packets that
-                 * were accepted before the fault. A later successful probe may reopen TX, but
-                 * it must not revive that stale queue under the same generation. */
-                if (s_state.configured && !configured) s_state.generation++;
-                s_state.online = online;
-                s_state.configured = configured;
-                led_set_module_ok(online && configured);
+                if (probe_counts(&probe_misses, st != RADIO_NO_ANSWER, s_state.online)) {
+                    bool online = (st != RADIO_NO_ANSWER);
+                    bool configured = (st == RADIO_OK);
+                    changed = (online != s_state.online) || (configured != s_state.configured);
+                    /* The first transition away from a confirmed radio invalidates packets that
+                     * were accepted before the fault. A later successful probe may reopen TX,
+                     * but it must not revive that stale queue under the same generation. */
+                    if (s_state.configured && !configured) s_state.generation++;
+                    s_state.online = online;
+                    s_state.configured = configured;
+                    led_set_module_ok(online && configured);
+                } else {
+                    ESP_LOGW(TAG, "probe unanswered (%u of %d) - asking again shortly",
+                             probe_misses, PROBE_MISSES_DOWN);
+                }
             }
             snap = s_state;
             state_unlock();
@@ -668,8 +768,18 @@ static void rx_task(void *arg) {
             continue;
         }
         buf[n] = '\0';
-        ESP_LOGI(TAG, "rx %u bytes: %.12s...", (unsigned)n, (const char *)buf);
+        int rssi = 0;
+        const bool have_rssi = radio_last_rssi(&rssi);
+        ESP_LOGI(TAG, "rx %u bytes, rssi %d: %.12s...", (unsigned)n, have_rssi ? rssi : 0,
+                 (const char *)buf);
         if (!ble_nus_connected()) continue;
+        /* Its own line, just before the packet: an RX line with anything after the payload
+         * would be undecodable for an app that predates this. Lines from other tasks may come
+         * between the two; the phone pairs an RSSI with the next RX it sees. */
+        if (have_rssi) {
+            snprintf(line, sizeof(line), "RSSI %d", rssi);
+            ble_nus_send_line(line);
+        }
         snprintf(line, sizeof(line), "RX %s", (const char *)buf);
         ble_nus_send_line(line);
     }
@@ -818,6 +928,11 @@ static void bench_task(void *arg) {
 #endif
 
 void app_main(void) {
+    s_reset = reset_name();
+    ESP_LOGI(TAG, "started after: %s", s_reset);
+    /* Watched through the slow part of start-up as well: radio_init alone can wait seconds per
+     * module it tries, and a start that hangs there never reaches Bluetooth. */
+    watch_this_task();
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -877,11 +992,13 @@ void app_main(void) {
     led_init();
 
     radio_init();
+    esp_task_wdt_reset();
 #ifdef BENCH_OBSERVE
     e220_observe_init();
     ESP_LOGW(TAG, "BENCH_OBSERVE: no health probe; raw UART, AUX pulses, RSSI query");
 #endif
     radio_identity(s_fw, sizeof(s_fw));
+    esp_task_wdt_reset();
 
     state_lock();
     radio_request_t boot = s_state.req;
@@ -934,10 +1051,13 @@ void app_main(void) {
     }
 
     bridge_state_t started = state_snapshot();
+    /* app_main returns and its task ends: a watched task that ends without leaving trips the
+     * watchdog. */
+    esp_task_wdt_delete(NULL);
 #ifdef BENCH_CMD
     xTaskCreate(bench_task, "bench", 4096, NULL, 4, NULL);
 #endif
-    ESP_LOGI(TAG, "bridge up: proto=%d radio=%s mode=%s ch=%u power_level=%u online=%d",
+    ESP_LOGI(TAG, "bridge up: proto=%d radio=%s mode=%s ch=%u power_level=%u online=%d reset=%s",
              BRIDGE_PROTO, radio_name(), BRIDGE_MODE, started.req.channel,
-             started.req.power_level, (int)started.online);
+             started.req.power_level, (int)started.online, s_reset);
 }

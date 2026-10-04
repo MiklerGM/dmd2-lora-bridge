@@ -27,6 +27,7 @@ typedef struct {
     uint8_t  packet_size;
     bool     transparent;
     bool     lbt;
+    bool     rssi_byte;     /* the module appends the packet's RSSI to what it receives */
     uint16_t key;
 } e220_config_t;
 
@@ -60,9 +61,11 @@ uint8_t e220_readback_mask_at(size_t i);
 #define E220_GROUP_CONFIG                                                     \
     (e220_config_t) { .address = 0, .channel = 18, .air_rate = E220_AIR_RATE, \
                       .power = 3, .packet_size = 0, .transparent = true,      \
-                      .lbt = false, .key = 0 }
+                      .lbt = false, .rssi_byte = false, .key = 0 }
 
-/* Builds the fixed DMD profile around the three backend-neutral settings from CFG. */
+/* Builds the fixed DMD profile around the three backend-neutral settings from CFG, plus the one
+ * local difference: the RSSI byte, which the receive path strips (radio_e220.c). It changes what
+ * the module hands us over the UART, nothing on the air. */
 e220_config_t e220_config_for(const radio_request_t *req);
 
 /* Builds the C0 write-register frame. out must hold E220_FRAME_MAX bytes; e220_frame_len() of

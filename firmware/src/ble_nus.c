@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "esp_mac.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -41,6 +42,12 @@ static const ble_uuid128_t UUID_TX = BLE_UUID128_INIT(
     0x93, 0xf3, 0xa3, 0xb5, 0x03, 0x00, 0x40, 0x6e);
 
 #define NUS_LINE_MAX 512
+/* The app asks for a status every 30 s, so a live phone is never quiet for long. A sleeping one
+ * can be, which is why this is minutes rather than three missed polls: dropping a link the phone
+ * will simply rebuild costs little, but not this often. */
+#define SILENT_LINK_S 300
+/* How long the kick above gets to work before only a restart is left. */
+#define STUCK_RESTART_S 60
 #define DEVICE_NAME_PREFIX "LoRaBridge-for-DMD2"
 #define DEVICE_ID_HEX_LEN 8
 #define DEVICE_NAME_LEN ((sizeof(DEVICE_NAME_PREFIX) - 1) + 1 + DEVICE_ID_HEX_LEN)
@@ -69,6 +76,12 @@ static atomic_uint_least32_t s_conn_generation = ATOMIC_VAR_INIT(0);
 static uint16_t s_tx_handle;
 static uint8_t s_addr_type;
 static struct ble_npl_event s_forget_event;
+static struct ble_npl_event s_kick_event;
+
+/* When the phone last wrote anything, in seconds since boot; reset on every connection. */
+static atomic_uint_least32_t s_heard_s = ATOMIC_VAR_INIT(0);
+
+static uint32_t uptime_s(void) { return (uint32_t)(esp_timer_get_time() / 1000000); }
 
 typedef struct {
     uint16_t conn;
@@ -151,6 +164,7 @@ static bool s_discarding;
 
 static void advertise(void);
 static void forget_from_button(struct ble_npl_event *event);
+static void kick(struct ble_npl_event *event);
 
 /** True when a bond already exists and this is not it. */
 static bool is_stranger(uint16_t conn_handle) {
@@ -227,6 +241,7 @@ static int on_rx(uint16_t conn, uint16_t attr, struct ble_gatt_access_ctxt *ctxt
     if (s_current_revoked) {
         return BLE_ATT_ERR_WRITE_NOT_PERMITTED;
     }
+    atomic_store(&s_heard_s, uptime_s());
     struct os_mbuf *om = ctxt->om;
     while (om) {
         feed(om->om_data, om->om_len);
@@ -289,6 +304,7 @@ static int on_gap(struct ble_gap_event *event, void *arg) {
                 /* The generation distinguishes a genuinely new connection even if the
                  * controller immediately reuses the same 16-bit handle. */
                 connection_set(event->connect.conn_handle);
+                atomic_store(&s_heard_s, uptime_s());
                 s_line_len = 0;
                 s_discarding = false;
                 /* MTU is negotiated by the central: the largest current wire packet is 200
@@ -431,6 +447,7 @@ void ble_nus_init(ble_nus_line_cb on_line, ble_nus_revoke_cb on_revoke,
     s_send_lock = xSemaphoreCreateMutex();
     configASSERT(s_send_lock != NULL);
     ble_npl_event_init(&s_forget_event, forget_from_button, NULL);
+    ble_npl_event_init(&s_kick_event, kick, NULL);
 
     ble_svc_gap_init();
     ble_svc_gatt_init();
@@ -554,6 +571,45 @@ void ble_nus_forget_bonds(void) {
     /* Keep both revocation and the pending clear: a natural DISCONNECT can still finish the
      * physical reset safely. Another button event may retry if the controller stays wedged. */
     ESP_LOGE(TAG, "cannot stop in-flight pairing for bond reset (%d); clear pending", rc);
+}
+
+/* On the host task, for ble_nus_supervise: drop a link the phone has gone silent on, or start
+ * advertising again if nothing is. Either way the stack's own events take it from there. */
+static void kick(struct ble_npl_event *event) {
+    (void)event;
+    disconnect_target_t current;
+    if (connection_snapshot(&current)) {
+        ESP_LOGW(TAG, "phone silent for %u s on a live link - dropping it",
+                 (unsigned)(uptime_s() - atomic_load(&s_heard_s)));
+        disconnect_if_current(&current);
+    } else if (!ble_gap_adv_active()) {
+        ESP_LOGW(TAG, "neither connected nor advertising - advertising again");
+        advertise();
+    }
+}
+
+bool ble_nus_supervise(void) {
+    static uint32_t stuck_since;   /* 0: nothing wrong */
+    /* Both flags are written by the host task; a stale read only delays this by a second. */
+    if (s_restart_pending || s_clear_in_progress) {
+        stuck_since = 0;
+        return false;
+    }
+    const uint32_t now = uptime_s();
+    const bool stuck = ble_nus_connected() ? now - atomic_load(&s_heard_s) > SILENT_LINK_S
+                                           : !ble_gap_adv_active();
+    if (!stuck) {
+        stuck_since = 0;
+        return false;
+    }
+    if (stuck_since == 0) {
+        stuck_since = now ? now : 1;
+        ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &s_kick_event);
+        return false;
+    }
+    if (now - stuck_since < STUCK_RESTART_S) return false;
+    ESP_LOGE(TAG, "bluetooth still stuck after %u s", (unsigned)(now - stuck_since));
+    return true;
 }
 
 static void forget_from_button(struct ble_npl_event *event) {

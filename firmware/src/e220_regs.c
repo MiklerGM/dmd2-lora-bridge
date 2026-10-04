@@ -20,9 +20,11 @@
  *   REG0 0x62 = 9600 8N1, air rate index 2 (2.4 kbps)
  *   REG1 0x24 = 200-byte sub-packet, power index 0
  *   REG2 0x12 = channel 18 -> 868.125 MHz
- *   REG3 0x10 = transparent mode, bit 7 clear so no RSSI byte is appended. That last one
- *               matters: an appended RSSI byte would corrupt the base64 payload for every
- *               receiver.
+ *   REG3 0x10 = transparent mode, bit 7 clear so no RSSI byte is appended.
+ *
+ * The bridge's own profile sets bit 7 (e220_config_for): the module then appends the packet's
+ * RSSI to what it hands over the UART. Nothing changes on the air, but the byte must never reach
+ * the phone as part of a payload - it would corrupt the base64 - so the receive path strips it.
  */
 static const uint8_t STOCK_E220[8] = {0x00, 0x00, 0x62, 0x24, 0x12, 0x10, 0x00, 0x00};
 
@@ -66,6 +68,7 @@ static const uint8_t MASK_E22[7] = {
 #define REG0_AIR_RATE_MASK 0x07
 #define REG1_PACKET_SHIFT 6
 #define REG1_POWER_MASK 0x03
+#define REG3_RSSI_BIT 0x80
 #define REG3_FIXED_BIT 0x40
 #define REG3_LBT_BIT 0x10
 #define CMD_HEAD_WRITE 0xC0
@@ -96,6 +99,7 @@ e220_config_t e220_config_for(const radio_request_t *req) {
     cfg.channel = req->channel;
     cfg.power = req->power_level;
     cfg.lbt = req->lbt;
+    cfg.rssi_byte = true;
     return cfg;
 }
 
@@ -123,6 +127,9 @@ void e220_build_frame(const e220_config_t *cfg, uint8_t *out) {
 
     if (cfg->lbt) reg[5 + b] |= REG3_LBT_BIT;
     else reg[5 + b] &= (uint8_t)~REG3_LBT_BIT;
+
+    if (cfg->rssi_byte) reg[5 + b] |= REG3_RSSI_BIT;
+    else reg[5 + b] &= (uint8_t)~REG3_RSSI_BIT;
 
     reg[6 + b] = (uint8_t)(cfg->key >> 8);
     reg[7 + b] = (uint8_t)(cfg->key & 0xFF);

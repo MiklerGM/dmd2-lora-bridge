@@ -155,12 +155,21 @@ DMD2 ──SET_FREQUENCY{channel, power, lbt, region_desc}──► app
 ```
 phone -> bridge                     bridge -> phone
 ---------------------------------   -------------------------------------------
-TX <base64>                         RX <base64>
+TX <base64>                         TXD ok <bytes> <ms>  /  TXD fail <bytes>
+                                    RX <base64>, after RSSI <dBm> where known
 CFG channel=N power_level=N lbt=N   OK  /  ERR <reason>
 STATUS                              ST  <see below>
 PING <n>                            PONG <n chars>
 FORGET                              FORGOTTEN  /  ERR forget incomplete
 ```
+
+`TXD ok` says the module took every byte of a `TX` and went idle again; `<ms>` runs from handing
+it the bytes to idle, which is the UART, the air time and any reception it was still
+delivering. It is not proof that anyone received the packet. `RSSI` comes on its own line before
+the `RX` it measured, because an app that predates it could not decode an `RX` with anything
+after the payload; lines from the bridge's other tasks may come between the two, so Android
+pairs an `RSSI` with the next `RX`. An E220 reports it through the RSSI byte the bridge's own
+register profile enables and the firmware strips; the SX1262 backend does not report it yet.
 
 All three `CFG` keys are required; a line that is malformed, repeats a key, names an unknown
 key or is out of range is refused whole without touching the radio. If a syntactically valid
@@ -193,7 +202,7 @@ refills its three attempts, but never the global write timer.
 
 ```
 ST proto=2 radio=e220 mode=bridge online=1 tx=1 configured=1 \
-   channel=18 power_level=3 lbt=0 min_power_level=0 tx_dbm=21 fw=E220-V1.2
+   channel=18 power_level=3 lbt=0 min_power_level=0 tx_dbm=21 reset=brownout up=12 fw=E220-V1.2
 ```
 
 | Token | Means |
@@ -207,6 +216,7 @@ ST proto=2 radio=e220 mode=bridge online=1 tx=1 configured=1 \
 | `channel` `power_level` `lbt` | the bridge's logical snapshot after its own floor; a claim about actual hardware only while `configured=1` (otherwise it may be merely the boot or last confirmed request); channel and power must be in the contract ranges |
 | `min_power_level` | required; the strongest power level this build permits (`0..3`, where larger is weaker); `0` means the build lifted its own floor and says so |
 | `tx_dbm` | what that level is worth on the module fitted — absent when unknown; EBYTE reports its rated power at boot, while unmeasured front-end gain cannot be inferred from the SX1262 setting |
+| `reset` `up` | why the board last started and how many seconds ago: `poweron`, `brownout`, `panic`, `task_wdt`, `int_wdt`, `wdt`, `pin`, `sw`, `ble_stuck`, `bond_reset` or `other`. Diagnostic; a bridge that restarted on its own mid-ride shows a small `up` with a reason other than `poweron`. Android ignores keys it does not know, so older apps read the rest unchanged |
 | `fw` | optional diagnostic firmware identity; never used as a capability gate |
 
 The status is parsed as whole `key=value` tokens. Searching the line for `channel=` would find
@@ -345,8 +355,14 @@ the first question with no: it is already transmitting from its own GNSS and is 
     LED lit, none of the firmware's flashes, and the phone could not find it over Bluetooth.
     A power cycle fixed it. A crash would have rebooted by itself (`PANIC_PRINT_REBOOT`), but a
     hung task does not: `CONFIG_ESP_TASK_WDT_PANIC` is off, so the task watchdog only prints.
-    Next: make the watchdog reset the board, report the reset reason in `ST`, and try to
-    reproduce with a module that stops answering.
+    From the firmware after 2026-10-02: a task that stops feeding the watchdog for 30 s reboots
+    the board (`CONFIG_ESP_TASK_WDT_PANIC`; the radio tasks, the button task and start-up are
+    watched); Bluetooth is supervised - no phone and no advertising, or a connected phone silent
+    for five minutes while the app polls every 30 s, is kicked on the host task and, if that has
+    not helped a minute later, restarted (`reset=ble_stuck`); and every `ST` carries the reset
+    reason and uptime. None of that reaches a chip hung by its supply, which is what a dip at
+    the engine start may do; that is for the bench, with the brownout threshold (level 0,
+    2.43 V, below what the flash needs) the first thing to try.
     Twice more on 2026-10-01, on the E220 bridge (classic ESP32), and the same way both times: it
     came up with the ignition, connected, dropped 22-26 s later (a BLE supervision timeout, so the
     board itself went quiet) and never advertised again until re-plugged - 42 and 25 minutes of
@@ -359,8 +375,9 @@ the first question with no: it is already transmitting from its own GNSS and is 
     bridge reported `online=0` 51 times in four hours, in pairs 30 s apart (the probe period);
     each time the app re-sent CFG and the radio was back within 0.4-5 s. Short outages, but
     each costs a CFG, which on an E220 is a flash write. Likely the module was busy receiving
-    when the probe switched it to configuration mode. Next: treat one unanswered probe as
-    busy and retry, and declare the module down only after several in a row.
+    when the probe switched it to configuration mode. From the firmware after 2026-10-02 an
+    unanswered probe is asked again within 5 s and the module called down only after three in a
+    row (`probe.h`); on 2026-10-02 there were 55 single misses, all in good reception.
 15. **DMD2 freezes positions stamped in the future, and retells them as brand new.** DMD2
     keeps each rider's position time on its own device clock. If that time lands in the future
     - the clock steps back, or data with true timestamps meets a clock that runs behind - its

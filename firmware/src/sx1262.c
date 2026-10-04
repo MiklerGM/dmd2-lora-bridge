@@ -1589,6 +1589,13 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
  * own setting says nothing about what leaves the antenna. */
 const char *radio_name(void) { return "sx1262"; }
 
+/* ponytail: the modem measures it per packet (see RX_STAGES), but this backend has not ridden
+ * yet; wire it up when it does rather than report a number nobody has checked. */
+bool radio_last_rssi(int *dbm) {
+    (void)dbm;
+    return false;
+}
+
 bool radio_tx_dbm(int8_t out[4]) {
     (void)out;
     return false;

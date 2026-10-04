@@ -381,10 +381,11 @@ Only once M6 passes:
   in the last 90 s, as DMD-LoRa 1.0.9 counts them. Its per-device slot offset is not copied;
   from v0.1.0-148 each window is drawn between 1.5 s and 1.5 times that interval, since two of
   our devices on one beat fell into step and deafened each other (ARCHITECTURE item 16).
-- **Open after the 2026-09 trip.** Firmware: report each transmission that really left the
-  module (`TXD ok <bytes> <ms>`, which the app already logs), reset on a hung task
-  (ARCHITECTURE item 13), and retry the E220 health probe before declaring the module down
-  (item 14). Bench: dip the bridge's supply while it runs, to reproduce the hang at engine
+- **Open after the 2026-09 trip.** Firmware, done 2026-10-04 and not yet on a board: `TXD ok`
+  for each transmission that left the module, a watchdog that reboots a hung task and a
+  Bluetooth supervisor (ARCHITECTURE item 13), the reset reason in `ST`, the E220 probe asked
+  three times before the module is called down (item 14), and the RSSI of every reception.
+  Bench: dip the bridge's supply while it runs, to reproduce the hang at engine
   start (item 13); the phone's E220 bridge ran 30 dBm into an antenna found half a turn loose
   (10-02), so check its output against the E22's before trusting it, and lock the SMA against
   vibration; whether the hangs follow the antenna or the supply, retest them with it tight. App: alert when the bridge has been gone a

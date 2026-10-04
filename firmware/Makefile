@@ -16,6 +16,8 @@ test:
 	@gcc -std=c11 -Wall -Wextra -Werror -o /tmp/test_wire_payload \
 		test/test_wire_payload.c src/wire_payload.c
 	@/tmp/test_wire_payload
+	@gcc -std=c11 -Wall -Wextra -Werror -o /tmp/test_probe test/test_probe.c
+	@/tmp/test_probe
 
 
 # One flashable file per board, for people who want to run the bridge without a build

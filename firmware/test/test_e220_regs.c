@@ -27,6 +27,7 @@ int main(void) {
     assert(mapped.channel == 65 && mapped.power == 1 && mapped.lbt == true);
     assert(mapped.address == 0 && mapped.air_rate == 2 && mapped.packet_size == 0);
     assert(mapped.transparent == true && mapped.key == 0);
+    assert(mapped.rssi_byte == true);   /* ours, stripped on receive; see 4. */
     printf("%-28s ok\n", "logical request mapping");
 
     /* A write reply may differ in fields we did not choose, but a different RF setting must
@@ -98,8 +99,9 @@ int main(void) {
     assert((f[6] >> 6) == 0);               /* sub-packet still 200 bytes */
     assert(f[5] == 0x62 && f[7] == 0x12);   /* air rate and channel untouched */
 
-    /* 4. An appended RSSI byte would corrupt the base64 payload for every receiver,
-     *    so REG3 bit 7 must be clear in every configuration we can produce. */
+    /* 4. The appended RSSI byte is a choice of ours, not the stock profile's: the stock block
+     *    never has REG3 bit 7, and every profile the bridge itself applies always does - the
+     *    receive path strips exactly one byte, so a module without it would lose payload. */
     for (int ch = 0; ch <= 80; ch += 20) {
         for (int lbt = 0; lbt <= 1; lbt++) {
             e220_config_t c = E220_GROUP_CONFIG;
@@ -108,9 +110,14 @@ int main(void) {
             e220_build_frame(&c, f);
             assert((f[8] & 0x80) == 0);
             assert(f[7] == (uint8_t)ch);
+            radio_request_t r = {.channel = (uint8_t)ch, .power_level = 3, .lbt = (bool)lbt};
+            e220_config_t b = e220_config_for(&r);
+            e220_build_frame(&b, f);
+            assert((f[8] & 0x80) == 0x80);
+            assert((f[8] & 0x7F) == (lbt ? 0x10 : 0x00));   /* nothing else in REG3 moved */
         }
     }
-    printf("%-28s ok\n", "rssi byte never enabled");
+    printf("%-28s ok\n", "rssi byte ours, not stock");
 
     /* 5. Mode bits do what they say. */
     e220_config_t lbt_on = E220_GROUP_CONFIG;

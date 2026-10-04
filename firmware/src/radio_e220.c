@@ -1,6 +1,8 @@
 /* Compiled only into the build that selects one of these backends; see radio.h. */
 #ifdef RADIO_BACKEND_E220
 
+#include <string.h>
+
 #include "radio.h"
 
 /*
@@ -34,8 +36,35 @@ radio_state_t radio_verify(const radio_request_t *req) {
 
 bool radio_send(const uint8_t *data, size_t len) { return e220_write(data, len); }
 
+static int s_last_rssi;
+static bool s_have_rssi;
+
+/*
+ * The module appends one RSSI byte to every packet (REG3 bit 7, e220_config_for), so read one
+ * byte more than the caller asked for and keep it apart. The caller's overflow sentinel still
+ * works: a read that fills the larger buffer is a payload of at least out_len, which is returned
+ * as out_len for the caller to reject. Only reached once the registers read back as ours, bit 7
+ * included, so the last byte really is the RSSI.
+ */
 size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_t first_wait_ms) {
-    return e220_read_packet(out, out_len, idle_gap_ms, first_wait_ms);
+    static uint8_t raw[256 + 1];
+    const size_t cap = out_len + 1 <= sizeof(raw) ? out_len + 1 : sizeof(raw);
+    size_t n = e220_read_packet(raw, cap, idle_gap_ms, first_wait_ms);
+    s_have_rssi = false;
+    if (n == cap) {
+        memcpy(out, raw, out_len);
+        return out_len;
+    }
+    if (n < 2) return 0;   /* nothing, or a lone byte with no payload */
+    s_last_rssi = -(256 - (int)raw[n - 1]);   /* dBm, per the manual */
+    s_have_rssi = true;
+    memcpy(out, raw, n - 1);
+    return n - 1;
+}
+
+bool radio_last_rssi(int *dbm) {
+    if (s_have_rssi) *dbm = s_last_rssi;
+    return s_have_rssi;
 }
 
 size_t radio_identity(char *out, size_t out_len) { return e220_read_firmware(out, out_len); }

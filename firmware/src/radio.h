@@ -82,3 +82,9 @@ bool radio_tx_dbm(int8_t out[4]);
  * seam. Must be free of spaces: the phone parses the status line by token.
  */
 const char *radio_name(void);
+
+/*
+ * The signal strength of the packet radio_receive() last returned, in dBm, and whether this
+ * backend knows it. A loose antenna shows as tens of dB lost long before it shows as a dead link.
+ */
+bool radio_last_rssi(int *dbm);
