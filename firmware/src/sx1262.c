@@ -132,8 +132,18 @@
 #define PHY_LDRO      0x01
 #endif
 #define PHY_PREAMBLE  8
-#define PHY_SYNC_MSB  0x54   /* sync word 0x55 as the chip stores it: high nibble | 0x04 */
-#define PHY_SYNC_LSB  0x54   /* low nibble << 4 | 0x04 */
+/*
+ * The two sync symbols an EBYTE module puts on the air are 40 and 36, read off the air with an
+ * RTL-SDR on 2026-10-06 (bench/sdr_lora.py). The chip makes each from the top five bits of its
+ * register byte, times four - 0x54 gives 40, 0x48 gives 36, the low three bits do nothing. The
+ * 0x54 0x54 written before sent 40 and 40: EBYTE receivers took it about one time in four, and
+ * our own receiver, finding two identical symbols, locked on the second one time in five and
+ * read the data a symbol late (PHY-notes 2026-09-25). Interleaved on one bench, an E22 received
+ * 7 of 30 packets with the old pair and 30 of 30 with this one; across rooms an E220, the NOR7E's
+ * module, 5 of 40 and 38 of 40.
+ */
+#define PHY_SYNC_MSB  0x54
+#define PHY_SYNC_LSB  0x48
 
 /*
  * EBYTE's own frame, which the module's MCU adds and strips. A bare SX1262 has no such MCU, so
