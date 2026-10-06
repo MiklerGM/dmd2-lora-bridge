@@ -57,7 +57,10 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
     }
     if (n < 2) return 0;   /* nothing, or a lone byte with no payload */
     s_last_rssi = -(256 - (int)raw[n - 1]);   /* dBm, per the manual */
-    s_have_rssi = true;
+    /* 0 would be -256 dBm, far below any noise floor. On 2026-10-06 an E220 wrote it for 29 of 30
+     * packets from an E22 10 cm away, while weaker links read -9 to -63: the signal is off the top
+     * of the scale, so it is no reading rather than the weakest possible one. */
+    s_have_rssi = raw[n - 1] != 0;
     memcpy(out, raw, n - 1);
     return n - 1;
 }
