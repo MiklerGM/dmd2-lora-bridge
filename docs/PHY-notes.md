@@ -2659,3 +2659,61 @@ from each board, twice: SX1262 → EBYTE 29-30 of 30 in every cell.
 - A packet can sit below the in-band noise floor and still decode, and energy detection then
   misses it. `bench/lora_scan.py` dechirps every symbol-long window instead and finds preambles by
   their steady tone, with the preamble length telling an E22 (20 symbols) from an E220 (30).
+
+## The E220 bridges transmitted 20-30 dB short: 3V3, not 5 V (2026-10-06)
+
+**Found while checking the phone's E220 bridge after 10-02's loose antenna.** Both E220 bridges on
+the bench, the phone's and a second one, transmitted 20-30 dB below their setting while receiving
+normally. The cause was the supply: BUILDING.md wired the module's VCC to 3V3, and an E220-900T30
+needs 5 V. Moved to the board's 5V/VIN pin, both came up by 20-31 dB at the weakest step and
+matched each other within 2 dB.
+
+**Two-way measurement.** What one board reads of another depends on the path, both antennas and
+the room. Over one path in both directions those cancel, and the difference of the two readings is
+the difference of the two transmit powers plus the difference of the two receivers' RSSI scales.
+The Heltec was the common far end (`-DRX_STAGES=1` logs its packet RSSI), each EBYTE module's RSSI
+byte the other:
+
+| on 3V3, level 3 | Heltec hears it | it hears the Heltec | two-way |
+|---|---|---|---|
+| E22, 10 dBm | -33 | -60 | +27 |
+| phone's E220, 21 dBm | -58 | -59 | +1 |
+
+So the E220 came out about 26 dB under the E22, where its setting puts it 11 dB over - if the two
+EBYTE RSSI scales agree. Measurements that use no RSSI scale at all agreed in direction: an RTL-SDR
+at the laptop saw the E220's preambles 17 dB (bare connector) and 20 dB (antenna) under the E22's,
+by dechirped peak (`bench/lora_scan.py`), and the Heltec alone heard both E220s weaker than a
+T-Deck whose table puts it at about 2 dBm.
+
+**What it was not.**
+
+- Not the antenna: the E220 heard the Heltec as well as the E22 did, and swapping antennas between
+  the two E220s left the gap between them with the units (two-way -6.5 dB before, -9.0 after).
+- Not one damaged unit: the second E220 bridge, wired the same, was 18 dB under the E22 in the same
+  two-way run.
+- Not the amplifier as such: stepped through its levels, the second E220 gained 3 dB per step from
+  24 dBm up, but 10 dB from 21 to 24. The weakest step was starved the most.
+
+**5 V.** Same board, same spot, same antenna, only VCC moved, with the E22 at 10 dBm interleaved
+as the reference:
+
+| second E220, against the E22 | 21 dBm | 24 dBm | 27 dBm | 30 dBm | two-way at 21 dBm |
+|---|---|---|---|---|---|
+| 3V3 | -1 | +8 | +12 | +14 | -15 |
+| 5 V | +20.5 | +23 | +23.5 | +24.5 | -2 |
+
+On 5 V the Heltec reads these at -21 to -25 dBm, where its RSSI flattens, so the 5 V steps are
+understated. The phone's E220 went from -61 to -30 dBm at level 3 and now matches the second unit
+within 2 dB two-way: its extra 7-9 dB on 3V3 was the supply too, not damage from the antenna.
+
+**A remainder to watch.** At level 3 the Heltec still missed 7 of 69 E220 packets on 5 V, against
+1 of 40 at levels 2 to 0 and none of the E22's; on 3V3, level 3 lost up to a third. On 3V3 the
+misses left no header error behind while the near receivers took the same packets, so the far one
+did not recognise the preamble at all. Not conclusive at these numbers.
+
+**The RSSI byte** reads 0 when a signal is off the top of its scale, which our conversion had
+turned into -256 dBm (d0e1b17).
+
+**For 10-02:** the phone's bridge was sending far less than the NOR7Es around it, whose stock app
+runs the same module at 30 dBm from a proper supply. That fits what the riders saw: the tablet
+showed the phone's rider frozen while the phone kept seeing the tablet.

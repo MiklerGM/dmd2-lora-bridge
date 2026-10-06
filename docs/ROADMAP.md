@@ -365,7 +365,10 @@ mute for long stretches (09:56-10:44, 13:00-14:25, 14:40-14:52): the phone heard
 NOR7E at about 50% with all three within 10-300 m. The switches were abrupt and both ways at
 once, nothing in the app or the bridge coincided with them, and none of it happened on 10-01.
 The cause, found by the owner after the ride: the E220's antenna had unscrewed by about half a
-turn, so its contact came and went with vibration. The bridge also died twice
+turn, so its contact came and went with vibration. Underneath that, all day: wired as BUILDING.md
+then said, with the module on 3V3, the bridge transmitted 20-30 dB below its setting (found on the
+bench 2026-10-06, PHY-notes), which fits the tablet showing the phone's rider frozen while the
+phone kept seeing the tablet. The bridge also died twice
 when moving off after a stop with it still powered (10:44, 16 minutes; 15:00, 31 minutes and on),
 most likely engine restarts with the ignition on; `EarlyDrop` stayed quiet, as it only watches
 the first minute after power-up. Field tests paused after this day.
@@ -386,8 +389,9 @@ Only once M6 passes:
   Bluetooth supervisor (ARCHITECTURE item 13), the reset reason in `ST`, the E220 probe asked
   three times before the module is called down (item 14), and the RSSI of every reception.
   Bench: dip the bridge's supply while it runs, to reproduce the hang at engine
-  start (item 13); the phone's E220 bridge ran 30 dBm into an antenna found half a turn loose
-  (10-02), so check its output against the E22's before trusting it, and lock the SMA against
+  start (item 13); the phone's E220 bridge, checked against the E22 after its antenna was found
+  half a turn loose (10-02): **done 2026-10-06**, not damaged, but starved on 3V3 like every bridge
+  built from the old guide, 20-30 dB short until its VCC moved to 5 V; lock the SMA against
   vibration; whether the hangs follow the antenna or the supply, retest them with it tight. App: alert when the bridge has been gone a
   minute while the phone's own GPS says it is moving, which would have caught 10-02's hangs that
   `EarlyDrop` misses; a listen-before-talk trial on our bridges. App: the GPS check should say plainly that DMD2 sends nothing while no

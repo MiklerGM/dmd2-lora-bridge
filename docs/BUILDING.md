@@ -51,7 +51,7 @@ rather than constants. The C3 has no GPIO 16/17/22/23 at all; on the S3, GPIO 19
 | M0 | GPIO21 | GPIO15 | GPIO6 | mode select |
 | M1 | GPIO22 | GPIO7 | GPIO7 | mode select |
 | AUX | GPIO23 | GPIO6 | GPIO10 | module busy/ready |
-| VCC | 3V3 | 3V3 | 3V3 | a supply that can source transmit bursts, not the USB-serial pin |
+| VCC | 5V / VIN | 5V | 5V | **5 V, not 3V3**, for a T30 - see below |
 | GND | GND | GND | GND | |
 
 > **If the board has an onboard display**, check which pins its panel uses first — small C3/S3
@@ -60,6 +60,14 @@ rather than constants. The C3 has no GPIO 16/17/22/23 at all; on the S3, GPIO 19
 
 **Never power the module without an antenna attached** — transmitting into an open port can
 destroy the output stage.
+
+**Feed an E220-900T30 from 5 V.** EBYTE guarantees its output power only from 5 V, and this guide
+used to say 3V3. Measured on 2026-10-06 with two bridges wired that way, both transmitted 20-30 dB
+below their setting while receiving normally; moved to the board's 5V/VIN pin, the same units came
+up by 20-31 dB at the weakest step and matched each other (PHY-notes). The module's pins stay 3.3 V
+logic on a 5 V supply, so nothing else changes. At its strongest step a T30 draws up to about an
+ampere while transmitting, so the USB source has to supply that. The 22 dBm E22 measured normal
+on 3V3.
 
 ### The indicator LED
 
@@ -266,6 +274,12 @@ module identifies which is fitted. Build with `-DE220_VARIANT_T30` or `-DE220_VA
 the bridge reports `tx_dbm=`; build without and it reports none, and the app shows the transmit
 power as unknown. A guessed number is worse than a blank one, because it invites someone to
 trust it. The app no longer carries either table.
+
+**On 3V3 a T30's steps were not what they say.** Against an E22 at 10 dBm in the same run, levels
+3, 2, 1 and 0 came out at -1, +8, +12 and +14 dB instead of +11, +14, +17 and +20, the weakest step
+hit hardest; at level 3 a receiver a room away also missed some packets outright, at a strong
+level. On 5 V the same module stood +20 to +25 dB over the E22, at the top of what that receiver
+could measure.
 
 **The weakest step is not automatically legal.** What may go on the air is set by the band and
 the country. On 868.0–868.6 MHz Germany allows 25 mW ERP, about 14 dBm (BNetzA Vfg 91/2025),
