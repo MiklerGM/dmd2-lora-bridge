@@ -593,11 +593,11 @@ A fourth read, of `ef20149`, found two — both of them regressions from the rou
 
 - **First: ready-made boards.** An ESP32-S3 + SX1262 board - Heltec, T-Beam, T3-S3, T-Deck,
   ideally a kit with a battery - flashed from a browser and paired, with no module to wire. The
-  gate is our own transmission: EBYTE receivers, the NOR7E's E220 among them, take our SX1262
-  packets at 10-25 % while they take EBYTE's own SX1262 at 77-100 % (PHY-notes). Next on the bench:
-  RTL-SDR captures of the E22 against our boards over a cabled bench, to see what our frame does
-  differently around the sync word and SFD. A battery also rides through the supply dips that hung
-  the E220 bridge at engine starts.
+  gate was our own transmission, and it is open: EBYTE receivers, the NOR7E's E220 among them,
+  took our SX1262 packets at 10-25 % because our second sync symbol was wrong, and take 38-40 of 40
+  across rooms with EBYTE's pair (PHY-notes, 2026-10-06, found with an RTL-SDR). Before a ride:
+  measure what the boards really put out at each power level, which nobody has done. A battery
+  also rides through the supply dips that hung the E220 bridge at engine starts.
 - **Then:** a browser flasher (ESP Web Tools over our merged images, usable already for the E220
   and E22 bridges), and perhaps switching one board between this firmware and stock Meshtastic -
   two app partitions side by side. Meshtastic as a protocol stays out of scope, below.

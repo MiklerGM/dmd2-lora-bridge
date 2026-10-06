@@ -278,10 +278,11 @@ the first question with no: it is already transmitting from its own GNSS and is 
 
 ## 6. Design risks to keep visible
 
-1. **SX1262 → EBYTE delivery (highest remaining).** EBYTE-to-EBYTE reception works, and the
-   SX1262 receives EBYTE frames. Correcting the payload-dependent EBYTE header restores some
-   delivery, but both bare-chip drivers still lose many packets at the module's UART. Keep
-   SX1262 TX opt-in until the remaining gap in `PHY-notes.md` is explained.
+1. **SX1262 transmit: delivery explained, power unmeasured.** EBYTE receivers lost most of the
+   bare chip's packets because its second sync symbol was wrong - 40 and 40 where EBYTE sends
+   40 and 36 - and with `0x54 0x48` they take 38-40 of 40 across rooms (`PHY-notes.md`,
+   2026-10-06). What a board actually puts out at each power level has never been measured.
+   Keep SX1262 TX opt-in until it has been, and a board has ridden.
 2. **BLE MTU.** The current largest wire payload is 200 unpadded-base64 characters (a maximum
    group packet is 187). MTU 247 carries a complete `TX` line, but the link still has to support
    fragmentation because the default characteristic payload is only 20 bytes.

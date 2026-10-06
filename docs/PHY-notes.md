@@ -2395,6 +2395,9 @@ mode: with it off our own receiver loses us, as it must, and an EBYTE still deco
 
 ## SX1262 transmit into an E220: measured, still unexplained
 
+*Explained on 2026-10-06: the second sync symbol. See "The sync symbols, read off the air" at the
+end.*
+
 An SX1262 receives an E220 perfectly and transmits to one badly. Both directions carry the same
 PHY and the same frame; only the direction changes.
 
@@ -2548,6 +2551,11 @@ fitted every property of the defect -
 transmit-only, power-independent, per-packet, identical in two drivers that share the formula,
 absent on a module that writes its own registers. It simply is not true.
 
+*Wrong, found 2026-10-06. The hypothesis was true and the sweep could not see it: the chip builds
+each sync symbol from the top five bits of its byte, so `5454`, `5555` and `5050` all send the
+same two symbols, 40 and 40, and the transmit table compares one condition with itself three
+times. EBYTE sends 40 and 36. See "The sync symbols, read off the air" at the end.*
+
 *An early look at this run showed 27 % against 49 % and 44 % on five and nine receptions. It was
 noise, and it vanished by ~90 per cell. Third time on this bench: the same happened with the
 over-current limit and with the antenna.*
@@ -2603,3 +2611,51 @@ An E220 reports one bit per packet: decoded or not. Every hypothesis left is abo
 quality, and one bit cannot separate them. The instrument that can is the probe's view - preamble
 detections, header-valid, CRC errors, RSSI and SNR per attempt - and it needs **a second bare
 SX1262**, because the only one here is the transmitter under test.
+
+## The sync symbols, read off the air (2026-10-06)
+
+**SX1262 → EBYTE is explained: the second sync symbol.** Read with an RTL-SDR (Nooelec NESDR
+SMArt v5, 2.4 MS/s) and `bench/sdr_lora.py`, every clean packet from an E22 carries the sync
+symbols **+40 and +36** bins from its preamble tone, and every one of ours carried **+40 and +40**.
+The E220's read +39.99 and +35.99 once the SDR had an antenna.
+
+An SX126x builds each sync symbol from the **top five bits** of its register byte, times four:
+0x54 gives 40, 0x48 gives 36, 0x44 gives 32, and the low three bits do nothing. We wrote
+`0x54 0x54`, RadioLib's expansion of "sync 0x55". EBYTE's pair is `0x54 0x48`, and the firmware
+writes that now (ca0ce56).
+
+That also explains both sweeps above. The transmit sweep's three working pairs, `5454`, `5555`
+and `5050`, all send 40 and 40: one condition compared with itself. The receive sweep's "low
+nibbles 0, 4 and 5 interchangeable, F not" is the same rule seen from the receiving side: `0x5F`
+is the only one of them whose top five bits differ (44).
+
+The rest of our frame was already right: on the SDR our SFD down-chirps and the start of our data
+symbols sit exactly where an E22's do.
+
+**Why the pair matters.** A receiver that finds two identical symbols after the preamble can take
+the second for the first. Our own receiver did, one time in five (2026-09-25, the data read a
+symbol late), and EBYTE receivers took 40-40 packets about one time in four.
+
+**Measured**, old pair against new, interleaved per packet (`bench/interleave.py`), the Heltec
+transmitting:
+
+| receiver | where | `5454`: 40, 40 | `5448`: 40, 36 |
+|---|---|---|---|
+| E22 | same room, two runs | 7/30, 7/30 | **30/30, 30/30** |
+| T-Deck, receiving with `5448` | same room | 11/30 | **30/30** |
+| E220 | across rooms | 5/40 | **38/40** |
+| E22 | across rooms | 9/40 | **40/40** |
+| T-Deck | across rooms | 4/40 | **40/40** |
+
+Then every pairing of Heltec, T-Deck, E22 and E220 across rooms, all on the new pair, 30 packets
+from each board, twice: SX1262 → EBYTE 29-30 of 30 in every cell.
+
+**Instrument notes.**
+
+- `rtl_sdr -g 0` is automatic gain, and it clipped 1.7 % of the samples with boards next to the
+  dongle. A fixed gain does not: 8.7 dB next to them, 29.7 dB for the far room with an antenna.
+- Without an antenna the dongle still sees the far room through its connector, with a pickup that
+  depends on direction and polarisation: good enough for symbols, not for comparing levels.
+- A packet can sit below the in-band noise floor and still decode, and energy detection then
+  misses it. `bench/lora_scan.py` dechirps every symbol-long window instead and finds preambles by
+  their steady tone, with the preamble length telling an E22 (20 symbols) from an E220 (30).
