@@ -16,7 +16,7 @@ import re
 import sys
 
 QUALITY = re.compile(r"rx quality rssi (-?\d+) dBm, snr (-?\d+)\.(\d+) dB")
-RX = re.compile(r"bridge: rx \d+ bytes: (\d{8})")
+RX = re.compile(r"bridge: rx \d+ bytes(?:, rssi -?\d+)?: (\d{8})")
 
 
 def mcnemar_exact(b, c):

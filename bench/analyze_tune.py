@@ -20,7 +20,7 @@ import sys
 from analyze_neighbour import blocks, paired_permutation
 
 FREQ = re.compile(r"freq error ([+-]?\d+) Hz")
-RX = re.compile(r"bridge: rx \d+ bytes: (\d{8})")
+RX = re.compile(r"bridge: rx \d+ bytes(?:, rssi -?\d+)?: (\d{8})")
 
 
 def freq_by_seq(lines):

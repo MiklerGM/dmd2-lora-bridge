@@ -21,7 +21,7 @@ import sys
 FAIL = re.compile(r"rx fail (hdr|crc) rssi (-?\d+) dBm, snr (-?\d+\.\d+) dB.*preamble->fail (-?\d+) ms")
 QUALITY = re.compile(r"rx quality rssi (-?\d+) dBm, snr (-?\d+\.\d+) dB")
 FREQ = re.compile(r"sx1262: (fail )?freq error ([+-]?\d+) Hz")
-RX = re.compile(r"bridge: rx \d+ bytes: (\d{8})")
+RX = re.compile(r"bridge: rx \d+ bytes(?:, rssi -?\d+)?: (\d{8})")
 
 
 def parse(lines, times, starts):

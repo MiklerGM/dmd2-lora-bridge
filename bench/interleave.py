@@ -89,8 +89,9 @@ while True:
 """
 
 TX_REPLY = re.compile(r"\bTX(OK|FAIL) seq=(\d+)\b")
-# The bridge logs "rx 38 bytes: 00000042AAAA..." - the payload starts with its sequence number.
-RX = re.compile(r"rx \d+ bytes: (\d{8})")
+# The bridge logs "rx 38 bytes, rssi -58: 00000042AAAA..." (before d8c7682 without the rssi) -
+# the payload starts with its sequence number.
+RX = re.compile(r"rx \d+ bytes(?:, rssi -?\d+)?: (\d{8})")
 
 
 def tx_result(line, seq):
@@ -456,7 +457,7 @@ def matrix(args):
 
     if args.out:
         args.out.write_text(json.dumps({
-            "arms": {name: {"tx": tx.name, "extra": extra} for name, tx, extra in arms},
+            "arms": {n.name: {"tx": n.name, "extra": args.extra} for n in nodes},
             "seed": args.seed,
             "sent": sent,
             "seen": {n.name: sorted(n.seen) for n in nodes},

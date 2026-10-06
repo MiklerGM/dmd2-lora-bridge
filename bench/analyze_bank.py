@@ -18,7 +18,7 @@ import math
 import re
 import sys
 
-RX = re.compile(r"bridge: rx (\d+) bytes: (\S+)")
+RX = re.compile(r"bridge: rx (\d+) bytes(?:, rssi -?\d+)?: (\S+)")
 BEACON = re.compile(r"^(\d{8})A+\.*$")
 FAIL = re.compile(r"rx fail hdr")
 
