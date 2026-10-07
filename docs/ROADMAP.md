@@ -8,19 +8,23 @@ Evidence tags: **[static]** derived from decompiled code · **[bench]** passed o
 
 ---
 
-## Where this stands, 2026-09-17
+## Where this stands, 2026-10-07 (v0.2.0)
 
-**Working:** the E220 backend carries DMD2 group traffic, with a stock Android phone joining over
-BLE. Its air interface was measured, not guessed — 868.125 MHz, SF11/BW500, sync 0x55, and an
-EBYTE frame with the payload XOR'd by a fixed 0x12.
+**Working, and ridden:** an ESP32 with an EBYTE E220 or E22 carries DMD2 group positions between
+a stock Android phone and stock DMD2 devices, a NOR7E included, with no network. The rides of
+2026-09-27 to 10-02 (M6) found clock, pacing and relay problems, each fixed in the app as it was
+understood.
 
-The SX1262 backend **receives perfectly (~100 %) and transmits badly (10-30 %)**, against 92-96 %
-for an E220 sending the same frames. Two independent drivers on that board — this one and a
-RadioLib build — fail identically, so it is not a coding mistake in either.
+**Found on the bench, 2026-10-06** (PHY-notes):
 
-EBYTE's **E22** — the same SX1262 behind their own MCU — was decoded by an E220 at **76.5 %**
-where this driver managed ~10 %, in one run. So the chip is fine and the two families are
-compatible; the fault is in this driver's setup or the Heltec's transmit chain.
+- An E220-900T30 needs 5 V. On 3V3, as BUILDING.md had it, both bridges tested transmitted
+  20-30 dB below their setting while receiving normally - the 10-02 ride, where the tablet lost
+  the phone's bridge and the phone kept hearing the tablet.
+- A bare SX1262 sent the sync symbols 40 and 40 where EBYTE sends 40 and 36, so EBYTE modules
+  took its packets about one time in four. With EBYTE's pair an E220 takes 38 of 40 across rooms.
+
+**Open:** a ride with the 5 V wiring and the firmware of 2026-10-04; chat from a NOR7E to us; the
+SX1262 boards' real transmit power, then a ride on one (M8).
 
 ---
 

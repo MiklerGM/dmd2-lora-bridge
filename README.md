@@ -23,25 +23,25 @@ Read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) first, then [`docs/ROADMAP.m
 
 ## Status
 
-**Experimental.** The DMD2 IPC and codec paths have been proven on a phone, but the current
-`proto=2` BLE/control-plane rewrite has not yet been revalidated on hardware. Nothing has yet
-been on the air. `make check` runs the whole test suite, which needs neither a phone nor a radio.
+**Experimental, and ridden.** Positions are shared with stock DMD2 devices, a NOR7E included,
+with no network: group rides from 2026-09-27 to 10-02 on E220 and E22 bridges. `make check` runs
+the whole test suite, which needs neither a phone nor a radio.
 
 | | State |
 |---|---|
 | Packet codec, receive path, injection contract | JVM tests pass, including byte-for-byte reproduction of the reference vectors |
 | E220 register packing, CFG parsing | host tests pass under plain gcc |
-| Stock DMD2 accepts the app | **proven** — DMD2 sends us group data and chat, and shows riders we inject |
-| Works with no network | **proven** — 50 packets in 45 s in airplane mode |
-| BLE link, bonding, reconnect, autostart | the previous contract was proven; the current `proto=2` handshake, trust gate and unpair flow need a new hardware pass |
+| Stock DMD2 accepts the app | **proven** - DMD2 sends us group data and chat, and shows riders we inject |
+| Works with no network | **proven** - on the bench in airplane mode, and on every ride since |
+| BLE link, bonding, reconnect, autostart | **proven** on the rides with the `proto=2` contract |
 | Explicit bridge selection | implemented and host-tested where pure; multi-board behaviour is not yet checked on hardware |
-| Two E220s hearing each other | **not tried** — waiting on modules |
-| A real NOR7E hearing us, and us hearing it | **positions both ways**, first field test 2026-09-27 on an E220 bridge and a full riding day 2026-09-28 on an E22; chat and help not yet confirmed (`docs/ROADMAP.md`, M6) |
+| A real NOR7E hearing us, and us hearing it | **positions both ways** on every ride, and help works; chat from the NOR7E to us is not confirmed (`docs/ROADMAP.md`, M6) |
+| E220-900T30 supply | **5 V, not 3V3**: on 3V3 it transmitted 20-30 dB below its setting (`docs/BUILDING.md`) |
+| SX1262 boards (Heltec V3, T-Deck) | EBYTE modules take their packets since the sync fix of 2026-10-06; transmit power not yet measured, so transmitting stays off by default (M8) |
 
-The protocol was recovered by static analysis and matches on every byte we can check without a
-radio. Whether an E220 we configure ourselves lands on the same PHY as a NOR7E is the one
-question no amount of testing on this side can answer. See `docs/ROADMAP.md` for what remains
-and `docs/BUILDING.md` for how each milestone was checked.
+The protocol was recovered by static analysis, and the radio layer was measured on the air
+(`docs/PHY-notes.md`). See `docs/ROADMAP.md` for what remains and `docs/BUILDING.md` for
+building, wiring and flashing.
 
 ## Hard constraints (not negotiable, they come from DMD2's code)
 
