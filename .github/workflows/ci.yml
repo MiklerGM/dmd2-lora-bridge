@@ -141,21 +141,28 @@ jobs:
           cp firmware/dist/*.bin dist/
           cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
 
+      # Notes written for the release in docs/releases/<tag>.md, reviewed with the code they
+      # describe; a tag without them gets the standing text. GitHub appends the changelog link.
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes \
-            --notes-file - <<'NOTES'
+          notes="docs/releases/${GITHUB_REF_NAME}.md"
+          if [ ! -f "$notes" ]; then
+            notes="$RUNNER_TEMP/notes.md"
+            cat > "$notes" <<'NOTES'
           **Unofficial. Not affiliated with or endorsed by DMD Navigation / Thork Racing.**
-          Experimental: nothing here has been proven on the air against a NOR7E.
+          Experimental.
 
           Sideload the APK (it replaces the genuine DMD-LoRa app; they cannot coexist), and
           flash the image for your board with `esptool.py write_flash 0x0 <file>`. Both halves
           come from the same commit and must match — the BLE name they agree on is part of it.
           NOTES
+          fi
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            --notes-file "$notes"
 
       - name: Clean up the key
         if: always()
