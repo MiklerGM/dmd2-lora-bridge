@@ -621,7 +621,8 @@ class MainActivity : Activity() {
             val own = live.ownFixAgeS(now)
             when {
                 own < 0 -> add(Check(Mark.WARN, "Your location not shared", "Open DMD2") { openDmd2() })
-                own * 1000L > Liveness.FIX_OLD_MS -> add(Check(Mark.WARN, "GPS fix ${Liveness.ago(own * 1000L)} old"))
+                own * 1000L > Liveness.FIX_OLD_MS ->
+                    add(Check(Mark.WARN, "GPS fix ${Liveness.ago(own * 1000L)} old", "Check") { if (gpsCheck == null) toggleGpsCheck() })
             }
             val behind = Radio.ownFix.gpsBehindS
             if (behind > 60) add(Check(Mark.WARN, "GPS clock ${Liveness.ago(behind * 1000L)} behind, corrected"))

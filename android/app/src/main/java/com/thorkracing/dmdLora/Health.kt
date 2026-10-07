@@ -72,7 +72,7 @@ data class Health(val severity: Severity, val headline: String, val detail: Stri
         private fun hint(p: String): String? = when {
             p.startsWith("DMD2 silent") -> "Is the group active in DMD2?"
             p.startsWith("own position not shared") -> "Turn on location sharing in DMD2"
-            p.startsWith("own GPS") -> "No fresh GPS fix"
+            p.startsWith("own GPS") -> "Can the phone see the sky?"
             p.startsWith("air quiet") -> "Others may be out of range"
             p.startsWith("clock") -> "Turn on automatic time"
             " has you " in p -> "They rarely hear you"
