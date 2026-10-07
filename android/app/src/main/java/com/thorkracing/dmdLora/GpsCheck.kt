@@ -27,7 +27,16 @@ class GpsCheck(private val context: Context, private val onDone: () -> Unit) {
     private val handler = Handler(Looper.getMainLooper())
     @Volatile private var used = -1
     @Volatile private var seen = -1
+    @Volatile private var last: Location? = null
     private var lastLogMs = 0L
+
+    val hasFix: Boolean get() = last != null
+
+    /** How it is going, in a few words for the Checks list; the log keeps the detail. */
+    fun summary(): String = listOfNotNull(
+        last?.let { "fix ±%.0f m".format(it.accuracy) } ?: "no fix yet",
+        if (seen >= 0) "$used of $seen satellites" else null,
+    ).joinToString(" · ")
 
     private val gnss = object : GnssStatus.Callback() {
         override fun onSatelliteStatusChanged(status: GnssStatus) {
@@ -65,6 +74,7 @@ class GpsCheck(private val context: Context, private val onDone: () -> Unit) {
     }
 
     private fun onFix(loc: Location) {
+        last = loc
         val now = SystemClock.elapsedRealtime()
         if (now - lastLogMs < 5_000L) return
         lastLogMs = now

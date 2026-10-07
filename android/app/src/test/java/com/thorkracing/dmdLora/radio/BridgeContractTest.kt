@@ -311,4 +311,15 @@ class ConfigRetryBudgetTest {
         assertFalse("switching back bypassed the same spacing",
             budget.takeConfig(mismatch, want, 36_000))
     }
+
+    @Test fun `a rider's power tap goes out at once, and only that tap`() {
+        // 2026-10-07: Low, then Med 7 s later. Med reached the bridge 29 s after the tap, with
+        // positions held and DMD2 told the radio was gone all the while.
+        val budget = ConfigRetryBudget()
+        assertTrue(budget.takeConfig(mismatch, want, 0))
+        budget.riderAsked()
+        assertTrue(budget.takeConfig(mismatch, want.copy(powerLevel = 2), 7_000))
+        assertFalse("the waiver is not left open for whatever DMD2 sends next",
+            budget.takeConfig(mismatch, want.copy(channel = 19), 8_000))
+    }
 }

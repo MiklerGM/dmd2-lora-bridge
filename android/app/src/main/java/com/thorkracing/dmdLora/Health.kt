@@ -20,7 +20,8 @@ data class Health(val severity: Severity, val headline: String, val detail: Stri
         val link: String,
         /** Bridges in range are waiting for the rider to pick one. */
         val choosing: Boolean,
-        val usable: Boolean,
+        /** Radio.radioWorking: up, whatever it is set to. */
+        val radioWorking: Boolean,
         val txReady: Boolean,
         /** Radio.airState(): what the radio behind a connected link is doing. */
         val air: String?,
@@ -44,7 +45,7 @@ data class Health(val severity: Severity, val headline: String, val detail: Stri
                 i.link == "not found" -> Health(Severity.BAD, "Bridge not found", "Is it on?")
                 i.link == "connecting" || i.link == "pairing" -> Health(Severity.WARN, "Connecting…", "")
                 i.link != "connected" -> Health(Severity.WARN, "Searching for bridge", "")
-                !i.txReady && !i.usable -> Health(Severity.BAD, "Bridge radio not working", air)
+                !i.txReady && !i.radioWorking -> Health(Severity.BAD, "Bridge radio not working", air)
                 !i.txReady -> notReady(air)
                 i.problems.isNotEmpty() -> Health(
                     Severity.WARN,

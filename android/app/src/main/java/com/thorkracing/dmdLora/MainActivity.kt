@@ -401,7 +401,7 @@ class MainActivity : Activity() {
                 serviceRunning = Session.serviceRunning,
                 link = if (Session.radioAttached) Radio.linkState else "off",
                 choosing = Radio.bridgeChoices.isNotEmpty(),
-                usable = Radio.usable,
+                radioWorking = Radio.radioWorking,
                 txReady = Radio.txReady,
                 air = Radio.airState(),
                 problems = live.problems(now),
@@ -604,7 +604,7 @@ class MainActivity : Activity() {
                 add(Check(Mark.BAD, "Bluetooth off", "Open") { startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) })
             link == "no permission" -> add(Check(Mark.BAD, "Bluetooth not allowed", "Allow") { requestBlePermissions() })
             Radio.txReady -> {}
-            link == "connected" && !Radio.usable -> add(Check(Mark.BAD, "Bridge radio not working"))
+            link == "connected" && !Radio.radioWorking -> add(Check(Mark.BAD, "Bridge radio not working"))
             link == "connected" && waitingForDmd2 -> {}
             link == "connected" -> add(Check(Mark.WARN, "Bridge: " + Health.notReady(air).headline))
             else -> add(Check(Mark.WARN, "Bridge: ${linkWords(link)}"))
@@ -621,12 +621,14 @@ class MainActivity : Activity() {
             val own = live.ownFixAgeS(now)
             when {
                 own < 0 -> add(Check(Mark.WARN, "Your location not shared", "Open DMD2") { openDmd2() })
-                own * 1000L > Liveness.FIX_OLD_MS ->
+                // While the phone's own GPS is being checked, its row below says how that goes.
+                own * 1000L > Liveness.FIX_OLD_MS && gpsCheck == null ->
                     add(Check(Mark.WARN, "GPS fix ${Liveness.ago(own * 1000L)} old", "Check") { if (gpsCheck == null) toggleGpsCheck() })
             }
             val behind = Radio.ownFix.gpsBehindS
             if (behind > 60) add(Check(Mark.WARN, "GPS clock ${Liveness.ago(behind * 1000L)} behind, corrected"))
         }
+        gpsCheck?.let { add(Check(if (it.hasFix) Mark.OK else Mark.WARN, "Phone GPS: ${it.summary()}", "Stop") { it.stop() }) }
         val clock = live.problems(now).filter { it.startsWith("clock") || it.startsWith("DMD2 here holds") }
         if (clock.isNotEmpty()) {
             add(Check(Mark.WARN, clock.joinToString("\n"), "Check") { if (timeCheck == null) toggleTimeCheck() })

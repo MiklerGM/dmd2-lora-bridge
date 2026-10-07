@@ -103,6 +103,12 @@ object Radio {
             )
         }
 
+    /**
+     * The bridge's radio is up and a bridge, whatever it is set to. Not [usable]: that is also
+     * false while new settings are on their way, and a radio being set is not a dead one.
+     */
+    val radioWorking: Boolean get() = bridgeUsable(connected, health.status)
+
     /** Whether the current request has been adopted by the group whose packets we are holding. */
     val configOwnedByGroup: Boolean get() = config.owns(Session.groupId)
 
@@ -539,6 +545,7 @@ object Radio {
      */
     fun onPowerLimitChanged(context: Context) {
         if (!config.limitPower(Prefs.powerLevel(context))) return
+        configRetries.riderAsked()
         scheduler.reset()
         EventLog.log("power limit now level ${config.desired?.powerLevel}; re-configuring the radio")
     }

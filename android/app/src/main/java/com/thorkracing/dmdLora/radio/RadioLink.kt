@@ -318,6 +318,16 @@ class ConfigRetryBudget {
         return true
     }
 
+    /**
+     * The rider tapped a power level on this app's own screen: send it now, not after the
+     * spacing. That comes a tap at a time, never through the exported receiver, and the spacing
+     * cost the tap after the first up to 35 s of held positions with DMD2 told the radio was gone.
+     */
+    @Synchronized
+    fun riderAsked() {
+        lastConfigMs = null
+    }
+
     /** Fast until the first parseable status, then an unconditional read-only health poll. */
     @Synchronized
     fun takeStatus(status: BridgeStatus?, nowMs: Long): Boolean {

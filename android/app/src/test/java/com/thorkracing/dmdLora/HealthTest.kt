@@ -7,7 +7,7 @@ import org.junit.Test
 class HealthTest {
 
     private val ready = Health.Input(
-        serviceRunning = true, link = "connected", choosing = false, usable = true, txReady = true,
+        serviceRunning = true, link = "connected", choosing = false, radioWorking = true, txReady = true,
         air = "e220 bridge\nv0.2.0", problems = emptyList(), hearing = 0, lastHeard = null,
     )
 
@@ -20,7 +20,7 @@ class HealthTest {
         assertEquals("a search is amber here, red only in the notification",
             Severity.WARN to "Searching for bridge", of(ready.copy(link = "scanning")))
         assertEquals(Severity.BAD to "Bridge radio not working",
-            of(ready.copy(usable = false, txReady = false, air = "no radio")))
+            of(ready.copy(radioWorking = false, txReady = false, air = "no radio")))
         assertEquals(Severity.WARN to "Waiting for DMD2",
             of(ready.copy(txReady = false, air = "e220, no frequency from DMD2 — reshare there")))
     }

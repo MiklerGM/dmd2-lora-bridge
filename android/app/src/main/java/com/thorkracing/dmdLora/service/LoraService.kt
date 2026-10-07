@@ -168,7 +168,7 @@ class LoraService : Service() {
         val problems = Radio.liveness.problems(now)
         val severity = when {
             !connected -> Severity.BAD
-            !Radio.txReady && !Radio.usable -> Severity.BAD
+            !Radio.txReady && !Radio.radioWorking -> Severity.BAD
             !Radio.txReady || problems.isNotEmpty() -> Severity.WARN
             else -> Severity.OK
         }
