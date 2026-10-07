@@ -21,6 +21,16 @@ try {
 } catch (ignored) {
 }
 
+// Android will not install a lower versionCode over a higher one, and a constant tells no two
+// builds apart. The commit count grows with every commit on main; a shallow clone counts wrong,
+// so build releases from a full one.
+def versionNumber = 1
+try {
+    versionNumber = providers.exec { commandLine 'git', 'rev-list', '--count', 'HEAD' }
+            .standardOutput.asText.get().trim().toInteger()
+} catch (ignored) {
+}
+
 // Signing identity lives outside the repository; without it a release build is simply
 // unsigned, so the project still builds for anyone who does not have the key.
 def keystorePropsFile = rootProject.file("keystore.properties")
@@ -42,7 +52,7 @@ android {
         // BLUETOOTH / location permissions are never needed.
         minSdk 31
         targetSdk 35
-        versionCode 1
+        versionCode versionNumber
         versionName versionString
     }
 
