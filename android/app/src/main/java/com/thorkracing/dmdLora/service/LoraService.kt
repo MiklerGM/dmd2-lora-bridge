@@ -235,6 +235,8 @@ class LoraService : Service() {
             .setContentText(s.text)
             .setStyle(Notification.BigTextStyle().bigText(s.text))
             .setLargeIcon(badge(s.severity))
+            // When it was last re-posted says nothing, and on One UI it cut the title short.
+            .setShowWhen(false)
             // The status bar shows only the icon, so a lost bridge has to change its shape.
             .setSmallIcon(
                 if (s.severity == Severity.BAD) R.drawable.ic_notify_lost
