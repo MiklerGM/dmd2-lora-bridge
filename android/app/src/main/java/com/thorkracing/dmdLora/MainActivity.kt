@@ -484,11 +484,11 @@ class MainActivity : Activity() {
     private fun renderBridge() {
         val running = Session.serviceRunning
         val lines = mutableListOf(shortBridgeName() ?: "No bridge yet")
-        // While the link is not up the top line already says what it is doing.
-        val air = if (running) Radio.airState() else null
-        if (air != null) {
-            lines += listOfNotNull(air.substringBefore('\n'), Radio.bridgeStatus?.firmware?.ifEmpty { null }, powerShort())
-                .joinToString(" · ")
+        // What it is and what it sends at, once connected. Whatever it is waiting for, the top line
+        // already says; the module's own firmware code is in the log for whoever needs it.
+        val st = Radio.bridgeStatus?.takeIf { running && Radio.connected }
+        if (st != null) {
+            lines += listOfNotNull(st.radio.uppercase(Locale.ROOT), powerShort()).joinToString(" · ")
         }
         bridgeText.text = lines.joinToString("\n")
         // Starting lives on the health line while the service is off; here only Stop, so the
@@ -588,8 +588,9 @@ class MainActivity : Activity() {
         add(when {
             !Session.serviceRunning -> Check(Mark.BAD, "Service off", "Start") { toggleService() }
             Radio.txReady -> Check(Mark.OK, "Bridge ready")
-            link == "connected" -> Check(if (Radio.usable) Mark.WARN else Mark.BAD,
-                "Bridge: ${Radio.airState()?.substringBefore('\n') ?: link}")
+            link == "connected" && !Radio.usable -> Check(Mark.BAD, "Bridge radio not working")
+            link == "connected" ->
+                Check(Mark.WARN, "Bridge: " + Health.notReady(Radio.airState().orEmpty()).headline)
             else -> Check(Mark.WARN, "Bridge: ${linkWords(link)}")
         })
         val live = Radio.liveness
@@ -660,7 +661,7 @@ class MainActivity : Activity() {
     /** DMD's power levels in a rider's words: 3, the weakest, is Low; 0, the strongest, is Max. */
     private fun levelName(level: Int): String = when (level) {
         3 -> "Low"
-        2 -> "Medium"
+        2 -> "Med"
         1 -> "High"
         else -> "Max"
     }

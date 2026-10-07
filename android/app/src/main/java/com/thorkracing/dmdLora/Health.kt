@@ -60,7 +60,7 @@ data class Health(val severity: Severity, val headline: String, val detail: Stri
         }
 
         /** A bridge that is up but not cleared to transmit, named by what it is waiting for. */
-        private fun notReady(air: String): Health = when {
+        fun notReady(air: String): Health = when {
             "transmit disabled" in air -> Health(Severity.WARN, "This build can't transmit", "")
             "no frequency from DMD2" in air -> Health(Severity.WARN, "Waiting for DMD2", "Reshare the group in DMD2")
             "waiting for group" in air -> Health(Severity.WARN, "Waiting for DMD2", "")
