@@ -223,6 +223,9 @@ class BleRadioLink(context: Context) : RadioLink {
     /** Whether the picker is hidden because this phone is trying to use one named bridge. */
     fun hasSelection(): Boolean = pinnedBridge() != null || chosen != null
 
+    /** That bridge's name: the one picked this session, else the one pinned. */
+    fun selectedBridge(): String? = chosen ?: pinnedBridge()
+
     /** Full two-sided unpairing needs a bonded live link whose protocol was verified. */
     fun canUnpair(): Boolean = connected && validBondedStatus && isBonded()
 

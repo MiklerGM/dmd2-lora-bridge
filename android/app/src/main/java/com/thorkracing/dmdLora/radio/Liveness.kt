@@ -24,6 +24,9 @@ class Liveness {
      */
     class Heard(val atMs: Long, val fixAgeS: Int, val hasUsS: Int)
 
+    /** How a rider is named in [problems]; the app swaps in DMD2's display names. */
+    @Volatile var nameOf: (Int) -> String = { "%04X".format(it) }
+
     /** Sequence numbers received from one sender, unwrapped past 65535, for the last few minutes. */
     private class Seqs {
         var lastRaw = -1
@@ -179,7 +182,7 @@ class Liveness {
             // Not "rejoin the group": on 2026-10-01 it came from a clock an hour behind with internet
             // on, and rejoining only waits for the next server update to freeze them again.
             for ((rider, byS) in heldStale(nowMs)) {
-                add("DMD2 here holds %04X %s old — see Time check in Tools".format(rider, ago(byS * 1000L)))
+                add("DMD2 here holds ${nameOf(rider)} ${ago(byS * 1000L)} old — see Time check under Checks")
             }
         }
         if (dmdAtMs != 0L) {
@@ -199,9 +202,9 @@ class Liveness {
             if (nowMs - h.atMs > HEARING_MS) continue
             // Their packets arrive but the position inside stopped moving: their DMD2 lost its
             // fix, and it shows on everyone's map as "updated minutes ago".
-            if (h.fixAgeS * 1000L > FIX_OLD_MS) add("%04X GPS %s old".format(hash, ago(h.fixAgeS * 1000L)))
+            if (h.fixAgeS * 1000L > FIX_OLD_MS) add("${nameOf(hash)} GPS ${ago(h.fixAgeS * 1000L)} old")
             // We hear them, but where they show us is this old.
-            if (h.hasUsS * 1000L > FIX_OLD_MS) add("%04X has you %s old".format(hash, ago(h.hasUsS * 1000L)))
+            if (h.hasUsS * 1000L > FIX_OLD_MS) add("${nameOf(hash)} has you ${ago(h.hasUsS * 1000L)} old")
         }
     }
 
@@ -252,7 +255,12 @@ class Liveness {
         /** Coarse on purpose: the notification is posted again only when its text changes. */
         fun ago(ms: Long): String {
             val s = ms / 1000
-            return if (s < 60) "${s / 5 * 5} s" else "${s / 60} min"
+            return when {
+                s < 60 -> "${s / 5 * 5} s"
+                s < 3600 -> "${s / 60} min"
+                s < 48 * 3600 -> "${s / 3600} h"
+                else -> "${s / 86400} d"
+            }
         }
     }
 }

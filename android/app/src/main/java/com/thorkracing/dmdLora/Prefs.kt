@@ -9,6 +9,7 @@ object Prefs {
     private const val KEY_AUTOSTART = "autostart"
     private const val KEY_POWER = "power_index"
     private const val KEY_BRIDGE_ENABLED = "bridge_enabled"
+    private const val KEY_DEV_TOOLS = "dev_tools"
 
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
@@ -30,6 +31,13 @@ object Prefs {
 
     fun setBridgeEnabled(context: Context, enabled: Boolean) {
         prefs(context).edit().putBoolean(KEY_BRIDGE_ENABLED, enabled).apply()
+    }
+
+    /** The test tools that fabricate riders, hidden unless asked for: they belong in a test group. */
+    fun devTools(context: Context): Boolean = prefs(context).getBoolean(KEY_DEV_TOOLS, false)
+
+    fun setDevTools(context: Context, on: Boolean) {
+        prefs(context).edit().putBoolean(KEY_DEV_TOOLS, on).apply()
     }
 
     /**

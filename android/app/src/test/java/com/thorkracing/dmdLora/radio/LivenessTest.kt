@@ -73,7 +73,7 @@ class LivenessTest {
         assertEquals(null, l.clockSample(wallMs = 1_000_000, monoMs = 1_000))
         assertEquals("drift is not a step", null, l.clockSample(1_500_900, 501_000))
         assertEquals(-3_600_000L, l.clockSample(wallMs = 1_500_900 - 3_600_000 + 500, monoMs = 501_500))
-        assertEquals(listOf("clock set back 60 min — rejoin the group in DMD2"), l.problems(600_000))
+        assertEquals(listOf("clock set back 1 h — rejoin the group in DMD2"), l.problems(600_000))
         assertEquals("an hour later DMD2 has caught up", emptyList<String>(), l.problems(501_500 + 3_600_001))
     }
 
@@ -83,5 +83,7 @@ class LivenessTest {
         assertEquals("55 s", Liveness.ago(59_999))
         assertEquals("1 min", Liveness.ago(60_000))
         assertEquals("12 min", Liveness.ago(734_000))
+        assertEquals("1 h", Liveness.ago(3_600_000))
+        assertEquals("a clock a year out reads in days, not as half a million minutes", "386 d", Liveness.ago(386L * 86_400_000))
     }
 }

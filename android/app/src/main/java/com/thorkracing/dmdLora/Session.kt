@@ -35,6 +35,12 @@ object Session {
     /** Our own display name, learned from the roster DMD2 sends us. Chat is attributed to it. */
     @Volatile var myDisplayName: String? = null
 
+    /** Every rider's display name in DMD2's roster, by the hash their packets carry. */
+    val riderNames = java.util.concurrent.ConcurrentHashMap<Int, String>()
+
+    /** A rider as the riders know them: DMD2's display name, else DMD2's own "Rider XXXX". */
+    fun riderLabel(hash: Int): String = riderNames[hash] ?: "Rider %04X".format(hash)
+
     // Radio config as last requested by DMD2. Unknown until SET_FREQUENCY on every process
     // start. DMD2 may wait for a location fix before sending it; keeping -1/blank here can stall
     // safely, while guessing a remembered/default region can transmit illegally after travel.

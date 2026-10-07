@@ -29,10 +29,12 @@
         android:allowBackup="false"
         android:icon="@android:drawable/ic_menu_compass"
         android:label="LoRa Bridge for DMD2"
-        android:supportsRtl="true">
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.DeviceDefault.DayNight">
 
         <activity
             android:name=".MainActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:exported="true"
             android:label="LoRa Bridge for DMD2">
             <intent-filter>

@@ -26,7 +26,7 @@ object Radio {
     private val peers = Peers()
 
     /** When each part of the chain last did something, for the notification and the panel. */
-    val liveness = Liveness()
+    val liveness = Liveness().apply { nameOf = { Session.riderLabel(it) } }
 
     /** Each rider's own last position, to judge positions retold by others against. */
     val firstHand = FirstHand()
@@ -124,6 +124,9 @@ object Radio {
     }
 
     val bridgeSelected: Boolean get() = (link as? BleRadioLink)?.hasSelection() == true
+
+    /** The bridge this phone uses or is trying to reach, by its Bluetooth name. */
+    val bridgeName: String? get() = (link as? BleRadioLink)?.selectedBridge()
     val canUnpair: Boolean get() = (link as? BleRadioLink)?.canUnpair() == true
 
     /**

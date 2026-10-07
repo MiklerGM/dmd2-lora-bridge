@@ -48,7 +48,7 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
         // closed rather than guessing where it is legal to transmit.
         Radio.configureForGroup(context, groupId)
 
-        learnOwnName(json, sender)
+        learnNames(json, sender)
         val now = SystemClock.elapsedRealtime()
         val riders = checked(parseRiders(json), sender, now)
         Radio.liveness.fromDmd(riders.firstOrNull { it.userId == sender }, json, now)
@@ -129,25 +129,26 @@ class Dmd2CommandReceiver : BroadcastReceiver() {
     }
 
     /**
-     * The roster carries display names, including ours. Chat needs one - the wire has a field
-     * for it and a message from a blank sender is not much use to the person reading it.
+     * The roster carries display names, ours among them. Chat needs ours - the wire has a field
+     * for it and a message from a blank sender is not much use to the person reading it - and the
+     * app names every rider it hears by theirs rather than by the hash on the air.
      */
-    private fun learnOwnName(json: String, senderUserId: String) {
-        if (!Session.myDisplayName.isNullOrEmpty() || senderUserId.isEmpty()) return
+    private fun learnNames(json: String, senderUserId: String) {
         val arr = runCatching { JSONArray(json) }.getOrNull() ?: return
         val seen = ArrayList<String>(arr.length())
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
             val id = o.optString("user_id")
-            seen += id
-            if (id != senderUserId) continue
             val name = o.optString("display_name")
-            if (name.isNotEmpty()) {
+            seen += id
+            if (id.isEmpty() || name.isEmpty()) continue
+            Session.riderNames[Codec.uidHash(id)] = name
+            if (id == senderUserId && Session.myDisplayName.isNullOrEmpty()) {
                 Session.myDisplayName = name
                 EventLog.log("own display name: $name")
-                return
             }
         }
+        if (!Session.myDisplayName.isNullOrEmpty() || senderUserId.isEmpty()) return
         // Say so once rather than silently sending unsigned chat. DMD2 does not always put a
         // display name on our own roster entry, and an unattributed message is no use to read.
         EventLog.logThrottled(
