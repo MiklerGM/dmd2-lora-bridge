@@ -167,9 +167,9 @@ class MainActivity : Activity() {
     private fun buildUi(): View {
         c = Palette(isNight())
         val wide = resources.configuration.screenWidthDp >= WIDE_DP
-        // A phone on its side has little height to spare; the title bar alone took a sixth of it.
-        // The version it carries is under Settings as well.
-        if (resources.configuration.screenHeightDp < SHORT_DP) actionBar?.hide() else actionBar?.show()
+        // No title bar: on a Samsung it is a tall bold banner in a different black from the page,
+        // and the health line says more than the app's name. The version is under About.
+        actionBar?.hide()
         window.decorView.setBackgroundColor(c.bg)
         pickerShowing = null
         checksShape = null
@@ -187,7 +187,11 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             for (t in Tab.entries) {
                 if (t !in tabViews) continue
-                addView(button(t.label, c.control) { selectTab(t) }.also { tabButtons[t] = it }, cell(1f))
+                // One line whatever the font: "Settings" wrapped to "Setting / s" on a Samsung.
+                addView(button(t.label, c.control) { selectTab(t) }.apply {
+                    maxLines = 1
+                    textSize = 13f
+                }.also { tabButtons[t] = it }, cell(1f))
             }
         }
         val content = FrameLayout(this).apply {
@@ -350,7 +354,6 @@ class MainActivity : Activity() {
             val on = k == t
             b.background = rounded(if (on) c.accent else c.control)
             b.setTextColor(if (on) c.onAccent else c.text)
-            b.typeface = if (on) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
         }
         if (t == Tab.LOG) logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
     }
@@ -968,7 +971,5 @@ class MainActivity : Activity() {
         const val KEY_TAB = "tab"
         /** From this width the status gets a pane of its own beside the tabs. */
         const val WIDE_DP = 600
-        /** Below this height the title bar is hidden. */
-        const val SHORT_DP = 480
     }
 }
