@@ -94,7 +94,8 @@ class GpsCheck(private val context: Context, private val onDone: (GpsCheck) -> U
         line.append(" · %.0f km/h ±%.0f m".format(loc.speed * 3.6, loc.accuracy))
         val own = Radio.liveness.own
         if (own == null) {
-            line.append(" · DMD2 has not given us our own position")
+            // DMD2 sends nothing at all while we tell it the radio is not usable.
+            line.append(if (Radio.usable) " · DMD2 has not given us our own position" else " · no position from DMD2: it sends none until the bridge is ready")
         } else {
             // DMD2's point is up to a second older than this one, so at speed some metres apart
             // is normal; tens of metres more than speed allows is not.

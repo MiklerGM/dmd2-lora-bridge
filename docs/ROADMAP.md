@@ -398,8 +398,8 @@ Only once M6 passes:
   built from the old guide, 20-30 dB short until its VCC moved to 5 V; lock the SMA against
   vibration; whether the hangs follow the antenna or the supply, retest them with it tight. App: alert when the bridge has been gone a
   minute while the phone's own GPS says it is moving, which would have caught 10-02's hangs that
-  `EarlyDrop` misses; a listen-before-talk trial on our bridges. App: the GPS check should say plainly that DMD2 sends nothing while no
-  bridge is ready, instead of "DMD2 has not given us our own position".
+  `EarlyDrop` misses; a listen-before-talk trial on our bridges. ~~App: the GPS check should say
+  plainly that DMD2 sends nothing while no bridge is ready.~~ **Done 2026-10-07.**
 - Dedup ring, sequence handling, stale-position expiry.
 - ~~Works without a network.~~ **Verified 2026-09-09**, which is the premise the whole project
   rests on. With airplane mode on, no connected networks and `ping: Network is unreachable`,
@@ -447,7 +447,10 @@ Only once M6 passes:
   The first line records admission to the timestamped chat queue; the second, one second later,
   records admission to the otherwise-empty BLE transport. That shows chat is not sharing the
   latest-position slot that would have overwritten it.
-- **Match the bridge by device name, not the service UUID alone.** Observed on a real phone:
+- ~~**Match the bridge by device name, not the service UUID alone.**~~ **Done** (b7eddbd): a
+  device whose name does not start with `LoRaBridge-for-DMD2` is passed over, and of our own
+  bridges only the chosen one is used ("BLE ignoring LoRaBridge-for-DMD2-F1A6B2AA (using ...)",
+  2026-10-07). Observed on a real phone before that:
   the scan filters only on the Nordic UART Service UUID, which many unrelated DIY/IoT devices
   also advertise, so the app repeatedly connected to strangers' devices (GATT status 133/147)
   and retried. Harmless — the loop self-recovers — but it should also require the advertised
