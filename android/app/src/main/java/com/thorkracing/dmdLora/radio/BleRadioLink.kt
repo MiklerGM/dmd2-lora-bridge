@@ -759,7 +759,8 @@ class BleRadioLink(context: Context) : RadioLink {
                     )
                     return
                 }
-                EventLog.log("bridge: $line")
+                // Every 30 s, the same but for its uptime unless something happened.
+                EventLog.logChanged("bridge-status", "bridge: $line", state = line.replace(UPTIME, ""))
                 // Parsed here so that nothing above the transport ever handles the raw line,
                 // and an unsupported bridge arrives as null rather than as a partial status.
                 val status = BridgeProtocol.parseStatus(line.substring(3))
@@ -957,6 +958,7 @@ class BleRadioLink(context: Context) : RadioLink {
         /** Firmware advertises this plus an eight-hex-digit per-board suffix. */
         const val BRIDGE_NAME_PREFIX = "LoRaBridge-for-DMD2"
         private const val KEY_PINNED = "pinned_bridge"
+        private val UPTIME = Regex(" up=\\d+")
 
         private const val DEFAULT_MTU = 23
         private const val PREFERRED_MTU = 247

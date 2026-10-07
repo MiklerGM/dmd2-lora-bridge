@@ -30,6 +30,7 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Switch
 import android.widget.TextView
 import com.thorkracing.dmdLora.radio.BleRadioLink
 import com.thorkracing.dmdLora.radio.Liveness
@@ -51,6 +52,8 @@ class MainActivity : Activity() {
 
     private enum class Tab(val label: String) { STATUS("Status"), CHECKS("Checks"), LOG("Log"), SETTINGS("Settings") }
     private var tab = Tab.STATUS
+    /** The status has a pane of its own beside the tabs. */
+    private var wide = false
     private val tabButtons = HashMap<Tab, Button>()
     private val tabViews = HashMap<Tab, View>()
 
@@ -74,6 +77,7 @@ class MainActivity : Activity() {
     // Checks
     private lateinit var checksList: LinearLayout
     private var checkRows: List<Pair<TextView, TextView>> = emptyList()
+    private var checkItems: List<Check> = emptyList()
     private var checksShape: String? = null
     private lateinit var gpsButton: Button
     private var gpsCheck: GpsCheck? = null
@@ -164,7 +168,7 @@ class MainActivity : Activity() {
 
     private fun buildUi(): View {
         c = Palette(isNight())
-        val wide = resources.configuration.screenWidthDp >= WIDE_DP
+        wide = resources.configuration.screenWidthDp >= WIDE_DP
         // No title bar: on a Samsung it is a tall bold banner in a different black from the page,
         // and the health line says more than the app's name. The version is under About.
         actionBar?.hide()
@@ -277,7 +281,8 @@ class MainActivity : Activity() {
         gpsButton = button(if (gpsCheck == null) "GPS check" else "Stop GPS check", c.control) { toggleGpsCheck() }
         timeButton = button(if (timeCheck == null) "Time check" else "Stop time check", c.control) { toggleTimeCheck() }
         return column(
-            card("Checks", checksList, first = true),
+            // Untitled: the tab already says what it is.
+            card("", checksList, first = true),
             card("Manual checks", note("Results go to the Log."), row(gpsButton, timeButton)),
         )
     }
@@ -296,10 +301,18 @@ class MainActivity : Activity() {
             }
         }
         powerNote = note("")
+        val autostart = Switch(this).apply {
+            text = "Start with the phone"
+            textSize = 14f
+            setTextColor(c.text)
+            isChecked = Prefs.autostart(this@MainActivity)
+            setOnCheckedChangeListener { _, on -> Prefs.setAutostart(this@MainActivity, on) }
+        }
         devToolsButton = button("", c.control) { toggleDevTools() }
         devPanel = devToolsPanel()
         return column(
             card("Transmit power", powerRow, powerNote, first = true),
+            card("Autostart", autostart),
             card("Developer tools", devToolsButton, devPanel),
             card("About", note("${appVersion()} · unofficial, not affiliated with DMD Navigation / Thork Racing")),
         )
@@ -532,17 +545,20 @@ class MainActivity : Activity() {
     }
 
     /**
-     * What is right and what is not, one line each, with a button where something can be done.
-     * Rows are rebuilt only when their kinds change; the texts, which carry ages, update in place,
-     * so a button is never replaced under the finger about to tap it.
+     * What is wrong, one line each, with a button where something can be done; one line that all
+     * is well otherwise. Rows are rebuilt only when their kinds change; the texts, which carry
+     * ages, update in place, so a button is never replaced under the finger about to tap it.
      */
     private fun renderChecks(now: Long) {
-        val items = checks(now)
+        val items = checks(now).ifEmpty { listOf(Check(Mark.OK, "All good")) }
+        // A button runs whatever check holds its row now: two checks can share a mark and a
+        // button's word, so one can take the other's place without a rebuild.
+        checkItems = items
         val shape = items.joinToString("|") { "${it.mark}${it.fix}" }
         if (shape != checksShape) {
             checksShape = shape
             checksList.removeAllViews()
-            checkRows = items.map { item ->
+            checkRows = items.mapIndexed { i, item ->
                 val mark = text(16f, c.text, bold = true).apply {
                     width = dp(26)
                     gravity = Gravity.CENTER_VERTICAL
@@ -555,10 +571,7 @@ class MainActivity : Activity() {
                     addView(mark, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { gravity = Gravity.CENTER_VERTICAL })
                     addView(label, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { gravity = Gravity.CENTER_VERTICAL })
                     if (item.fix != null) {
-                        val quiet = item.mark == Mark.OK
-                        addView(button(item.fix, if (quiet) c.control else c.accent, if (quiet) c.text else c.onAccent) {
-                            item.action?.invoke()
-                        },
+                        addView(button(item.fix, c.accent, c.onAccent) { checkItems.getOrNull(i)?.action?.invoke() },
                             LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply {
                                 leftMargin = dp(8)
                                 gravity = Gravity.CENTER_VERTICAL
@@ -578,45 +591,46 @@ class MainActivity : Activity() {
     private enum class Mark { OK, WARN, BAD }
     private class Check(val mark: Mark, val text: String, val fix: String? = null, val action: (() -> Unit)? = null)
 
+    /** Only what is wrong, along the chain from the phone to DMD2: what is right stays off the screen. */
     private fun checks(now: Long): List<Check> = buildList {
         val link = if (Session.radioAttached) Radio.linkState else "off"
-        add(when (link) {
-            "bluetooth off" -> Check(Mark.BAD, "Bluetooth off", "Open") { startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) }
-            "no permission" -> Check(Mark.BAD, "Bluetooth not allowed", "Allow") { requestBlePermissions() }
-            else -> Check(Mark.OK, "Bluetooth on")
-        })
-        add(when {
-            !Session.serviceRunning -> Check(Mark.BAD, "Service off", "Start") { toggleService() }
-            Radio.txReady -> Check(Mark.OK, "Bridge ready")
-            link == "connected" && !Radio.usable -> Check(Mark.BAD, "Bridge radio not working")
-            link == "connected" ->
-                Check(Mark.WARN, "Bridge: " + Health.notReady(Radio.airState().orEmpty()).headline)
-            else -> Check(Mark.WARN, "Bridge: ${linkWords(link)}")
-        })
+        val air = Radio.airState().orEmpty()
+        // A bridge waiting for DMD2 is fine itself; DMD2's line says it, where the button to go there is.
+        val waitingForDmd2 = "from DMD2" in air || "waiting for group" in air
+        when {
+            // Beside the status pane its own Start is in sight: one button for one thing.
+            !Session.serviceRunning -> add(Check(Mark.BAD, "Service off", "Start".takeUnless { wide }) { toggleService() })
+            link == "bluetooth off" ->
+                add(Check(Mark.BAD, "Bluetooth off", "Open") { startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) })
+            link == "no permission" -> add(Check(Mark.BAD, "Bluetooth not allowed", "Allow") { requestBlePermissions() })
+            Radio.txReady -> {}
+            link == "connected" && !Radio.usable -> add(Check(Mark.BAD, "Bridge radio not working"))
+            link == "connected" && waitingForDmd2 -> {}
+            link == "connected" -> add(Check(Mark.WARN, "Bridge: " + Health.notReady(air).headline))
+            else -> add(Check(Mark.WARN, "Bridge: ${linkWords(link)}"))
+        }
         val live = Radio.liveness
-        add(when {
-            live.dmdAtMs == 0L -> Check(Mark.BAD, "DMD2 not sharing", "Open DMD2") { openDmd2() }
+        when {
+            live.dmdAtMs == 0L -> add(Check(Mark.BAD, "DMD2 not sharing", "Open DMD2") { openDmd2() })
             now - live.dmdAtMs > Liveness.DMD_SILENT_MS ->
-                Check(Mark.WARN, "DMD2 silent ${Liveness.ago(now - live.dmdAtMs)}", "Open DMD2") { openDmd2() }
-            else -> Check(Mark.OK, "DMD2 sharing")
-        })
+                add(Check(Mark.WARN, "DMD2 silent ${Liveness.ago(now - live.dmdAtMs)}", "Open DMD2") { openDmd2() })
+            link == "connected" && waitingForDmd2 ->
+                add(Check(Mark.WARN, Health.notReady(air).let { it.detail.ifEmpty { it.headline } }, "Open DMD2") { openDmd2() })
+        }
         if (live.dmdAtMs != 0L) {
             val own = live.ownFixAgeS(now)
-            add(when {
-                own < 0 -> Check(Mark.WARN, "Your location not shared", "Open DMD2") { openDmd2() }
-                own * 1000L > Liveness.FIX_OLD_MS -> Check(Mark.WARN, "GPS fix ${Liveness.ago(own * 1000L)} old")
-                else -> Check(Mark.OK, "GPS fix ${Liveness.ago(own * 1000L)} old")
-            })
+            when {
+                own < 0 -> add(Check(Mark.WARN, "Your location not shared", "Open DMD2") { openDmd2() })
+                own * 1000L > Liveness.FIX_OLD_MS -> add(Check(Mark.WARN, "GPS fix ${Liveness.ago(own * 1000L)} old"))
+            }
             val behind = Radio.ownFix.gpsBehindS
             if (behind > 60) add(Check(Mark.WARN, "GPS clock ${Liveness.ago(behind * 1000L)} behind, corrected"))
         }
         val clock = live.problems(now).filter { it.startsWith("clock") || it.startsWith("DMD2 here holds") }
-        add(if (clock.isEmpty()) Check(Mark.OK, "Clock OK")
-            else Check(Mark.WARN, clock.joinToString("\n"), "Check") { if (timeCheck == null) toggleTimeCheck() })
-        add(if (isBatteryUnrestricted()) Check(Mark.OK, "Battery unrestricted")
-            else Check(Mark.BAD, "Battery restricted", "Allow") { requestBatteryExemption() })
-        add(if (Prefs.autostart(this@MainActivity)) Check(Mark.OK, "Autostart on", "Turn off") { toggleAutostart() }
-            else Check(Mark.WARN, "Autostart off", "Turn on") { toggleAutostart() })
+        if (clock.isNotEmpty()) {
+            add(Check(Mark.WARN, clock.joinToString("\n"), "Check") { if (timeCheck == null) toggleTimeCheck() })
+        }
+        if (!isBatteryUnrestricted()) add(Check(Mark.BAD, "Battery restricted", "Allow") { requestBatteryExemption() })
     }
 
     private fun renderSettings() {
@@ -650,11 +664,13 @@ class MainActivity : Activity() {
 
     /**
      * What the bridge actually holds, after the app's request and the bridge's own floor; null
-     * until it has confirmed one. The app holds no dBm table of its own: which module is fitted is
-     * the firmware's to know, and a build that was not told reports no dBm.
+     * until it has confirmed one for this group. Before that it still holds the last ride's, and
+     * "Low" beside a chosen "Max" reads as a fault when it is only DMD2 not having spoken yet. The
+     * app holds no dBm table of its own: which module is fitted is the firmware's to know, and a
+     * build that was not told reports no dBm.
      */
     private fun powerShort(): String? {
-        val st = Radio.bridgeStatus?.takeIf { Radio.connected && it.online && it.configured } ?: return null
+        val st = Radio.bridgeStatus?.takeIf { Radio.txReady && it.online && it.configured } ?: return null
         return levelName(st.powerLevel) + (st.txDbm?.let { ", $it dBm" } ?: "")
     }
 
@@ -787,11 +803,6 @@ class MainActivity : Activity() {
         walkButton.setTextColor(if (walking) c.onFill else c.text)
         if (walking) ui.post(walk) else ui.removeCallbacks(walk)
         EventLog.log(if (walking) "walking test rider" else "test rider stopped")
-    }
-
-    private fun toggleAutostart() {
-        Prefs.setAutostart(this, !Prefs.autostart(this))
-        render()
     }
 
     /**
@@ -932,12 +943,12 @@ class MainActivity : Activity() {
         setPadding(0, dp(6), 0, dp(2))
     }
 
-    /** A rounded panel with a small title; every card but the first in a column keeps a gap above. */
+    /** A rounded panel with a small title, if any; every card but the first in a column keeps a gap above. */
     private fun card(title: String, vararg body: View, first: Boolean = false) = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         background = rounded(c.surface, 10)
         setPadding(dp(12), dp(10), dp(12), dp(12))
-        addView(text(12f, c.muted, bold = true).apply {
+        if (title.isNotEmpty()) addView(text(12f, c.muted, bold = true).apply {
             text = title.uppercase(Locale.ROOT)
             letterSpacing = 0.06f
             setPadding(0, 0, 0, dp(4))

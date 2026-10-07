@@ -53,6 +53,15 @@ object EventLog {
         if (show || everyLineToFile) write(msg, screen = show)
     }
 
+    private val lastState = HashMap<String, String>()
+
+    /**
+     * For a state reported over and over, of which [state] is the part that matters: on the
+     * screen when that changes, in the file every time.
+     */
+    @Synchronized
+    fun logChanged(key: String, msg: String, state: String) = write(msg, screen = lastState.put(key, state) != state)
+
     private fun write(msg: String, screen: Boolean) {
         val now = Date()
         // A formatter keeps the time zone it was made with; follow a change of zone instead of
@@ -101,6 +110,7 @@ object EventLog {
     fun clear() {
         lines.clear()
         lastLogged.clear()
+        lastState.clear()
         onChange?.invoke()
     }
 }
