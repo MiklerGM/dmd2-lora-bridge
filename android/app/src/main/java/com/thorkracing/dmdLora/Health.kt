@@ -1,5 +1,8 @@
 package com.thorkracing.dmdLora
 
+import com.thorkracing.dmdLora.radio.Liveness
+import com.thorkracing.dmdLora.radio.Radio
+
 /**
  * The app's top line: one verdict in plain words, with what to do about it.
  *
@@ -58,6 +61,27 @@ data class Health(val severity: Severity, val headline: String, val detail: Stri
                         "Last heard ${i.lastHeard} ago")
                 else -> Health(Severity.OK, "Ready", "No riders heard yet")
             }
+        }
+
+        /**
+         * The verdict at [nowMs] from the live state, for the app's top line and the notification
+         * alike. [running] is the service's own say while it is still on its way up.
+         */
+        fun now(nowMs: Long, running: Boolean = Session.serviceRunning): Health {
+            val live = Radio.liveness
+            return of(
+                Input(
+                    serviceRunning = running,
+                    link = if (Session.radioAttached) Radio.linkState else "off",
+                    choosing = Radio.bridgeChoices.isNotEmpty(),
+                    radioWorking = Radio.radioWorking,
+                    txReady = Radio.txReady,
+                    air = Radio.airState(),
+                    problems = live.problems(nowMs),
+                    hearing = live.hearing(nowMs),
+                    lastHeard = live.senders(nowMs).maxOfOrNull { it.second.atMs }?.let { Liveness.ago(nowMs - it) },
+                )
+            )
         }
 
         /** A bridge that is up but not cleared to transmit, named by what it is waiting for. */

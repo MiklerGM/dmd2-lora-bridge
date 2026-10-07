@@ -7,6 +7,10 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.drawable.Icon
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -16,6 +20,7 @@ import android.os.SystemClock
 import com.thorkracing.dmdLora.Bridge
 import com.thorkracing.dmdLora.DmdLora
 import com.thorkracing.dmdLora.EventLog
+import com.thorkracing.dmdLora.Health
 import com.thorkracing.dmdLora.MainActivity
 import com.thorkracing.dmdLora.Prefs
 import com.thorkracing.dmdLora.R
@@ -41,7 +46,9 @@ class LoraService : Service() {
     private enum class Severity { OK, WARN, BAD }
 
     /** What the notification says, and how loudly. */
-    private data class Shown(val text: String, val severity: Severity)
+    private data class Shown(val title: String, val text: String, val severity: Severity)
+
+    private val badges = HashMap<Severity, Icon>()
 
     /** Frequent enough to release a held transmission and to re-apply config after a
      *  reconnect promptly, cheap enough to ignore. */
@@ -150,12 +157,6 @@ class LoraService : Service() {
         super.onDestroy()
     }
 
-    private fun notificationText(): String =
-        (Session.channel.takeIf { it >= 0 }?.let {
-            "ch $it · ${Bridge.freqLabel(it)}"
-        } ?: "waiting for DMD2 radio config") +
-            (Session.groupName?.let { " · $it" } ?: "")
-
     /**
      * Red when there is no working radio while the service runs - no bridge in reach, or a
      * bridge whose module is not answering - and amber while the bridge is there but not yet
@@ -173,13 +174,13 @@ class LoraService : Service() {
             !Radio.txReady || problems.isNotEmpty() -> Severity.WARN
             else -> Severity.OK
         }
-        val parts = mutableListOf<String>()
-        if (!connected || !Radio.txReady) parts += Radio.airState()?.substringBefore('\n') ?: "bridge $link"
-        parts += problems
-        parts += notificationText()
-        // Riders heard in the last minute: the one number that says the air is alive.
-        if (connected) parts += "hearing ${Radio.liveness.hearing(now)}"
-        return Shown(parts.joinToString(" · "), severity)
+        // The app's own words: the first thing wrong and what to do about it, then the ride. All
+        // is well says itself in the title; when the last rider was heard would only re-post
+        // the notification every few seconds.
+        val h = Health.now(now, running = true)
+        val text = listOf(h.detail.takeIf { h.severity != Health.Severity.OK }.orEmpty(), Radio.ride)
+            .filter { it.isNotEmpty() }.joinToString("\n")
+        return Shown(h.headline, text, severity)
     }
 
     /**
@@ -202,6 +203,7 @@ class LoraService : Service() {
                     .setContentTitle("LoRa bridge lost after power-up")
                     .setContentText("It dropped right after starting and is not back. Re-plug the bridge.")
                     .setSmallIcon(R.drawable.ic_notify_lost)
+                    .setLargeIcon(badge(Severity.BAD))
                     .setColor(RED)
                     .setContentIntent(open)
                     .setAutoCancel(true)
@@ -229,9 +231,10 @@ class LoraService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val b = Notification.Builder(this, CHANNEL_ID)
-            .setContentTitle("LoRa Bridge for DMD2")
+            .setContentTitle(s.title)
             .setContentText(s.text)
             .setStyle(Notification.BigTextStyle().bigText(s.text))
+            .setLargeIcon(badge(s.severity))
             // The status bar shows only the icon, so a lost bridge has to change its shape.
             .setSmallIcon(
                 if (s.severity == Severity.BAD) R.drawable.ic_notify_lost
@@ -245,6 +248,26 @@ class LoraService : Service() {
             Severity.OK -> {}
         }
         return b.build()
+    }
+
+    /**
+     * The state's colour as a badge on the card: green, amber, red. One UI puts the app's own icon
+     * on a notification card, and the small icon tinted with setColor - the colour code until
+     * 2026-10-07, when the app got an icon of its own - is then never seen.
+     */
+    private fun badge(s: Severity): Icon = badges.getOrPut(s) {
+        val px = (64 * resources.displayMetrics.density).toInt()
+        val bmp = Bitmap.createBitmap(px, px, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        val fill = when (s) { Severity.BAD -> RED; Severity.WARN -> AMBER; Severity.OK -> GREEN }
+        canvas.drawCircle(px / 2f, px / 2f, px / 2f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = fill })
+        getDrawable(if (s == Severity.BAD) R.drawable.ic_notify_lost else R.drawable.ic_notify)?.mutate()?.run {
+            // Dark on amber, which white does not stand out from.
+            setTint(if (s == Severity.WARN) 0xFF1A1A1A.toInt() else 0xFFFFFFFF.toInt())
+            setBounds(px / 5, px / 5, px - px / 5, px - px / 5)
+            draw(canvas)
+        }
+        Icon.createWithBitmap(bmp)
     }
 
     private fun createChannel() {
@@ -269,6 +292,7 @@ class LoraService : Service() {
         private const val FLUSH_MS = 500L
         private const val RED = 0xFFC62828.toInt()
         private const val AMBER = 0xFFF9A825.toInt()
+        private const val GREEN = 0xFF2E7D32.toInt()
 
         fun start(context: Context) {
             val i = Intent(context, LoraService::class.java).setAction(DmdLora.ACTION_START)

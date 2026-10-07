@@ -7,11 +7,13 @@ import com.thorkracing.dmdLora.protocol.Decoded
 import com.thorkracing.dmdLora.protocol.Regions
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Locale
 
 /** Everything we send *to* DMD2. */
 object Bridge {
 
-    fun freqLabel(channel: Int): String = "%.3f MHz".format(Regions.freqMhz(channel))
+    /** With a point whatever the phone's language: the app and DMD2 both write it so. */
+    fun freqLabel(channel: Int): String = "%.3f MHz".format(Locale.US, Regions.freqMhz(channel))
 
     /**
      * DMD2 sends us nothing until it has seen connected=true, so this is the handshake,

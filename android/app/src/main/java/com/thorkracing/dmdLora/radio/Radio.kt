@@ -109,6 +109,14 @@ object Radio {
      */
     val radioWorking: Boolean get() = bridgeUsable(connected, health.status)
 
+    /** The ride in a few words: group and frequency, once DMD2 has named them. */
+    val ride: String
+        get() {
+            val group = Session.groupName ?: Session.groupId?.take(8)
+            val channel = desiredRequest?.channel ?: Session.channel.takeIf { it >= 0 }
+            return listOfNotNull(group, channel?.let { Bridge.freqLabel(it) }).joinToString(" · ")
+        }
+
     /** Whether the current request has been adopted by the group whose packets we are holding. */
     val configOwnedByGroup: Boolean get() = config.owns(Session.groupId)
 

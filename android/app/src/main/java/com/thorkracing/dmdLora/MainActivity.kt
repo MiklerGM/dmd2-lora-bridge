@@ -406,21 +406,7 @@ class MainActivity : Activity() {
     }
 
     private fun renderHealth(now: Long) {
-        val live = Radio.liveness
-        val last = live.senders(now).maxOfOrNull { it.second.atMs }
-        val h = Health.of(
-            Health.Input(
-                serviceRunning = Session.serviceRunning,
-                link = if (Session.radioAttached) Radio.linkState else "off",
-                choosing = Radio.bridgeChoices.isNotEmpty(),
-                radioWorking = Radio.radioWorking,
-                txReady = Radio.txReady,
-                air = Radio.airState(),
-                problems = live.problems(now),
-                hearing = live.hearing(now),
-                lastHeard = last?.let { Liveness.ago(now - it) },
-            )
-        )
+        val h = Health.now(now)
         healthHeadline.text = h.headline
         healthDetail.text = h.detail
         healthDetail.visibility = if (h.detail.isEmpty()) View.GONE else View.VISIBLE
@@ -499,9 +485,7 @@ class MainActivity : Activity() {
 
     /** The ride, under the health line: group and frequency, once DMD2 has named them. */
     private fun renderRide() {
-        val group = Session.groupName ?: Session.groupId?.take(8)
-        val channel = Radio.desiredRequest?.channel ?: Session.channel.takeIf { it >= 0 }
-        val ride = listOfNotNull(group, channel?.let { "%.3f MHz".format(Locale.US, 850.125 + it) }).joinToString(" · ")
+        val ride = Radio.ride
         rideText.text = ride
         rideText.visibility = if (ride.isEmpty() || !Session.serviceRunning) View.GONE else View.VISIBLE
     }
