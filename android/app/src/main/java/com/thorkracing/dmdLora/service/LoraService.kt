@@ -201,7 +201,7 @@ class LoraService : Service() {
                 Notification.Builder(this, ALERT_CHANNEL_ID)
                     .setContentTitle("LoRa bridge lost after power-up")
                     .setContentText("It dropped right after starting and is not back. Re-plug the bridge.")
-                    .setSmallIcon(android.R.drawable.stat_notify_error)
+                    .setSmallIcon(R.drawable.ic_notify_lost)
                     .setColor(RED)
                     .setContentIntent(open)
                     .setAutoCancel(true)
@@ -234,7 +234,7 @@ class LoraService : Service() {
             .setStyle(Notification.BigTextStyle().bigText(s.text))
             // The status bar shows only the icon, so a lost bridge has to change its shape.
             .setSmallIcon(
-                if (s.severity == Severity.BAD) android.R.drawable.stat_notify_error
+                if (s.severity == Severity.BAD) R.drawable.ic_notify_lost
                 else R.drawable.ic_notify
             )
             .setContentIntent(open)

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The bridge is lost: the status-bar pin without its waves, struck through. A shape of its own
+     rather than a colour, since the status bar shows only the shape. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <group
+        android:scaleX="0.5238"
+        android:scaleY="0.5238"
+        android:translateX="-16.286"
+        android:translateY="-17.098">
+        <group>
+            <!-- All but a band along the stroke, so a gap parts the stroke from the pin. Drawn the
+                 other way round from the frame, the band winds to nothing and is left out. -->
+            <clip-path android:pathData="M0,0 L108,0 L108,108 L0,108 Z M31.828,25.172 L26.172,30.828 L76.172,80.828 L81.828,75.172 Z" />
+            <path
+                android:fillColor="#FFFFFF"
+                android:pathData="M54,74 L43.608,56 A12,12 0 1,1 64.392,56 Z" />
+        </group>
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M38.414,34.586 L72.414,68.586 L69.586,71.414 L35.586,37.414 Z" />
+    </group>
+</vector>
