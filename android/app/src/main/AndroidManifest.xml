@@ -32,16 +32,17 @@
 
     <application
         android:allowBackup="false"
-        android:icon="@android:drawable/ic_menu_compass"
+        android:icon="@mipmap/ic_launcher"
         android:label="LoRa Bridge for DMD2"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.DeviceDefault.DayNight">
 
+        <!-- The launcher names the app by this label: the full one did not fit under the icon. -->
         <activity
             android:name=".MainActivity"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:exported="true"
-            android:label="LoRa Bridge for DMD2">
+            android:label="LoRa Bridge">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

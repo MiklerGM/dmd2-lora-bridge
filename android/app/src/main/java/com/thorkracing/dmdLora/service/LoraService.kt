@@ -18,6 +18,7 @@ import com.thorkracing.dmdLora.DmdLora
 import com.thorkracing.dmdLora.EventLog
 import com.thorkracing.dmdLora.MainActivity
 import com.thorkracing.dmdLora.Prefs
+import com.thorkracing.dmdLora.R
 import com.thorkracing.dmdLora.Session
 import com.thorkracing.dmdLora.radio.BleRadioLink
 import com.thorkracing.dmdLora.radio.EarlyDrop
@@ -234,7 +235,7 @@ class LoraService : Service() {
             // The status bar shows only the icon, so a lost bridge has to change its shape.
             .setSmallIcon(
                 if (s.severity == Severity.BAD) android.R.drawable.stat_notify_error
-                else android.R.drawable.ic_menu_compass
+                else R.drawable.ic_notify
             )
             .setContentIntent(open)
             .setOngoing(true)

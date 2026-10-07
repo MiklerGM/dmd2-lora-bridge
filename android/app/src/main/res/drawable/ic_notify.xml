@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The launcher's pin, white on nothing as the status bar wants it, with one wave a side: at
+     24 dp two are a blur, and they would not fit. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <group
+        android:scaleX="0.5238"
+        android:scaleY="0.5238"
+        android:translateX="-16.286"
+        android:translateY="-17.098">
+        <path
+            android:fillColor="#FFFFFF"
+            android:fillType="evenOdd"
+            android:pathData="M54,74 L43.608,56 A12,12 0 1,1 64.392,56 Z M49.5,50 a4.5,4.5 0 1,0 9,0 a4.5,4.5 0 1,0 -9,0 Z" />
+        <path
+            android:strokeColor="#FFFFFF"
+            android:strokeLineCap="round"
+            android:strokeWidth="4"
+            android:pathData="M69.564,39.102 A19,19 0 0,1 69.564,60.898 M38.436,39.102 A19,19 0 0,0 38.436,60.898" />
+    </group>
+</vector>
