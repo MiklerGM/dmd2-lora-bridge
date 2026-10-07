@@ -615,7 +615,7 @@ class MainActivity : Activity() {
             now - live.dmdAtMs > Liveness.DMD_SILENT_MS ->
                 add(Check(Mark.WARN, "DMD2 silent ${Liveness.ago(now - live.dmdAtMs)}", "Open DMD2") { openDmd2() })
             link == "connected" && waitingForDmd2 ->
-                add(Check(Mark.WARN, Health.notReady(air).let { it.detail.ifEmpty { it.headline } }, "Open DMD2") { openDmd2() })
+                add(Check(Mark.WARN, if ("from DMD2" in air) "Reshare the group" else "Waiting for the group", "Open DMD2") { openDmd2() })
         }
         if (live.dmdAtMs != 0L) {
             val own = live.ownFixAgeS(now)
