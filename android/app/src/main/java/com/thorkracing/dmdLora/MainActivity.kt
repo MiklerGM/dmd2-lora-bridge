@@ -87,10 +87,8 @@ class MainActivity : Activity() {
     private lateinit var trafficText: TextView
 
     // Settings
-    private lateinit var powerButton: Button
+    private val powerButtons = HashMap<Int, Button>()
     private lateinit var powerNote: TextView
-    private lateinit var autostartButton: Button
-    private lateinit var batteryButton: Button
     private lateinit var devToolsButton: Button
     private lateinit var devPanel: LinearLayout
     private lateinit var hashField: EditText
@@ -171,6 +169,9 @@ class MainActivity : Activity() {
         // and the health line says more than the app's name. The version is under About.
         actionBar?.hide()
         window.decorView.setBackgroundColor(c.bg)
+        // With three-button navigation the system lays a darker scrim behind the buttons; let the
+        // page's own colour run to the bottom edge instead.
+        window.isNavigationBarContrastEnforced = false
         pickerShowing = null
         checksShape = null
 
@@ -282,15 +283,23 @@ class MainActivity : Activity() {
     }
 
     private fun settingsColumn(): LinearLayout {
-        powerButton = button("", c.control) { cyclePower() }
+        powerButtons.clear()
+        // Weakest on the left, the default: the loudest setting is a deliberate reach, never one
+        // tap from where the app starts.
+        val powerRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            for (level in PowerLevel.WEAKEST downTo PowerLevel.STRONGEST) {
+                addView(button(levelName(level), c.control) { setPower(level) }.apply {
+                    maxLines = 1
+                    textSize = 13f
+                }.also { powerButtons[level] = it }, cell(1f))
+            }
+        }
         powerNote = note("")
-        autostartButton = button("", c.control) { toggleAutostart() }
-        batteryButton = button("", c.control) { requestBatteryExemption() }
         devToolsButton = button("", c.control) { toggleDevTools() }
         devPanel = devToolsPanel()
         return column(
-            card("Transmit power", powerButton, powerNote, first = true),
-            card("Background", row(autostartButton, batteryButton)),
+            card("Transmit power", powerRow, powerNote, first = true),
             card("Developer tools", devToolsButton, devPanel),
             card("About", note("${appVersion()} · unofficial, not affiliated with DMD Navigation / Thork Racing")),
         )
@@ -427,6 +436,7 @@ class MainActivity : Activity() {
             if (now - h.atMs > Liveness.HEARING_MS) {
                 sb.setSpan(ForegroundColorSpan(c.muted), nameAt, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             }
+            h.rssi?.let { appendSignal(sb, it) }
             val parts = mutableListOf("${Liveness.ago(now - h.atMs)} ago")
             live.reception(hash, now)?.let { (got, sent) -> parts += "${got * 100 / sent} %" }
             if (h.hasUsS * 1000L > Liveness.FIX_OLD_MS) parts += "has you ${Liveness.ago(h.hasUsS * 1000L)} old"
@@ -436,6 +446,30 @@ class MainActivity : Activity() {
             sb.setSpan(ForegroundColorSpan(c.muted), detailAt, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
         ridersText.text = sb
+    }
+
+    /**
+     * Signal bars and dBm for the last packet the bridge heard from a rider directly. The steps are
+     * set against what this link decodes: SF11 at 500 kHz still works near -120 dBm.
+     */
+    private fun appendSignal(sb: SpannableStringBuilder, dbm: Int) {
+        val bars = when {
+            dbm >= -80 -> 4
+            dbm >= -95 -> 3
+            dbm >= -110 -> 2
+            else -> 1
+        }
+        sb.append("  ")
+        val on = sb.length
+        sb.append(BARS.take(bars))
+        sb.setSpan(ForegroundColorSpan(if (bars >= 3) c.ok else if (bars == 2) c.warn else c.bad),
+            on, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        val off = sb.length
+        sb.append(BARS.drop(bars))
+        sb.setSpan(ForegroundColorSpan(c.control), off, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        val num = sb.length
+        sb.append(" $dbm dBm")
+        sb.setSpan(ForegroundColorSpan(c.muted), num, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
     }
 
     /** The ride, under the health line: group and frequency, once DMD2 has named them. */
@@ -521,7 +555,10 @@ class MainActivity : Activity() {
                     addView(mark, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { gravity = Gravity.CENTER_VERTICAL })
                     addView(label, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { gravity = Gravity.CENTER_VERTICAL })
                     if (item.fix != null) {
-                        addView(button(item.fix, c.accent, c.onAccent) { item.action?.invoke() },
+                        val quiet = item.mark == Mark.OK
+                        addView(button(item.fix, if (quiet) c.control else c.accent, if (quiet) c.text else c.onAccent) {
+                            item.action?.invoke()
+                        },
                             LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply {
                                 leftMargin = dp(8)
                                 gravity = Gravity.CENTER_VERTICAL
@@ -577,41 +614,34 @@ class MainActivity : Activity() {
             else Check(Mark.WARN, clock.joinToString("\n"), "Check") { if (timeCheck == null) toggleTimeCheck() })
         add(if (isBatteryUnrestricted()) Check(Mark.OK, "Battery unrestricted")
             else Check(Mark.BAD, "Battery restricted", "Allow") { requestBatteryExemption() })
-        add(if (Prefs.autostart(this@MainActivity)) Check(Mark.OK, "Autostart on")
+        add(if (Prefs.autostart(this@MainActivity)) Check(Mark.OK, "Autostart on", "Turn off") { toggleAutostart() }
             else Check(Mark.WARN, "Autostart off", "Turn on") { toggleAutostart() })
     }
 
     private fun renderSettings() {
-        val auto = Prefs.autostart(this)
-        autostartButton.text = if (auto) "Autostart: on" else "Autostart: off"
-        autostartButton.background = rounded(if (auto) c.goFill else c.control)
-        autostartButton.setTextColor(if (auto) c.onFill else c.text)
-
-        val free = isBatteryUnrestricted()
-        batteryButton.text = if (free) "Battery: free" else "Battery: limited"
-        batteryButton.background = rounded(if (free) c.goFill else c.badFill)
-        batteryButton.setTextColor(c.onFill)
-
         // Neutral at the weakest step, warmer as it climbs: the colour is the only thing
         // between a curious tap and a transmitter that is louder than the licence allows.
         val limit = Prefs.powerLevel(this)
-        powerButton.text = "Power limit: level $limit"
-        powerButton.background = rounded(
-            when (limit) {
-                PowerLevel.WEAKEST -> c.control
-                PowerLevel.STRONGEST -> c.badFill
-                else -> c.warnFill
-            }
-        )
-        powerButton.setTextColor(
-            when (limit) {
-                PowerLevel.WEAKEST -> c.text
-                PowerLevel.STRONGEST -> c.onFill
-                else -> c.onWarnFill
-            }
-        )
-        powerNote.text = "0 is the strongest, 3 the weakest. EU limit on this channel: 14 dBm." +
-            (powerShort()?.let { "\nBridge holds $it." } ?: "")
+        for ((level, b) in powerButtons) {
+            val on = level == limit
+            b.background = rounded(
+                when {
+                    !on -> c.control
+                    level == PowerLevel.WEAKEST -> c.accent
+                    level == PowerLevel.STRONGEST -> c.badFill
+                    else -> c.warnFill
+                }
+            )
+            b.setTextColor(
+                when {
+                    !on -> c.text
+                    level == PowerLevel.WEAKEST -> c.onAccent
+                    level == PowerLevel.STRONGEST -> c.onFill
+                    else -> c.onWarnFill
+                }
+            )
+        }
+        powerNote.text = "EU limit on this channel: 14 dBm." + (powerShort()?.let { "\nBridge: $it." } ?: "")
 
         val dev = Prefs.devTools(this)
         devToolsButton.text = if (dev) "Hide" else "Show"
@@ -624,7 +654,15 @@ class MainActivity : Activity() {
      */
     private fun powerShort(): String? {
         val st = Radio.bridgeStatus?.takeIf { Radio.connected && it.online && it.configured } ?: return null
-        return "level ${st.powerLevel}" + (st.txDbm?.let { ", $it dBm" } ?: "")
+        return levelName(st.powerLevel) + (st.txDbm?.let { ", $it dBm" } ?: "")
+    }
+
+    /** DMD's power levels in a rider's words: 3, the weakest, is Low; 0, the strongest, is Max. */
+    private fun levelName(level: Int): String = when (level) {
+        3 -> "Low"
+        2 -> "Medium"
+        1 -> "High"
+        else -> "Max"
     }
 
     private fun openDmd2() {
@@ -708,13 +746,8 @@ class MainActivity : Activity() {
         ui.postDelayed({ render() }, 300)
     }
 
-    /**
-     * Weakest first, then upwards, then back round. Starting at the strongest and asking the
-     * rider to dial it down would put the loudest setting one tap from the default.
-     */
-    private fun cyclePower() {
-        val next = Prefs.powerLevel(this) - 1
-        Prefs.setPowerLevel(this, if (next < PowerLevel.STRONGEST) PowerLevel.WEAKEST else next)
+    private fun setPower(level: Int) {
+        Prefs.setPowerLevel(this, level)
         Radio.onPowerLimitChanged(this)
         render()
     }
@@ -971,5 +1004,6 @@ class MainActivity : Activity() {
         const val KEY_TAB = "tab"
         /** From this width the status gets a pane of its own beside the tabs. */
         const val WIDE_DP = 600
+        const val BARS = "▂▄▆█"
     }
 }

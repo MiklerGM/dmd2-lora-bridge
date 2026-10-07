@@ -638,6 +638,7 @@ object Radio {
                     fixAgeS = dated.firstOrNull { it.userIdHash == g.senderHash }?.positionAgeS ?: -1,
                     hasUsS = dated.firstOrNull { it.userIdHash == own }?.positionAgeS ?: -1,
                     riders = dated,
+                    rssi = rssi.takeIf { !g.relayed },
                 )
                 Bridge.sendGroupDataReceived(context, Bridge.ridersJson(g.copy(riders = dated)), ride.groupId)
             }

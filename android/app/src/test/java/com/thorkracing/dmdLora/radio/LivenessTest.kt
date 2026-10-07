@@ -77,6 +77,15 @@ class LivenessTest {
         assertEquals("an hour later DMD2 has caught up", emptyList<String>(), l.problems(501_500 + 3_600_001))
     }
 
+    @Test fun aRidersSignalIsTheirOwnNotARelays() {
+        val l = Liveness()
+        l.heard(0x1986, 1, 1_000, 5, 5, rssi = -80)
+        l.heard(0x1986, 2, 2_000, 5, 5)
+        assertEquals("a relayed copy keeps the rider's own last reading", -80, l.senders(2_000).single().second.rssi)
+        l.heard(0x1986, 3, 3_000, 5, 5, rssi = -95)
+        assertEquals(-95, l.senders(3_000).single().second.rssi)
+    }
+
     @Test fun agesAreCoarseSoTheNotificationDoesNotFlicker() {
         assertEquals("0 s", Liveness.ago(0))
         assertEquals("5 s", Liveness.ago(7_000))

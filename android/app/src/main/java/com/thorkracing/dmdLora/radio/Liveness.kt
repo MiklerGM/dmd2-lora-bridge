@@ -22,7 +22,7 @@ class Liveness {
      * A rider's last packet: the age of their own position in it and of ours in their roster,
      * in seconds, -1 where the roster had no such rider.
      */
-    class Heard(val atMs: Long, val fixAgeS: Int, val hasUsS: Int)
+    class Heard(val atMs: Long, val fixAgeS: Int, val hasUsS: Int, val rssi: Int? = null)
 
     /** How a rider is named in [problems]; the app swaps in DMD2's display names. */
     @Volatile var nameOf: (Int) -> String = { "%04X".format(it) }
@@ -130,8 +130,13 @@ class Liveness {
 
     /** A group packet from [sender]. */
     @Synchronized
-    fun heard(sender: Int, seq: Int, nowMs: Long, fixAgeS: Int, hasUsS: Int, riders: List<RxRider> = emptyList()) {
-        heard[sender] = Heard(nowMs, fixAgeS, hasUsS)
+    fun heard(
+        sender: Int, seq: Int, nowMs: Long, fixAgeS: Int, hasUsS: Int,
+        riders: List<RxRider> = emptyList(), rssi: Int? = null,
+    ) {
+        // The bridge's signal reading belongs to whoever transmitted: a stock relay's copy arrives
+        // without one (the caller drops it), and keeps the last reading of the rider's own packets.
+        heard[sender] = Heard(nowMs, fixAgeS, hasUsS, rssi ?: heard[sender]?.rssi)
         seqs.getOrPut(sender) { Seqs() }.add(seq, nowMs)
         lastPacket[sender] = riders
     }
