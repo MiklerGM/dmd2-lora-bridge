@@ -19,7 +19,6 @@ import android.provider.Settings
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
-import android.text.style.RelativeSizeSpan
 import android.text.style.StyleSpan
 import android.view.Gravity
 import android.view.View
@@ -79,11 +78,13 @@ class MainActivity : Activity() {
     private var checkRows: List<Pair<TextView, TextView>> = emptyList()
     private var checkItems: List<Check> = emptyList()
     private var checksShape: String? = null
-    private lateinit var gpsButton: Button
+    private lateinit var checkAgain: Button
     private var gpsCheck: GpsCheck? = null
-    private lateinit var timeButton: Button
     private var timeCheck: TimeCheck? = null
-    private var timeAsked = false // once: without precise location it still runs, minus the GPS clocks
+    /** The last GPS check ran its course without a fix; a fresh fix from DMD2 clears it. */
+    private var gpsNoFix = false
+    /** What the last time check found wrong with this clock, if anything. */
+    private var clockVerdict: String? = null
 
     // Log
     private lateinit var logView: TextView
@@ -132,11 +133,11 @@ class MainActivity : Activity() {
         setContentView(buildUi())
 
         EventLog.persistTo(filesDir)
-        EventLog.onChange = { ui.post { renderLog() } }
         EventLog.log("UI started; waiting for DMD2 to talk to us")
-        renderLog()
-        render()
-        ui.post(statusTick)
+        if (!checkedThisRun) {
+            checkedThisRun = true
+            runChecks(ask = false)
+        }
     }
 
     /**
@@ -146,8 +147,24 @@ class MainActivity : Activity() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         setContentView(buildUi())
-        renderLog()
         render()
+    }
+
+    /**
+     * Kept up to date only while it can be seen. In the background the once-a-second status and a
+     * rebuilt log on every line were work for nobody, all ride long.
+     */
+    override fun onStart() {
+        super.onStart()
+        EventLog.onChange = { ui.post { if (tab == Tab.LOG) renderLog() } }
+        if (tab == Tab.LOG) renderLog()
+        ui.post(statusTick)
+    }
+
+    override fun onStop() {
+        EventLog.onChange = null
+        ui.removeCallbacks(statusTick)
+        super.onStop()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -158,9 +175,7 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         gpsCheck?.stop()
         timeCheck?.stop()
-        EventLog.onChange = null
         ui.removeCallbacks(walk)
-        ui.removeCallbacks(statusTick)
         super.onDestroy()
     }
 
@@ -278,13 +293,9 @@ class MainActivity : Activity() {
     private fun checksColumn(): LinearLayout {
         checksList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         checkRows = emptyList()
-        gpsButton = button(if (gpsCheck == null) "GPS check" else "Stop GPS check", c.control) { toggleGpsCheck() }
-        timeButton = button(if (timeCheck == null) "Time check" else "Stop time check", c.control) { toggleTimeCheck() }
-        return column(
-            // Untitled: the tab already says what it is.
-            card("", checksList, first = true),
-            card("Manual checks", note("Results go to the Log."), row(gpsButton, timeButton)),
-        )
+        checkAgain = button("Check again", c.control) { runChecks(ask = true) }
+        // Untitled: the tab already says what it is.
+        return column(card("", checksList, row(checkAgain), first = true))
     }
 
     private fun settingsColumn(): LinearLayout {
@@ -377,7 +388,8 @@ class MainActivity : Activity() {
             b.background = rounded(if (on) c.accent else c.control)
             b.setTextColor(if (on) c.onAccent else c.text)
         }
-        if (t == Tab.LOG) logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
+        // The log is drawn only while its tab is open; catch up on what came in meanwhile.
+        if (t == Tab.LOG) renderLog()
     }
 
     // ---- state rendering ----
@@ -582,13 +594,16 @@ class MainActivity : Activity() {
             }
         }
         for ((row, item) in checkRows.zip(items)) {
-            row.first.text = when (item.mark) { Mark.OK -> "✓"; Mark.WARN -> "!"; Mark.BAD -> "✕" }
-            row.first.setTextColor(when (item.mark) { Mark.OK -> c.ok; Mark.WARN -> c.warn; Mark.BAD -> c.bad })
+            row.first.text = when (item.mark) { Mark.OK -> "✓"; Mark.WARN -> "!"; Mark.BAD -> "✕"; Mark.BUSY -> "…" }
+            row.first.setTextColor(when (item.mark) { Mark.OK -> c.ok; Mark.WARN -> c.warn; Mark.BAD -> c.bad; Mark.BUSY -> c.muted })
             row.second.text = item.text.replaceFirstChar { it.uppercase() }
         }
+        // While a check runs its row says how it goes; a second start would only restart it.
+        checkAgain.visibility = if (gpsCheck == null && timeCheck == null) View.VISIBLE else View.GONE
     }
 
-    private enum class Mark { OK, WARN, BAD }
+    /** BUSY: a check still running, neither right nor wrong yet. */
+    private enum class Mark { OK, WARN, BAD, BUSY }
     private class Check(val mark: Mark, val text: String, val fix: String? = null, val action: (() -> Unit)? = null)
 
     /** Only what is wrong, along the chain from the phone to DMD2: what is right stays off the screen. */
@@ -611,27 +626,37 @@ class MainActivity : Activity() {
         }
         val live = Radio.liveness
         when {
+            // Asked only while DMD2 is silent: once it shares, it is plainly there.
+            live.dmdAtMs == 0L && packageManager.getLaunchIntentForPackage(DmdLora.DMD2_PACKAGE) == null ->
+                add(Check(Mark.BAD, "DMD2 not installed", "Get") { getDmd2() })
             live.dmdAtMs == 0L -> add(Check(Mark.BAD, "DMD2 not sharing", "Open DMD2") { openDmd2() })
             now - live.dmdAtMs > Liveness.DMD_SILENT_MS ->
                 add(Check(Mark.WARN, "DMD2 silent ${Liveness.ago(now - live.dmdAtMs)}", "Open DMD2") { openDmd2() })
             link == "connected" && waitingForDmd2 ->
                 add(Check(Mark.WARN, if ("from DMD2" in air) "Reshare the group" else "Waiting for the group", "Open DMD2") { openDmd2() })
         }
-        if (live.dmdAtMs != 0L) {
-            val own = live.ownFixAgeS(now)
-            when {
-                own < 0 -> add(Check(Mark.WARN, "Your location not shared", "Open DMD2") { openDmd2() })
-                // While the phone's own GPS is being checked, its row below says how that goes.
-                own * 1000L > Liveness.FIX_OLD_MS && gpsCheck == null ->
-                    add(Check(Mark.WARN, "GPS fix ${Liveness.ago(own * 1000L)} old", "Check") { if (gpsCheck == null) toggleGpsCheck() })
-            }
-            val behind = Radio.ownFix.gpsBehindS
-            if (behind > 60) add(Check(Mark.WARN, "GPS clock ${Liveness.ago(behind * 1000L)} behind, corrected"))
+        // Our own position: how old DMD2's is, and what the phone's GPS made of a check.
+        val own = if (live.dmdAtMs != 0L) live.ownFixAgeS(now) else null
+        if (own != null && own >= 0 && own * 1000L <= Liveness.FIX_OLD_MS) gpsNoFix = false
+        if (own != null && own < 0) add(Check(Mark.WARN, "Your location not shared", "Open DMD2") { openDmd2() })
+        val gps = gpsCheck
+        when {
+            gps != null -> add(Check(if (gps.hasFix) Mark.OK else Mark.BUSY, "Phone GPS: ${gps.summary()}", "Stop") { gps.stop() })
+            gpsNoFix -> add(Check(Mark.WARN, "No GPS fix in 2 min", "Check") { if (gpsCheck == null) toggleGpsCheck() })
+            own != null && own * 1000L > Liveness.FIX_OLD_MS ->
+                add(Check(Mark.WARN, "GPS fix ${Liveness.ago(own * 1000L)} old", "Check") { if (gpsCheck == null) toggleGpsCheck() })
         }
-        gpsCheck?.let { add(Check(if (it.hasFix) Mark.OK else Mark.WARN, "Phone GPS: ${it.summary()}", "Stop") { it.stop() }) }
-        val clock = live.problems(now).filter { it.startsWith("clock") || it.startsWith("DMD2 here holds") }
-        if (clock.isNotEmpty()) {
-            add(Check(Mark.WARN, clock.joinToString("\n"), "Check") { if (timeCheck == null) toggleTimeCheck() })
+        if (own != null && Radio.ownFix.gpsBehindS > 60) {
+            add(Check(Mark.WARN, "GPS clock ${Liveness.ago(Radio.ownFix.gpsBehindS * 1000L)} behind, corrected"))
+        }
+        val clock = listOfNotNull(clockVerdict) +
+            live.problems(now).filter { it.startsWith("clock") || it.startsWith("DMD2 here holds") }
+        when {
+            timeCheck != null -> add(Check(Mark.BUSY, "Checking the clock"))
+            // Measured wrong, setting it is the fix; only suspected, measuring it is.
+            clockVerdict != null ->
+                add(Check(Mark.WARN, clock.joinToString("\n"), "Settings") { startActivity(Intent(Settings.ACTION_DATE_SETTINGS)) })
+            clock.isNotEmpty() -> add(Check(Mark.WARN, clock.joinToString("\n"), "Check") { if (timeCheck == null) startTimeCheck() })
         }
         if (!isBatteryUnrestricted()) add(Check(Mark.BAD, "Battery restricted", "Allow") { requestBatteryExemption() })
     }
@@ -688,6 +713,14 @@ class MainActivity : Activity() {
     private fun openDmd2() {
         val launch = packageManager.getLaunchIntentForPackage(DmdLora.DMD2_PACKAGE)
         if (launch != null) startActivity(launch) else EventLog.log("DMD2 is not installed")
+    }
+
+    /** DMD2's page in the store app, or on the web where there is none. */
+    private fun getDmd2() {
+        val page = "details?id=${DmdLora.DMD2_PACKAGE}"
+        if (runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("market://$page"))) }.isFailure) {
+            runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/$page"))) }
+        }
     }
 
     /** The link's own states, said the way a rider would. */
@@ -831,57 +864,61 @@ class MainActivity : Activity() {
             getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
         }.getOrDefault(false)
 
-    private fun toggleGpsCheck() {
-        gpsCheck?.let { it.stop(); return }
-        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(
-                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
-                REQ_GPS,
-            )
+    /** GPS_PROVIDER needs the precise permission; "approximate" alone is not enough. */
+    private fun located() =
+        checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+    private fun askLocation(code: Int) = requestPermissions(
+        arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION), code,
+    )
+
+    /**
+     * The phone's GPS and its clock, as on opening the app. Unasked, without precise location the
+     * GPS waits until the rider asks for it; the clock is checked either way.
+     */
+    private fun runChecks(ask: Boolean) {
+        if (!located() && ask) {
+            askLocation(REQ_CHECKS)
             return
         }
+        if (located() && gpsCheck == null) startGpsCheck()
+        if (timeCheck == null) startTimeCheck()
+        render()
+    }
+
+    private fun toggleGpsCheck() {
+        gpsCheck?.let { it.stop(); return }
+        if (located()) startGpsCheck() else askLocation(REQ_GPS)
+    }
+
+    private fun startGpsCheck() {
+        gpsNoFix = false
         // Set before start(): a device without GPS finishes inside start() itself.
-        val check = GpsCheck(this) {
+        val check = GpsCheck(this) { done ->
             gpsCheck = null
-            gpsButton.text = "GPS check"
+            gpsNoFix = done.ranOut && !done.hasFix
         }
         gpsCheck = check
-        gpsButton.text = "Stop GPS check"
         check.start()
     }
 
     /** Most of it needs no permission; without precise location it skips the GPS clocks and says so. */
-    private fun toggleTimeCheck() {
-        timeCheck?.let { it.stop(); return }
-        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
-            !timeAsked
-        ) {
-            timeAsked = true
-            requestPermissions(
-                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
-                REQ_TIME,
-            )
-            return
-        }
-        val check = TimeCheck(this) {
+    private fun startTimeCheck() {
+        clockVerdict = null
+        val check = TimeCheck(this) { done ->
             timeCheck = null
-            timeButton.text = "Time check"
+            clockVerdict = done.problem
         }
         timeCheck = check
-        timeButton.text = "Stop time check"
         check.start()
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == REQ_TIME) {
-            toggleTimeCheck()
-            return
+        when (requestCode) {
+            REQ_CHECKS -> runChecks(ask = false)
+            REQ_GPS -> if (located()) startGpsCheck() else EventLog.log("GPS check needs precise location permission")
         }
-        if (requestCode != REQ_GPS) return
-        // GPS_PROVIDER needs the precise permission; "approximate" alone is not enough.
-        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) toggleGpsCheck()
-        else EventLog.log("GPS check needs precise location permission")
     }
 
     private fun requestBlePermissions() {
@@ -1015,7 +1052,9 @@ class MainActivity : Activity() {
 
     private companion object {
         const val REQ_GPS = 2
-        const val REQ_TIME = 3
+        const val REQ_CHECKS = 3
+        /** The phone's GPS and clock are checked once a run of the app, not on every return to it. */
+        var checkedThisRun = false
         const val KEY_TAB = "tab"
         /** From this width the status gets a pane of its own beside the tabs. */
         const val WIDE_DP = 600

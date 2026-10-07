@@ -14,6 +14,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
+import com.thorkracing.dmdLora.radio.Liveness
 import com.thorkracing.dmdLora.radio.Radio
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -30,7 +31,7 @@ import kotlin.math.abs
  * satellites give it, before the location stack turns it into fix times. It needs no network,
  * and it is the witness that can catch fix times an hour off, as the X70's were.
  */
-class TimeCheck(private val context: Context, private val onDone: () -> Unit) {
+class TimeCheck(private val context: Context, private val onDone: (TimeCheck) -> Unit) {
 
     private val lm = context.getSystemService(LocationManager::class.java)
     private val handler = Handler(Looper.getMainLooper())
@@ -39,6 +40,10 @@ class TimeCheck(private val context: Context, private val onDone: () -> Unit) {
     private var receiverAtNs = 0L //  ...at this moment of elapsedRealtimeNanos
     private var listening = false
     private var done = false
+
+    /** What is wrong with this clock in a few words, once the check has found it; null if nothing. */
+    var problem: String? = null
+        private set
 
     // What the verdict is drawn from: this clock minus each witness, in ms.
     private var vsNetwork: Long? = null
@@ -160,16 +165,19 @@ class TimeCheck(private val context: Context, private val onDone: () -> Unit) {
             lm.unregisterGnssMeasurementsCallback(measurements)
         }
         verdict()
-        onDone()
+        onDone(this)
     }
 
     private fun verdict() {
         val off = listOfNotNull(vsNetwork, vsReceiver).maxByOrNull { abs(it) }
         when {
-            off != null && abs(off) >= 60_000 -> say(
-                "→ this clock is ${versus(off)}: with internet on, DMD2 takes server positions as from the future and " +
-                    "freezes those riders. Set automatic date and time or keep internet off, then rejoin the group."
-            )
+            off != null && abs(off) >= 60_000 -> {
+                problem = "Clock ${Liveness.ago(abs(off))} ${if (off > 0) "ahead" else "behind"}"
+                say(
+                    "→ this clock is ${versus(off)}: with internet on, DMD2 takes server positions as from the future and " +
+                        "freezes those riders. Set automatic date and time or keep internet off, then rejoin the group."
+                )
+            }
             Radio.liveness.heldStale(SystemClock.elapsedRealtime()).isNotEmpty() -> say(
                 "→ DMD2 holds riders stamped ahead of this clock: it was set back, or it is behind the server's. " +
                     "Once the clock is right, rejoin the group."

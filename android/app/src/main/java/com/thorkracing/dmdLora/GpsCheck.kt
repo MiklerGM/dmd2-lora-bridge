@@ -21,7 +21,7 @@ import com.thorkracing.dmdLora.radio.Radio
  * - Are DMD2's coordinates real? Their distance from this fix, with DMD2's speed and age: close
  *   but old means real positions with a stuck time; drifting away means DMD2 is guessing.
  */
-class GpsCheck(private val context: Context, private val onDone: () -> Unit) {
+class GpsCheck(private val context: Context, private val onDone: (GpsCheck) -> Unit) {
 
     private val lm = context.getSystemService(LocationManager::class.java)
     private val handler = Handler(Looper.getMainLooper())
@@ -31,6 +31,10 @@ class GpsCheck(private val context: Context, private val onDone: () -> Unit) {
     private var lastLogMs = 0L
 
     val hasFix: Boolean get() = last != null
+
+    /** It ran its full time rather than being stopped. */
+    @Volatile var ranOut = false
+        private set
 
     /** How it is going, in a few words for the Checks list; the log keeps the detail. */
     fun summary(): String = listOfNotNull(
@@ -45,7 +49,10 @@ class GpsCheck(private val context: Context, private val onDone: () -> Unit) {
         }
     }
     private val listener = LocationListener { onFix(it) }
-    private val finish = Runnable { stop("GPS check finished") }
+    private val finish = Runnable {
+        ranOut = true
+        stop("GPS check finished")
+    }
 
     /** The caller has checked ACCESS_FINE_LOCATION. */
     @SuppressLint("MissingPermission")
@@ -53,7 +60,7 @@ class GpsCheck(private val context: Context, private val onDone: () -> Unit) {
         // A tablet without GPS has no such provider at all, and asking for it throws.
         if (!lm.allProviders.contains(LocationManager.GPS_PROVIDER)) {
             EventLog.log("GPS check: this device has no GPS")
-            onDone()
+            onDone(this)
             return
         }
         if (!lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
@@ -70,7 +77,7 @@ class GpsCheck(private val context: Context, private val onDone: () -> Unit) {
         lm.removeUpdates(listener)
         lm.unregisterGnssStatusCallback(gnss)
         EventLog.log(why)
-        onDone()
+        onDone(this)
     }
 
     private fun onFix(loc: Location) {
