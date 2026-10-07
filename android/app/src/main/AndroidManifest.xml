@@ -25,6 +25,11 @@
         android:name="android.permission.BLUETOOTH_SCAN"
         android:usesPermissionFlags="neverForLocation" />
 
+    <!-- To open DMD2 from the checks; package visibility hides it otherwise. -->
+    <queries>
+        <package android:name="com.thorkracing.dmd2launcher" />
+    </queries>
+
     <application
         android:allowBackup="false"
         android:icon="@android:drawable/ic_menu_compass"

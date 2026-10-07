@@ -33,27 +33,19 @@ data class Health(val severity: Severity, val headline: String, val detail: Stri
     )
 
     companion object {
+        /** Short on purpose: a few words a rider takes in at a glance, the detail only when it helps. */
         fun of(i: Input): Health {
             val air = i.air?.substringBefore('\n').orEmpty()
             return when {
-                !i.serviceRunning ->
-                    Health(Severity.OFF, "Off: no positions are shared", "Start the service to reach the bridge.")
-                i.link == "bluetooth off" ->
-                    Health(Severity.BAD, "Bluetooth is off", "Turn Bluetooth on to reach the bridge.")
-                i.link == "no permission" ->
-                    Health(Severity.BAD, "Bluetooth is not allowed", "Allow Nearby devices for this app.")
-                i.choosing ->
-                    Health(Severity.WARN, "Choose your bridge", "More than one is in range: pick yours under Bridge.")
-                i.link == "not found" ->
-                    Health(Severity.BAD, "Bridge not found", "Is it powered and close by? The app keeps looking.")
-                i.link == "connecting" || i.link == "pairing" ->
-                    Health(Severity.WARN, "Connecting to the bridge", "")
-                i.link != "connected" ->
-                    Health(Severity.WARN, "Looking for the bridge", "Is it powered and close by?")
-                !i.txReady && !i.usable ->
-                    Health(Severity.BAD, "The bridge's radio is not working", air)
-                !i.txReady ->
-                    Health(Severity.WARN, notReady(air), air)
+                !i.serviceRunning -> Health(Severity.OFF, "Off", "Not sharing positions")
+                i.link == "bluetooth off" -> Health(Severity.BAD, "Bluetooth off", "")
+                i.link == "no permission" -> Health(Severity.BAD, "Bluetooth not allowed", "")
+                i.choosing -> Health(Severity.WARN, "Choose your bridge", "")
+                i.link == "not found" -> Health(Severity.BAD, "Bridge not found", "Is it on?")
+                i.link == "connecting" || i.link == "pairing" -> Health(Severity.WARN, "Connecting…", "")
+                i.link != "connected" -> Health(Severity.WARN, "Searching for bridge", "")
+                !i.txReady && !i.usable -> Health(Severity.BAD, "Bridge radio not working", air)
+                !i.txReady -> notReady(air)
                 i.problems.isNotEmpty() -> Health(
                     Severity.WARN,
                     i.problems.first().replaceFirstChar { it.uppercase() },
@@ -62,30 +54,29 @@ data class Health(val severity: Severity, val headline: String, val detail: Stri
                 )
                 i.hearing > 0 ->
                     Health(Severity.OK, "Sharing with ${i.hearing} rider${if (i.hearing == 1) "" else "s"}",
-                        "Last packet ${i.lastHeard} ago.")
-                else ->
-                    Health(Severity.OK, "Ready: your position goes out", "Nobody heard yet.")
+                        "Last heard ${i.lastHeard} ago")
+                else -> Health(Severity.OK, "Ready", "No riders heard yet")
             }
         }
 
         /** A bridge that is up but not cleared to transmit, named by what it is waiting for. */
-        private fun notReady(air: String): String = when {
-            "transmit disabled" in air -> "This bridge's build does not transmit"
-            "no frequency from DMD2" in air -> "DMD2 has not sent its radio settings"
-            "waiting for group" in air -> "Waiting for DMD2's group"
-            "config" in air -> "Setting up the bridge's radio"
-            else -> "The bridge is not ready yet"
+        private fun notReady(air: String): Health = when {
+            "transmit disabled" in air -> Health(Severity.WARN, "This build can't transmit", "")
+            "no frequency from DMD2" in air -> Health(Severity.WARN, "Waiting for DMD2", "Reshare the group in DMD2")
+            "waiting for group" in air -> Health(Severity.WARN, "Waiting for DMD2", "")
+            "config" in air -> Health(Severity.WARN, "Setting up the radio", "")
+            else -> Health(Severity.WARN, "Bridge not ready", air)
         }
 
         /** What to do about a problem, where there is something to do. */
         private fun hint(p: String): String? = when {
-            p.startsWith("DMD2 silent") -> "Open DMD2: is the group active, and your location shared?"
-            p.startsWith("own position not shared") -> "In DMD2, turn on Share My Location to Active Group."
-            p.startsWith("own GPS") -> "DMD2 has no fresh GPS fix on this device."
-            p.startsWith("air quiet") -> "The others may be out of range."
-            p.startsWith("clock") -> "Turn on automatic date and time in Android's settings."
-            " has you " in p -> "They rarely hear you: check the bridge's power and antenna."
-            " GPS " in p -> "Their DMD2 has no fresh GPS fix."
+            p.startsWith("DMD2 silent") -> "Is the group active in DMD2?"
+            p.startsWith("own position not shared") -> "Turn on location sharing in DMD2"
+            p.startsWith("own GPS") -> "No fresh GPS fix"
+            p.startsWith("air quiet") -> "Others may be out of range"
+            p.startsWith("clock") -> "Turn on automatic time"
+            " has you " in p -> "They rarely hear you"
+            " GPS " in p -> "Their GPS is stale"
             else -> null
         }
     }

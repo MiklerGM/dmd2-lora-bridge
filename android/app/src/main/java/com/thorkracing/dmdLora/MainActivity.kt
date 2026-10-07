@@ -65,6 +65,8 @@ class MainActivity : Activity() {
     private lateinit var serviceAction: Button
     private lateinit var unpairAction: Button
     private lateinit var bridgeButtons: View
+    private lateinit var ridersCard: View
+    private lateinit var bridgeCard: View
 
     /** Shown only while no bridge has been chosen: one button per bridge in range. */
     private lateinit var bridgePicker: LinearLayout
@@ -86,6 +88,7 @@ class MainActivity : Activity() {
 
     // Settings
     private lateinit var powerButton: Button
+    private lateinit var powerNote: TextView
     private lateinit var autostartButton: Button
     private lateinit var batteryButton: Button
     private lateinit var devToolsButton: Button
@@ -122,8 +125,6 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // The activity title bar already says the name; repeating it wasted a line.
-        actionBar?.subtitle = appVersion()
         savedInstanceState?.getString(KEY_TAB)?.let { saved -> Tab.entries.firstOrNull { it.name == saved }?.let { tab = it } }
         requestBlePermissions()
         setContentView(buildUi())
@@ -222,6 +223,7 @@ class MainActivity : Activity() {
         healthStripe = View(this)
         healthHeadline = text(19f, c.text, bold = true)
         healthDetail = text(14f, c.muted)
+        rideText = text(13f, c.muted)
         healthAction = button("Start", c.goFill, c.onFill) { toggleService() }
         val health = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -234,6 +236,7 @@ class MainActivity : Activity() {
                 setPadding(0, dp(12), 0, dp(12))
                 addView(healthHeadline)
                 addView(healthDetail)
+                addView(rideText)
             }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
             addView(healthAction, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply {
                 gravity = Gravity.CENTER_VERTICAL
@@ -242,9 +245,8 @@ class MainActivity : Activity() {
         }
 
         ridersText = text(15f, c.text)
-        rideText = text(14f, c.text)
         bridgeText = text(14f, c.text)
-        serviceAction = button("", c.control) { toggleService() }
+        serviceAction = button("Stop", c.badFill, c.onFill) { toggleService() }
         unpairAction = button("", c.control) {
             // Execute what the button actually said when it was rendered. Re-reading live
             // readiness here could turn a visible "Change" into destructive unpairing during
@@ -259,50 +261,34 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
         }
-        return column(
-            health,
-            card("Riders", ridersText),
-            card("Ride", rideText),
-            card("Bridge", bridgeText, row(serviceAction, unpairAction).also { bridgeButtons = it }, bridgePicker),
-        )
+        ridersCard = card("Riders", ridersText)
+        bridgeCard = card("Bridge", bridgeText, row(serviceAction, unpairAction).also { bridgeButtons = it }, bridgePicker)
+        return column(health, ridersCard, bridgeCard)
     }
 
     private fun checksColumn(): LinearLayout {
         checksList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         checkRows = emptyList()
-        gpsButton = button(if (gpsCheck == null) "Run GPS check" else "Stop GPS check", c.control) { toggleGpsCheck() }
-        timeButton = button(if (timeCheck == null) "Run time check" else "Stop time check", c.control) { toggleTimeCheck() }
+        gpsButton = button(if (gpsCheck == null) "GPS check" else "Stop GPS check", c.control) { toggleGpsCheck() }
+        timeButton = button(if (timeCheck == null) "Time check" else "Stop time check", c.control) { toggleTimeCheck() }
         return column(
             card("Checks", checksList, first = true),
-            card(
-                "By hand",
-                note("GPS check compares this device's GPS with the position DMD2 hands us. Time check " +
-                    "compares its clocks with GPS time and network time. Both write what they find to the Log."),
-                row(gpsButton, timeButton),
-            ),
+            card("Manual checks", note("Results go to the Log."), row(gpsButton, timeButton)),
         )
     }
 
     private fun settingsColumn(): LinearLayout {
         powerButton = button("", c.control) { cyclePower() }
+        powerNote = note("")
         autostartButton = button("", c.control) { toggleAutostart() }
         batteryButton = button("", c.control) { requestBatteryExemption() }
         devToolsButton = button("", c.control) { toggleDevTools() }
         devPanel = devToolsPanel()
         return column(
-            card(
-                "Transmit power", powerButton,
-                note("Level 0 is the strongest step, 3 the weakest; tap to step through them. What a level " +
-                    "is worth in dBm is the bridge's to say, and it reports one only if its build was told " +
-                    "which module is fitted. What you may transmit depends on your band and country: on " +
-                    "868.0–868.6 MHz the EU allows 25 mW ERP, about 14 dBm, which no step of an E220-900T30 " +
-                    "stays under. On a T30, level 2 loses fewer packets than level 3."),
-                first = true,
-            ),
+            card("Transmit power", powerButton, powerNote, first = true),
             card("Background", row(autostartButton, batteryButton)),
-            card("Log", row(button("Share log", c.control) { shareLog() }, button("Clear log", c.control) { EventLog.clear() })),
             card("Developer tools", devToolsButton, devPanel),
-            card("About", note("LoRa Bridge for DMD2 ${appVersion()}. Unofficial: not affiliated with DMD Navigation / Thork Racing.")),
+            card("About", note("${appVersion()} · unofficial, not affiliated with DMD Navigation / Thork Racing")),
         )
     }
 
@@ -379,7 +365,7 @@ class MainActivity : Activity() {
         renderBridge()
         renderChecks(now)
         renderSettings()
-        trafficText.text = "Sent ${Session.packetsEncoded.get()} · handed to DMD2 ${Session.groupDataReceived.get()}"
+        trafficText.text = "TX ${Session.packetsEncoded.get()} · RX ${Session.groupDataReceived.get()}"
     }
 
     private fun renderHealth(now: Long) {
@@ -416,12 +402,14 @@ class MainActivity : Activity() {
         healthAction.visibility = if (h.severity == Health.Severity.OFF) View.VISIBLE else View.GONE
     }
 
-    /** Each rider by name, with how well the link to them works both ways. */
+    /** One line per rider: name, when, how much of theirs we get; more only when something is stale. */
     private fun renderRiders(now: Long) {
         val live = Radio.liveness
         val riders = live.senders(now)
+        // Before a bridge is up there is nobody to hear, and "none yet" would only repeat the top line.
+        ridersCard.visibility = if (Session.serviceRunning && (Radio.connected || riders.isNotEmpty())) View.VISIBLE else View.GONE
         if (riders.isEmpty()) {
-            ridersText.text = "Nobody heard yet."
+            ridersText.text = "None yet"
             ridersText.setTextColor(c.muted)
             return
         }
@@ -430,49 +418,44 @@ class MainActivity : Activity() {
         for ((i, rider) in riders.withIndex()) {
             val (hash, h) = rider
             if (i > 0) sb.append('\n')
-            val fresh = now - h.atMs <= Liveness.HEARING_MS
             val nameAt = sb.length
             sb.append(Session.riderLabel(hash))
             sb.setSpan(StyleSpan(Typeface.BOLD), nameAt, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            if (!fresh) sb.setSpan(ForegroundColorSpan(c.muted), nameAt, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            sb.append("   ${Liveness.ago(now - h.atMs)} ago")
+            if (now - h.atMs > Liveness.HEARING_MS) {
+                sb.setSpan(ForegroundColorSpan(c.muted), nameAt, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+            val parts = mutableListOf("${Liveness.ago(now - h.atMs)} ago")
+            live.reception(hash, now)?.let { (got, sent) -> parts += "${got * 100 / sent} %" }
+            if (h.hasUsS * 1000L > Liveness.FIX_OLD_MS) parts += "has you ${Liveness.ago(h.hasUsS * 1000L)} old"
+            if (h.fixAgeS * 1000L > Liveness.FIX_OLD_MS) parts += "GPS ${Liveness.ago(h.fixAgeS * 1000L)} old"
             val detailAt = sb.length
-            val parts = mutableListOf<String>()
-            live.reception(hash, now)?.let { (got, sent) -> parts += "we get ${got * 100 / sent} %" }
-            parts += if (h.hasUsS >= 0) "you on their map ${Liveness.ago(h.hasUsS * 1000L)} old" else "you not on their map yet"
-            if (h.fixAgeS >= 0) parts += "their GPS ${Liveness.ago(h.fixAgeS * 1000L)} old"
-            sb.append('\n').append(parts.joinToString(" · "))
+            sb.append("  ").append(parts.joinToString(" · "))
             sb.setSpan(ForegroundColorSpan(c.muted), detailAt, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            sb.setSpan(RelativeSizeSpan(0.87f), detailAt, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
         ridersText.text = sb
     }
 
+    /** The ride, under the health line: group and frequency, once DMD2 has named them. */
     private fun renderRide() {
+        val group = Session.groupName ?: Session.groupId?.take(8)
         val channel = Radio.desiredRequest?.channel ?: Session.channel.takeIf { it >= 0 }
-        rideText.text = (Session.groupName ?: Session.groupId?.take(8) ?: "No group from DMD2 yet") + "\n" +
-            (channel?.let { "Channel $it · ${"%.3f".format(Locale.US, 850.125 + it)} MHz" } ?: "Radio settings not received yet")
+        val ride = listOfNotNull(group, channel?.let { "%.3f MHz".format(Locale.US, 850.125 + it) }).joinToString(" · ")
+        rideText.text = ride
+        rideText.visibility = if (ride.isEmpty() || !Session.serviceRunning) View.GONE else View.VISIBLE
     }
 
     private fun renderBridge() {
         val running = Session.serviceRunning
-        val link = if (Session.radioAttached) Radio.linkState else "off"
-        val air = Radio.airState()
-        val lines = mutableListOf(
-            shortBridgeName()?.let { "Bridge $it" } ?: "No bridge chosen yet",
-            when {
-                !running -> "Service off"
-                air != null -> "$link · $air"
-                else -> linkWords(link)
-            },
-        )
-        if (Radio.connected) lines += powerLine()
+        val lines = mutableListOf(shortBridgeName() ?: "No bridge yet")
+        // While the link is not up the top line already says what it is doing.
+        val air = if (running) Radio.airState() else null
+        if (air != null) {
+            lines += listOfNotNull(air.substringBefore('\n'), Radio.bridgeStatus?.firmware?.ifEmpty { null }, powerShort())
+                .joinToString(" · ")
+        }
         bridgeText.text = lines.joinToString("\n")
         // Starting lives on the health line while the service is off; here only Stop, so the
         // screen never shows two buttons for one thing.
-        serviceAction.text = "Stop service"
-        serviceAction.background = rounded(c.badFill)
-        serviceAction.setTextColor(c.onFill)
         serviceAction.visibility = if (running) View.VISIBLE else View.GONE
         // A dead/offline selection must not hide every other bridge. "Change" only clears the
         // local choice; full unpairing is offered when both ends can actually forget each other.
@@ -481,9 +464,11 @@ class MainActivity : Activity() {
             Radio.bridgeSelected -> RadioAction.CHANGE
             else -> RadioAction.NONE
         }
-        unpairAction.text = if (radioAction == RadioAction.UNPAIR) "Unpair" else "Change bridge"
+        unpairAction.text = if (radioAction == RadioAction.UNPAIR) "Unpair" else "Change"
         unpairAction.visibility = if (radioAction != RadioAction.NONE) View.VISIBLE else View.INVISIBLE
         bridgeButtons.visibility = if (running || radioAction != RadioAction.NONE) View.VISIBLE else View.GONE
+        bridgeCard.visibility =
+            if (running || Radio.bridgeSelected || Radio.bridgeChoices.isNotEmpty()) View.VISIBLE else View.GONE
         renderBridgePicker()
     }
 
@@ -556,40 +541,41 @@ class MainActivity : Activity() {
     private fun checks(now: Long): List<Check> = buildList {
         val link = if (Session.radioAttached) Radio.linkState else "off"
         add(when (link) {
-            "bluetooth off" -> Check(Mark.BAD, "Bluetooth is off", "Open") { startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) }
-            "no permission" -> Check(Mark.BAD, "Bluetooth is not allowed for this app", "Allow") { requestBlePermissions() }
+            "bluetooth off" -> Check(Mark.BAD, "Bluetooth off", "Open") { startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) }
+            "no permission" -> Check(Mark.BAD, "Bluetooth not allowed", "Allow") { requestBlePermissions() }
             else -> Check(Mark.OK, "Bluetooth on")
         })
         add(when {
-            !Session.serviceRunning -> Check(Mark.BAD, "The bridge service is off", "Start") { toggleService() }
-            Radio.txReady -> Check(Mark.OK, "Bridge ${shortBridgeName().orEmpty()} ready to transmit".replace("  ", " "))
+            !Session.serviceRunning -> Check(Mark.BAD, "Service off", "Start") { toggleService() }
+            Radio.txReady -> Check(Mark.OK, "Bridge ready")
             link == "connected" -> Check(if (Radio.usable) Mark.WARN else Mark.BAD,
                 "Bridge: ${Radio.airState()?.substringBefore('\n') ?: link}")
             else -> Check(Mark.WARN, "Bridge: ${linkWords(link)}")
         })
         val live = Radio.liveness
         add(when {
-            live.dmdAtMs == 0L -> Check(Mark.BAD, "No positions from DMD2 yet: in DMD2, make the group active and share your location")
-            now - live.dmdAtMs > Liveness.DMD_SILENT_MS -> Check(Mark.WARN, "DMD2 silent for ${Liveness.ago(now - live.dmdAtMs)}")
-            else -> Check(Mark.OK, "DMD2 sends your position, last ${Liveness.ago(now - live.dmdAtMs)} ago")
+            live.dmdAtMs == 0L -> Check(Mark.BAD, "DMD2 not sharing", "Open DMD2") { openDmd2() }
+            now - live.dmdAtMs > Liveness.DMD_SILENT_MS ->
+                Check(Mark.WARN, "DMD2 silent ${Liveness.ago(now - live.dmdAtMs)}", "Open DMD2") { openDmd2() }
+            else -> Check(Mark.OK, "DMD2 sharing")
         })
         if (live.dmdAtMs != 0L) {
             val own = live.ownFixAgeS(now)
             add(when {
-                own < 0 -> Check(Mark.WARN, "Your position is not shared: in DMD2, turn on Share My Location")
-                own * 1000L > Liveness.FIX_OLD_MS -> Check(Mark.WARN, "Your GPS fix is ${Liveness.ago(own * 1000L)} old")
-                else -> Check(Mark.OK, "Your GPS fix is ${Liveness.ago(own * 1000L)} old")
+                own < 0 -> Check(Mark.WARN, "Your location not shared", "Open DMD2") { openDmd2() }
+                own * 1000L > Liveness.FIX_OLD_MS -> Check(Mark.WARN, "GPS fix ${Liveness.ago(own * 1000L)} old")
+                else -> Check(Mark.OK, "GPS fix ${Liveness.ago(own * 1000L)} old")
             })
             val behind = Radio.ownFix.gpsBehindS
-            if (behind > 60) add(Check(Mark.WARN, "This device's GPS clock is ${Liveness.ago(behind * 1000L)} behind (corrected)"))
+            if (behind > 60) add(Check(Mark.WARN, "GPS clock ${Liveness.ago(behind * 1000L)} behind, corrected"))
         }
         val clock = live.problems(now).filter { it.startsWith("clock") || it.startsWith("DMD2 here holds") }
-        add(if (clock.isEmpty()) Check(Mark.OK, "No clock problem seen")
-            else Check(Mark.WARN, clock.joinToString("\n"), "Time check") { if (timeCheck == null) toggleTimeCheck() })
-        add(if (isBatteryUnrestricted()) Check(Mark.OK, "Battery saver cannot stop the bridge")
-            else Check(Mark.BAD, "Battery saver may stop the bridge mid-ride", "Allow") { requestBatteryExemption() })
-        add(if (Prefs.autostart(this@MainActivity)) Check(Mark.OK, "Starts by itself after a reboot")
-            else Check(Mark.WARN, "Does not start by itself after a reboot", "Turn on") { toggleAutostart() })
+        add(if (clock.isEmpty()) Check(Mark.OK, "Clock OK")
+            else Check(Mark.WARN, clock.joinToString("\n"), "Check") { if (timeCheck == null) toggleTimeCheck() })
+        add(if (isBatteryUnrestricted()) Check(Mark.OK, "Battery unrestricted")
+            else Check(Mark.BAD, "Battery restricted", "Allow") { requestBatteryExemption() })
+        add(if (Prefs.autostart(this@MainActivity)) Check(Mark.OK, "Autostart on")
+            else Check(Mark.WARN, "Autostart off", "Turn on") { toggleAutostart() })
     }
 
     private fun renderSettings() {
@@ -606,7 +592,7 @@ class MainActivity : Activity() {
         // Neutral at the weakest step, warmer as it climbs: the colour is the only thing
         // between a curious tap and a transmitter that is louder than the licence allows.
         val limit = Prefs.powerLevel(this)
-        powerButton.text = "Your limit: level $limit\n" + if (Radio.connected) powerLine() else "Bridge not connected"
+        powerButton.text = "Power limit: level $limit"
         powerButton.background = rounded(
             when (limit) {
                 PowerLevel.WEAKEST -> c.control
@@ -621,31 +607,26 @@ class MainActivity : Activity() {
                 else -> c.onWarnFill
             }
         )
+        powerNote.text = "0 is the strongest, 3 the weakest. EU limit on this channel: 14 dBm." +
+            (powerShort()?.let { "\nBridge holds $it." } ?: "")
 
         val dev = Prefs.devTools(this)
-        devToolsButton.text = if (dev) "Developer tools: on" else "Developer tools: off"
+        devToolsButton.text = if (dev) "Hide" else "Show"
     }
 
     /**
-     * Three different values, named: the app's request after DMD2 and the rider's limit are
-     * combined, and what the bridge actually holds after its own floor. The app holds no dBm table
-     * of its own: which module is fitted is the firmware's to know.
+     * What the bridge actually holds, after the app's request and the bridge's own floor; null
+     * until it has confirmed one. The app holds no dBm table of its own: which module is fitted is
+     * the firmware's to know, and a build that was not told reports no dBm.
      */
-    private fun powerLine(): String {
-        val requested = Radio.desiredRequest?.powerLevel
-        val st = Radio.bridgeStatus
-        val confirmed = st?.takeIf { Radio.connected && it.online && it.configured }
-        val held = when {
-            !Radio.connected || st == null -> "—"
-            confirmed == null -> "unconfirmed"
-            else -> confirmed.powerLevel.toString()
-        }
-        val dbm = when {
-            confirmed == null -> ""
-            confirmed.txDbm != null -> " · ${confirmed.txDbm} dBm"
-            else -> " · dBm unknown"
-        }
-        return "Power: app asks ${requested ?: "—"}, bridge holds $held$dbm"
+    private fun powerShort(): String? {
+        val st = Radio.bridgeStatus?.takeIf { Radio.connected && it.online && it.configured } ?: return null
+        return "level ${st.powerLevel}" + (st.txDbm?.let { ", $it dBm" } ?: "")
+    }
+
+    private fun openDmd2() {
+        val launch = packageManager.getLaunchIntentForPackage(DmdLora.DMD2_PACKAGE)
+        if (launch != null) startActivity(launch) else EventLog.log("DMD2 is not installed")
     }
 
     /** The link's own states, said the way a rider would. */
@@ -811,7 +792,7 @@ class MainActivity : Activity() {
         // Set before start(): a device without GPS finishes inside start() itself.
         val check = GpsCheck(this) {
             gpsCheck = null
-            gpsButton.text = "Run GPS check"
+            gpsButton.text = "GPS check"
         }
         gpsCheck = check
         gpsButton.text = "Stop GPS check"
@@ -833,7 +814,7 @@ class MainActivity : Activity() {
         }
         val check = TimeCheck(this) {
             timeCheck = null
-            timeButton.text = "Run time check"
+            timeButton.text = "Time check"
         }
         timeCheck = check
         timeButton.text = "Stop time check"
