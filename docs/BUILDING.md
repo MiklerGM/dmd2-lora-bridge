@@ -39,6 +39,11 @@ On a board with two USB-C sockets, flash over the **UART** port; the other is na
 > rm -f sdkconfig.esp32dev && pio run -e esp32dev
 > grep NIMBLE_NVS_PERSIST .pio/build/esp32dev/config/sdkconfig.h   # confirm it took
 > ```
+>
+> The version a board prints (`App version: v0.2.1-12-g...`) is stamped when the build is
+> configured, not on every build: an incremental build after a commit still carries the old one.
+> Before flashing an image whose version you will read back, clean first:
+> `pio run -e heltec_sx1262 -t clean`.
 
 Wiring to the E220 — pin maps differ per chip, so they are build flags in `platformio.ini`
 rather than constants. The C3 has no GPIO 16/17/22/23 at all; on the S3, GPIO 19/20 are USB,
