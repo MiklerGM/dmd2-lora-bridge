@@ -214,6 +214,11 @@ class BleRadioLink(context: Context) : RadioLink {
         }
     }
 
+    /** Kept under the bridge's name, so the screen can say what it is while the service is off. */
+    private fun rememberRadio(bridge: String, radio: String) {
+        if (radioOf(appContext, bridge) != radio) prefs().edit().putString(KEY_RADIO + bridge, radio).apply()
+    }
+
     /** Bridges in range while none has been chosen. Empty once one has. */
     fun choices(): List<String> =
         if (pinnedBridge() != null || chosen != null) emptyList() else synchronized(seen) {
@@ -766,6 +771,7 @@ class BleRadioLink(context: Context) : RadioLink {
                 val status = BridgeProtocol.parseStatus(line.substring(3))
                 validStatusSeen = status != null
                 updateVerifiedLink()
+                if (status != null && validBondedStatus) foundName?.let { rememberRadio(it, status.radio) }
                 onStatus?.invoke(status)
             }
             // The bridge's word that a packet really left the module: "TXD ok <bytes> <ms>".
@@ -959,8 +965,12 @@ class BleRadioLink(context: Context) : RadioLink {
         const val BRIDGE_NAME_PREFIX = "LoRaBridge-for-DMD2"
         private const val PREFS = "bridge"
         private const val KEY_PINNED = "pinned_bridge"
+        private const val KEY_RADIO = "radio:"
 
         private fun prefsOf(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+        /** What a bridge last said it carries: e220, e22, sx1262. A board's radio is soldered on. */
+        fun radioOf(context: Context, bridge: String): String? = prefsOf(context).getString(KEY_RADIO + bridge, null)
 
         /** The bridge this phone settled on, as stored: readable with no link, the service off. */
         fun pinned(context: Context): String? = prefsOf(context).getString(KEY_PINNED, null)

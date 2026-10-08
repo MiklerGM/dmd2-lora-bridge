@@ -500,12 +500,15 @@ class MainActivity : Activity() {
         // While off there is no link to ask, but the bridge this phone uses is still worth showing,
         // with the way to choose another.
         val remembered = if (running) null else BleRadioLink.pinned(this)
-        val lines = mutableListOf(shortName(Radio.bridgeName ?: remembered) ?: "No bridge yet")
-        // What it is and what it sends at, once connected. Whatever it is waiting for, the top line
-        // already says; the module's own firmware code is in the log for whoever needs it.
+        val bridge = Radio.bridgeName ?: remembered
+        val lines = mutableListOf(shortName(bridge) ?: "No bridge yet")
+        // What it is and what it sends at, once connected; until then what it said it is last time.
+        // Whatever it is waiting for, the top line already says; the module's own firmware code is
+        // in the log for whoever needs it.
         val st = Radio.bridgeStatus?.takeIf { running && Radio.connected }
-        if (st != null) {
-            lines += listOfNotNull(st.radio.uppercase(Locale.ROOT), powerShort()).joinToString(" · ")
+        val radio = st?.radio ?: bridge?.let { BleRadioLink.radioOf(this, it) }
+        if (radio != null) {
+            lines += listOfNotNull(radio.uppercase(Locale.ROOT), st?.let { powerShort() }).joinToString(" · ")
         }
         bridgeText.text = lines.joinToString("\n")
         // Starting lives on the health line while the service is off; here only Stop, so the
