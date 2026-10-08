@@ -65,7 +65,9 @@ def ladders(matched, sent):
     out = collections.defaultdict(dict)
     for arm, bs in sorted(by_arm.items()):
         usual = pre[arm[0]].most_common(1)[0][0]
-        levels = [b[1] for b in bs if b[2] == 0 and b[3] == usual]
+        # Within a symbol: the E22's reads 19 or 20 at random, while other parts are far off it
+        # (the Heltec 8, an E220 30).
+        levels = [b[1] for b in bs if b[2] == 0 and abs(b[3] - usual) <= 1]
         out[arm[0]][int(arm[1:])] = (statistics.median(levels) if levels else None, len(levels))
     return out
 
@@ -105,6 +107,9 @@ def self_check():
     sent = {1: "h0", 2: "e0", 3: "h1"}
     lad = ladders(got, sent)
     assert lad["h"] == {0: (-20.0, 1), 1: (-26.0, 1)} and lad["e"] == {0: (-25.0, 1)}, lad
+    # A preamble read a symbol long still counts; one from another kind of part does not.
+    mixed = {1: (0, -20.0, 0.0, 19), 2: (0, -22.0, 0.0, 20), 3: (0, -21.0, 0.0, 19), 4: (0, -40.0, 0.0, 30)}
+    assert ladders(mixed, {1: "e0", 2: "e0", 3: "e0", 4: "e0"})["e"][0] == (-21.0, 3)
     assert ladder_holds({0: 0.0, 1: -4.0, 2: -10.5, 3: -11.0}, [22, 17, 13, 10])
     assert not ladder_holds({0: 0.0, 1: -2.0, 2: -2.0, 3: -5.0}, [22, 17, 13, 10])
     print("analyze_sdr_power: self-check passes")

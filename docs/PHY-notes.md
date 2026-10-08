@@ -82,6 +82,38 @@ If the E22's steps hold at the Nooelec (within 3 dB of -5, -9 and -12) but not a
 that receiver's scale is at fault there. If they fail at the Nooelec too, the E22 does not deliver
 its datasheet steps: no dBm comes from this bench, and the Heltec's own steps are reported alone.
 
+### Run 2: the E22 does not give its datasheet steps; the Heltec follows its chip
+
+`2026-10-08-power-run2.json`, `.start` and `.cu8` in bench-backup, 11:17-11:23. Every arm reached
+both far receivers, 28 to 30 of 30, and the Nooelec caught all 240 packets, each matched to its
+own transmit window and none clipped. (rtl_sdr ran on past its `-n` limit for twenty minutes; the
+recording was cut to end 5 s after the last packet.)
+
+| Steps from level 0, dB | E22 (datasheet -5 / -9 / -12) | Heltec (chip settings -4 / -6 / -8) |
+|---|---|---|
+| T-Deck, far room | -1.5 / -3.5 / -5.5 | -4.5 / -6.0 / -9.0 |
+| E220, far room | -3.0 / -3.5 / -6.5 | -5.0 / -6.0 / -9.5 |
+| Nooelec, beside them | -1.6 / -3.6 / -6.1 | -3.6 / -5.1 / -8.2 |
+
+One departure from the rule as declared, stated here: the Nooelec's filter took only bursts with a
+transmitter's most common preamble length, and `sdr_lora.py` reads the E22's as 19 or 20 at
+random, which left 15-26 of 30 per E22 arm - under the 20 the rule asks for at three levels of
+four. The filter now allows a symbol either way, which still keeps the E22 (19-20) apart from the
+Heltec (8) and an E220 (30); the numbers above use it, and since every burst matched a packet one
+to one, nothing foreign was in the set either way.
+
+**By the rules declared, no dBm comes from this run:** the E22's steps fail at all three
+instruments, two receiver chips and the dongle, so the E22 itself does not deliver its datasheet
+steps. Its whole span is about 6 dB where the datasheet has 12. An E22 bridge reports that
+datasheet table as `tx_dbm`, so the app shows its levels further apart than they are; which end
+is off is not known.
+
+**The Heltec's own steps follow its chip's settings** within about a dB at all three, so the
+KCT8103L passes the chip's 8 dB span without compressing at the top: level 1 to 0 adds 3.6-5.0 dB
+for the chip's 4. Its level 0 read 10.5 dB (T-Deck) and 15 dB (E220) above the E22's level 0;
+that the two far receivers differ by 4.5 dB on it is the room, which the antenna swap was for.
+What it puts out in dBm still needs a reference whose levels hold, or a meter.
+
 ## 2026-09-25: the health probe's register read on the air - a fix, checked before it ships
 
 The EBYTE bridges' periodic probe (`e220_verify`, every 30 s) enters configuration mode and sends
