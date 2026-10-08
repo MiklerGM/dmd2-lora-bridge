@@ -501,16 +501,13 @@ class MainActivity : Activity() {
         // with the way to choose another.
         val remembered = if (running) null else BleRadioLink.pinned(this)
         val bridge = Radio.bridgeName ?: remembered
-        val lines = mutableListOf(shortName(bridge) ?: "No bridge yet")
-        // What it is and what it sends at, once connected; until then what it said it is last time.
-        // Whatever it is waiting for, the top line already says; the module's own firmware code is
-        // in the log for whoever needs it.
+        // One line: which bridge, what radio, and what it sends at once connected; until then the
+        // radio it said it was last time. Whatever it is waiting for, the top line already says; the
+        // module's own firmware code is in the log for whoever needs it.
         val st = Radio.bridgeStatus?.takeIf { running && Radio.connected }
         val radio = st?.radio ?: bridge?.let { BleRadioLink.radioOf(this, it) }
-        if (radio != null) {
-            lines += listOfNotNull(radio.uppercase(Locale.ROOT), st?.let { powerShort() }).joinToString(" · ")
-        }
-        bridgeText.text = lines.joinToString("\n")
+        bridgeText.text = listOfNotNull(shortName(bridge), radio?.uppercase(Locale.ROOT), st?.let { powerShort() })
+            .joinToString(" · ").ifEmpty { "No bridge yet" }
         // Starting lives on the health line while the service is off; here only Stop, so the
         // screen never shows two buttons for one thing.
         serviceAction.visibility = if (running) View.VISIBLE else View.GONE
