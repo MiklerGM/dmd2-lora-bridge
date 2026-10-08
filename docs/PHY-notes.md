@@ -183,9 +183,10 @@ every EU limit on these channels, as information.
 (`kct8103l_tx_gain` in `LoRaFEMInterface.cpp`) and RNode (`PA_KCT8103L_VALUES`) use: 13 dB added
 to a drive of up to 13 dBm, falling to 11 dB at 17 and 7 dB at 21, the output topping out near
 28 dBm. On the drive these runs used, about 10/6/4/2 dBm, it gives 23/19/17/15 dBm; runs 3 and 4
-gave 23.2/19.2/18.0/14.8 on the mean. The firmware now drives the Heltec at 17/14/10/6 dBm for
-28/26/23/19 at the antenna, and a bare chip - the T-Deck - at Semtech's 22/17/14 and ~10 dBm, and
-both report those as `tx_dbm`. Received levels on the Heltec are reported less the LNA's 21 dB
+gave 23.2/19.2/18.0/14.8 on the mean. The firmware now drives the Heltec at 17/11/6/1 dBm for
+28/24/19/14 at the antenna - Max at its ceiling, Low at about the EU limit for 868.0-868.6 MHz -
+and a bare chip, the T-Deck, at 22/20/17/14, every row RadioLib's measured setting for that chip
+output, and both report those as `tx_dbm`. Received levels on the Heltec are reported less the LNA's 21 dB
 (Meshtastic's heltec_v4 variant); none of these was measured here.
 
 ## 2026-09-25: the health probe's register read on the air - a fix, checked before it ships

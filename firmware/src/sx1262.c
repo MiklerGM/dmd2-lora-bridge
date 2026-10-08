@@ -172,24 +172,26 @@ static const struct { uint8_t duty, hp_max; int8_t pa_val; } POWER_PA[4] = {
 #elif PIN_FEM_VCTRL >= 0
 /* Heltec V4.3: the KCT8103L adds 13 dB to a drive of up to 13 dBm and less above it - 11 dB at
  * 17, 7 at 21, where the output tops out near 28 dBm (Heltec's table, as in Meshtastic's
- * LoRaFEMInterface.cpp and RNode's Boards.h). Max is at that ceiling, the others 2-4 dB apart. */
+ * LoRaFEMInterface.cpp and RNode's Boards.h). Max at that ceiling, Low at about the EU limit
+ * for 868.0-868.6 MHz, 25 mW. Every row is RadioLib's measured setting for that chip output
+ * (paOptimizedTable in its SX1262.cpp, radiolib-org/power-tests). */
 static const struct { uint8_t duty, hp_max; int8_t pa_val; } POWER_PA[4] = {
-    {2, 3, 22},   /* chip 17 dBm, Semtech's optimal setting  -> 28 dBm */
-    {2, 2, 22},   /* chip 14 dBm, Semtech's optimal setting  -> 26 dBm */
-    {1, 2, 22},   /* chip ~10 dBm, RadioLib's measurement   -> 23 dBm */
-    {3, 1, 21},   /* chip ~6 dBm, RadioLib's measurement    -> 19 dBm */
+    {1, 6, 22},   /* chip 17 dBm -> 28 dBm */
+    {2, 2, 21},   /* chip 11 dBm -> 24 dBm */
+    {3, 1, 21},   /* chip  6 dBm -> 19 dBm */
+    {1, 1, 14},   /* chip  1 dBm -> 14 dBm */
 };
-static const int8_t TX_DBM[4] = {28, 26, 23, 19};
+static const int8_t TX_DBM[4] = {28, 24, 19, 14};
 #else
-/* No front end - the T-Deck, or a Heltec V3: the chip's own output, the strongest three at
- * Semtech's optimal settings for +22, +17 and +14 dBm (SX1261/2 datasheet, PA operating modes). */
+/* No front end - the T-Deck, or a Heltec V3: the chip's own output, from its +22 dBm ceiling down
+ * to the same 14 dBm Low as the Heltec. RadioLib's measured settings, as above. */
 static const struct { uint8_t duty, hp_max; int8_t pa_val; } POWER_PA[4] = {
     {4, 7, 22},   /* 22 dBm */
-    {2, 3, 22},   /* 17 dBm */
-    {2, 2, 22},   /* 14 dBm */
-    {1, 2, 22},   /* ~10 dBm, RadioLib's measurement */
+    {3, 6, 22},   /* 20 dBm */
+    {1, 6, 22},   /* 17 dBm */
+    {1, 4, 20},   /* 14 dBm */
 };
-static const int8_t TX_DBM[4] = {22, 17, 14, 10};
+static const int8_t TX_DBM[4] = {22, 20, 17, 14};
 #endif
 
 /* ---- bus ----------------------------------------------------------------- */

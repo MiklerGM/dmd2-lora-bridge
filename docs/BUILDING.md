@@ -307,8 +307,8 @@ families. Measured, it is not: on index 2 it hears an E220 perfectly well, and t
 | Environment | Radio | State |
 |---|---|---|
 | `esp32dev`, `esp32s3`, `esp32c3` | EBYTE **E220 or E22** over UART | both proven with a real NOR7E in the field: E220 on 2026-09-27, E22 for a riding day on 2026-09-28 |
-| `heltec_sx1262` | **Heltec WiFi LoRa 32 V4.3**: SX1262 over SPI behind a KCT8103L front end | receives, and transmits a frame EBYTE modules take 29-30 of 30 across rooms since the sync fix of 2026-10-06 (PHY-notes). Levels 28/26/23/19 dBm by Heltec's gain table for the KCT8103L; RSSI reported less its 21 dB LNA. Not ridden yet |
-| `tdeck_sx1262` | **LILYGO T-Deck / T-Deck Plus**: SX1262 over SPI, no front end | the same, at the chip's own 22/17/14/10 dBm (Semtech's datasheet). Not ridden yet |
+| `heltec_sx1262` | **Heltec WiFi LoRa 32 V4.3**: SX1262 over SPI behind a KCT8103L front end | receives, and transmits a frame EBYTE modules take 29-30 of 30 across rooms since the sync fix of 2026-10-06 (PHY-notes). Levels 28/24/19/14 dBm by Heltec's gain table for the KCT8103L; RSSI reported less its 21 dB LNA. Not ridden yet |
+| `tdeck_sx1262` | **LILYGO T-Deck / T-Deck Plus**: SX1262 over SPI, no front end | the same, at the chip's own 22/20/17/14 dBm (RadioLib's measured settings). Not ridden yet |
 
 A **Heltec V3** has the same chip on the same pins and no front end: build `heltec_sx1262` with
 `-DPIN_FEM_VCTRL=-1`, which is the firmware's setting for a board without one. Nobody has tried
