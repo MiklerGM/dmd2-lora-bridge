@@ -143,6 +143,13 @@ Nooelec gives each board's own steps, as in run 2.
 **Invalid** as for run 1. A T-Deck level either far receiver does not decode is left out there,
 and the result rests on the levels that were.
 
+**Changed before run 4, after run 3 and before any of run 4:** the far receivers disagreed by
+12 dB on the Heltec over the T-Deck (3 dB at the E220, 15 at the E22) while both read the T-Deck's
+own steps within the rule. No antenna does that - its gain reaches both receivers alike - so the
+two spots' paths to the receivers differ. In run 4 the boards also trade places, each spot keeping
+its antenna, so every board gets the other's antenna and the other's spot; the mean of runs 3 and
+4 then cancels both. Seed 20261012 as declared.
+
 ## 2026-09-25: the health probe's register read on the air - a fix, checked before it ships
 
 The EBYTE bridges' periodic probe (`e220_verify`, every 30 s) enters configuration mode and sends
