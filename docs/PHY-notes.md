@@ -5,6 +5,46 @@ gathered while waiting for hardware. Source: EBYTE *E220-900T22S User Manual* (o
 cdebyte.com). The E220-900T30x DMD uses shares this PHY register model; only the power
 table differs (30/27/24/21 dBm instead of 22/17/13/10).
 
+## 2026-10-08: the Heltec V4.3's transmit power, against an E22. Declared before running
+
+**Question.** What leaves the Heltec's antenna at each of its four power levels? The firmware
+drives the SX1262 at about 10, 6, 4 and 2 dBm (the shipping table in `sx1262.c`, after
+RadioLib's measured one) into a KCT8103L amplifier whose gain nobody has measured. Until this is
+known the backend reports no dBm and does not transmit by default.
+
+**Bench.** On the laptop, side by side with identical antennas: the Heltec V4.3
+(`v0.2.1-1-gc5fa202`, `BENCH_CMD`, `SX1262_TX_ALLOWED`; front end detected as V4.3, KCT8103L)
+and the E22-900T22 (`v0.1.0-154-g543f1c3`, `BENCH_CMD`; module reports 22 dBm). In the far room,
+receiving only, each with its antenna: the T-Deck and an E220-900T30 on the rock-mini. The
+Heltec's previous image is kept in bench-backup as `heltec-app-543f1c3-dirty-20261008.bin`.
+
+**Reference.** The E22's levels 0-3 are 22, 17, 13 and 10 dBm by its datasheet. They are not
+measured here, so every number below is relative to that datasheet.
+
+**Run.** `bench/interleave.py`, eight arms, `h0`-`h3` the Heltec at `power=0`-`3` and `e0`-`e3`
+the E22 likewise, 30 packets each, palindromic rounds shuffled by seed 20261008, gap 0.8 s.
+Then the two antennas swapped between the transmitters and the same run with seed 20261009.
+
+**Decision**, `bench/analyze_power.py`, per receiver on each run's decoded packets:
+
+- the median RSSI of each arm;
+- *the reference holds* at a receiver if the E22's steps read within 3 dB of the datasheet's
+  -5, -9 and -12; a receiver where they do not is left out of that run;
+- each Heltec level is set against the E22 level nearest it in received strength, so the
+  receiver's own scale only has to hold over a few dB: its dBm is that E22 level's plus the
+  difference of the medians;
+- the result is the mean over receivers and runs, with half their range as the spread, never
+  less than 2 dB.
+
+Read from the result: *the amplifier is in use* if level 0 comes out at 20 dBm or more, and
+*bypassed* below 13 dBm; *compressed at the top* if going from level 1 to level 0 (4 dB more at
+the chip) adds less than 2 dB at the antenna at every receiver in both runs.
+
+**Invalid** for an arm at a receiver that decodes fewer than 20 of its 30 packets, or reads at
+-30 dBm or stronger, where these receivers saturate; for the whole run if no receiver holds the
+reference. If the antenna-swapped runs differ by more than 3 dB at any level, the antennas or
+the placement matter more than this bench controls, and the result is reported as a range.
+
 ## 2026-09-25: the health probe's register read on the air - a fix, checked before it ships
 
 The EBYTE bridges' periodic probe (`e220_verify`, every 30 s) enters configuration mode and sends
