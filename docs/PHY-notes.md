@@ -150,6 +150,35 @@ two spots' paths to the receivers differ. In run 4 the boards also trade places,
 its antenna, so every board gets the other's antenna and the other's spot; the mean of runs 3 and
 4 then cancels both. Seed 20261012 as declared.
 
+### Runs 3 and 4: the amplifier is in use; how much, this bench cannot say closer than ±8.5 dB
+
+`2026-10-08-power-run3` and `-run4` (`.json`, `.start`, `.cu8`) in bench-backup, 11:51-11:57 and
+12:35-12:41. (A first start of run 4 at 12:34 sent nothing: `interleave.py` takes the colons of a
+`/dev/serial/by-id` path for a host.) Every arm reached both receivers, 28 to 30 of 30, and the
+T-Deck's steps held at both receivers in both runs.
+
+| Heltec level 0 over T-Deck level 0, dB | run 3 | run 4, places and antennas traded | mean |
+|---|---|---|---|
+| E220 | +3 | +15 | +9 |
+| E22 | +15 | +20 | +17.5 |
+
+**By the rules declared:** level 0 at 23.2 dBm, level 1 at 19.2, level 2 at 18.0 and level 3 at
+14.8, each ±8.5 to 9 dB. The amplifier is in use, 20 dBm or more at level 0 on the mean, adding
+about 13 dB to the bare chip, and it does not compress at the top: level 1 to 0 adds 4 dB in every
+reading, as at the chip. The Nooelec gives the Heltec's steps as -4.1/-5.0/-8.3 (run 3) and
+-4.2/-5.4/-8.6 (run 4); the T-Deck's two weakest levels sat at its noise floor.
+
+Trading places and antennas did not bring the two receivers together: after it they still differ
+by 8.5 dB. What is left goes with the boards themselves. A T-Deck in its case, with a screen and
+a keyboard around its antenna's foot, and a bare Heltec board radiate differently in different
+directions, and no swap of spots or antennas reaches that. A radiated comparison of two unlike
+boards on this bench is good to about ±8 dB. A number fit for the firmware's table needs each
+board's output on a meter through an attenuator, conducted, where neither pattern nor room enters.
+
+So the Heltec still transmits only when built to and reports no dBm. Known now: its four levels
+are spaced as the chip's settings are, and level 0 is most likely in the twenties of dBm - above
+every EU limit on these channels, as information.
+
 ## 2026-09-25: the health probe's register read on the air - a fix, checked before it ships
 
 The EBYTE bridges' periodic probe (`e220_verify`, every 30 s) enters configuration mode and sends
