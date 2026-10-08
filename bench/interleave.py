@@ -94,6 +94,12 @@ TX_REPLY = re.compile(r"\bTX(OK|FAIL) seq=(\d+)\b")
 RX = re.compile(r"rx \d+ bytes(?:, rssi -?\d+)?: (\d{8})")
 
 
+def remote(spec):
+    """host:/dev/... is a board on another machine, reached over ssh. A path of our own starts
+    with "/" whatever follows: /dev/serial/by-id names carry the board's MAC, colons and all."""
+    return not spec.startswith("/") and ":" in spec
+
+
 def tx_result(line, seq):
     for match in TX_REPLY.finditer(line):
         if int(match[2]) == seq:
@@ -136,7 +142,7 @@ class Node(threading.Thread):
         self.stop = threading.Event()
         self.proc, self.port = None, None
         self.lock = threading.Lock()
-        if ":" in spec:
+        if remote(spec):
             host, dev = spec.split(":", 1)
             # The script is placed as a file first. Feeding it on stdin - which is how the
             # read-only reader does it - hands the interpreter our only channel to the board:
@@ -259,7 +265,7 @@ class Receiver(threading.Thread):
         self.port = None
 
     def _open(self):
-        if ":" in self.spec:
+        if remote(self.spec):
             host, dev = self.spec.split(":", 1)
             # pyserial on the far end rather than stty and cat: cat delivered almost nothing
             # here, and a reader that silently returns no bytes is indistinguishable from a
@@ -364,6 +370,9 @@ def build_schedule(names, n, rng=None):
 
 def self_check():
     """Check scheduling and acknowledgement matching without a board."""
+    assert remote("pi:/dev/ttyUSB0") and remote("morlov@10.10.10.190:/dev/ttyACM0")
+    assert not remote("/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_10:BD:A3:5B:9A:F8-if00")
+    assert not remote("/dev/ttyACM0")
     for n in (1, 2, 3, 7, 100):
         for names in (["a", "b"], ["a", "b", "c"]):
             s = build_schedule(names, n)
@@ -518,7 +527,7 @@ def main():
         ap.error("at least one --tx and one --rx are required, or use --node")
 
     # A transmitter on another machine is driven through the same ssh node a matrix uses.
-    txs = [(Node if ":" in s.split("=", 1)[1] else Transmitter)(*s.split("=", 1)) for s in args.tx]
+    txs = [(Node if remote(s.split("=", 1)[1]) else Transmitter)(*s.split("=", 1)) for s in args.tx]
     by_name = {t.name: t for t in txs}
     if args.arm:
         arms = []
