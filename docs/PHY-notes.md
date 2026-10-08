@@ -114,6 +114,35 @@ for the chip's 4. Its level 0 read 10.5 dB (T-Deck) and 15 dB (E220) above the E
 that the two far receivers differ by 4.5 dB on it is the room, which the antenna swap was for.
 What it puts out in dBm still needs a reference whose levels hold, or a meter.
 
+### Run 3, declared before running: the T-Deck as the reference - the same chip, no amplifier
+
+The T-Deck carries the Heltec's SX1262 with nothing between it and the antenna but a switch, and
+runs the same power table. At one setting, what the Heltec puts out over the T-Deck is what its
+KCT8103L adds.
+
+**Bench.** On the laptop, side by side, each with its own antenna: the Heltec as before and the
+T-Deck (`v0.2.1-4-g38d4a0f`, `BENCH_CMD`, `SX1262_TX_ALLOWED`). In the far room, receiving only,
+the E220 and the E22, both logging RSSI per packet. The Nooelec beside the transmitters as in
+run 2, stopped by hand when the run ends.
+
+**Reference.** At level k the T-Deck sends the chip's own output for that setting: about 10, 6, 4
+and 2 dBm by RadioLib's measured table, which `sx1262.c` follows, less the T-Deck's switch and
+matching loss, unmeasured here and taken as nothing. That is a borrowed number, and the result is
+only as good as it.
+
+**Run.** Arms `h0`-`h3` and `t0`-`t3`, 30 packets each, seed 20261011, gap 0.8 s. Then, if their
+connectors allow, the two antennas swapped and the same with seed 20261012.
+
+**Decision.** `bench/analyze_power.py --ref t --ref-dbm 10,6,4,2` over the runs: the reference holds
+at a receiver if the T-Deck's steps read within 3 dB of -4, -6 and -8; each Heltec level is read
+against the T-Deck level nearest it in received strength; the result is the mean over receivers
+and runs with half their range as the spread, here never less than 3 dB, for the borrowed table
+and the unmeasured loss. The amplifier's gain at a level is the Heltec's dBm less the chip's. The
+Nooelec gives each board's own steps, as in run 2.
+
+**Invalid** as for run 1. A T-Deck level either far receiver does not decode is left out there,
+and the result rests on the levels that were.
+
 ## 2026-09-25: the health probe's register read on the air - a fix, checked before it ships
 
 The EBYTE bridges' periodic probe (`e220_verify`, every 30 s) enters configuration mode and sends
