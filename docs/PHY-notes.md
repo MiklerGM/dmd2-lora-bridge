@@ -64,6 +64,24 @@ this receiver's scale looks sound over that range and the top level does not loo
 The Heltec's level 0 reads 13 dB above the E22's level 0, which against a 22 dBm E22 would put
 it at 35 dBm, beyond what this amplifier is sold for - so the E22 is the more likely suspect.
 
+### Run 2, declared before running: the T-Deck with levels, the Nooelec beside the transmitters
+
+Changed from run 1: the T-Deck runs `v0.2.1-4-g38d4a0f`, which hands each packet's RSSI to the
+bridge (its previous image is in bench-backup as `tdeck-app-543f1c3-dirty-20261008.bin`); a check
+before the run had it read -56 and -57 dBm from the Heltec and -66 and -65 from the E22. The
+Nooelec, without an antenna, lies beside the two transmitters and records the whole run at a fixed
+8.7 dB gain, 1.024 MS/s, 868.125 MHz; at that gain the strongest bursts read about -20 dBFS and
+none clipped. Arms and counts as in run 1, seed 20261010. The antenna swap waits for a reference
+that holds, and then runs with seed 20261009 as declared.
+
+**Decision.** The far receivers as declared for run 1. The Nooelec through
+`bench/analyze_sdr_power.py`: bursts are given to packets by time, an arm's level is the median of
+its unclipped bursts with its transmitter's usual preamble, and an arm with fewer than 20 is not
+used. Only steps within one transmitter are read from it, never one transmitter against the other.
+If the E22's steps hold at the Nooelec (within 3 dB of -5, -9 and -12) but not at a far receiver,
+that receiver's scale is at fault there. If they fail at the Nooelec too, the E22 does not deliver
+its datasheet steps: no dBm comes from this bench, and the Heltec's own steps are reported alone.
+
 ## 2026-09-25: the health probe's register read on the air - a fix, checked before it ships
 
 The EBYTE bridges' periodic probe (`e220_verify`, every 30 s) enters configuration mode and sends
