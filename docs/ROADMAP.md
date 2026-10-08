@@ -259,7 +259,8 @@ the air interface is guessed any more.
 
 ## M5.7 — A second working radio: the E22 — **PROVEN on hardware**
 
-The bare SX1262 transmits badly (see PHY-notes). EBYTE's E22 is the same chip behind their own
+The bare SX1262 transmits badly (see PHY-notes; since 2026-10-06 it does not - the cause was its
+second sync symbol, and EBYTE modules now take its packets). EBYTE's E22 is the same chip behind their own
 MCU and output stage, and on this bench an E220 decodes **96 %** of what it sends against 17 %
 from the bare part. That makes it the SX1262 that works, and worth a backend of its own rather
 than a bench flag.

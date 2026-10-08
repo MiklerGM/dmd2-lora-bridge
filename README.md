@@ -37,7 +37,7 @@ the whole test suite, which needs neither a phone nor a radio.
 | Explicit bridge selection | implemented and host-tested where pure; multi-board behaviour is not yet checked on hardware |
 | A real NOR7E hearing us, and us hearing it | **positions both ways** on every ride, and help works; chat from the NOR7E to us is not confirmed (`docs/ROADMAP.md`, M6) |
 | E220-900T30 supply | **5 V, not 3V3**: on 3V3 it transmitted 20-30 dB below its setting (`docs/BUILDING.md`) |
-| SX1262 boards (Heltec V3, T-Deck) | EBYTE modules take their packets since the sync fix of 2026-10-06; transmit power not yet measured, so transmitting stays off by default (M8) |
+| Ready-made SX1262 boards (Heltec WiFi LoRa 32 V4.3, LILYGO T-Deck) | bench only: they receive, and EBYTE modules take their packets since the sync fix of 2026-10-06; their output power is not measured yet, so transmitting stays off by default and no image is released (M8) |
 
 The protocol was recovered by static analysis, and the radio layer was measured on the air
 (`docs/PHY-notes.md`). See `docs/ROADMAP.md` for what remains and `docs/BUILDING.md` for
@@ -61,9 +61,11 @@ building, wiring and flashing.
   inserted register and a different configuration-mode pin pair, and the module says which it is
   at init, so there is no flag to get wrong. Contrary to an earlier assumption here, they also
   share a PHY on air-rate index 2 and hear each other perfectly well.
-- The SX1262 backend **receives** correctly and **transmits poorly** — an E220 decodes ~10-30 %
-  of its packets against 92-96 % from another E220 — so it is not ready to be a transmitter.
-  See `docs/PHY-notes.md`.
+- The SX1262 backend runs on two ready-made boards, the **Heltec WiFi LoRa 32 V4.3** and the
+  **LILYGO T-Deck**. It receives, and since the sync fix of 2026-10-06 EBYTE modules take its
+  packets: 29-30 of 30 in every pairing across rooms. What it puts out is not measured yet - on
+  the V4.3 a KCT8103L amplifier adds gain nobody has put a number on - so it transmits only when
+  built to. See `docs/PHY-notes.md` and `docs/BUILDING.md`.
 
 ## Bridge LED
 

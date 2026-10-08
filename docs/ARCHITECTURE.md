@@ -16,8 +16,9 @@ There is no third component and no useful way to merge these two. The split is m
 
 > **What is built, as of this revision.** The two axes, the boundary and the BLE contract below
 > are implemented for the **E220/E22 UART backend** and the **SX1262 SPI backend** in `bridge`
-> mode. SX1262 receive is measured; its transmit path remains opt-in bench functionality with
-> unresolved EBYTE delivery loss. The Heltec has a KCT8103L front end; the T-Deck does not.
+> mode. SX1262 receive is measured, and since the sync fix of 2026-10-06 EBYTE modules take its
+> transmissions; transmitting stays opt-in until its output power is measured. The Heltec (V4.3)
+> has a KCT8103L front end; the T-Deck does not.
 > `beacon` mode remains planned: `mode` is reported but not yet persisted or switchable.
 > The Arduino project in `probe/` is diagnostic scaffolding, including a RadioLib reference
 > and function substitutions. Its results are hardware evidence, not release validation.

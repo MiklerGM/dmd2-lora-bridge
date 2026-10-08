@@ -308,7 +308,13 @@ families. Measured, it is not: on index 2 it hears an E220 perfectly well, and t
 | Environment | Radio | State |
 |---|---|---|
 | `esp32dev`, `esp32s3`, `esp32c3` | EBYTE **E220 or E22** over UART | both proven with a real NOR7E in the field: E220 on 2026-09-27, E22 for a riding day on 2026-09-28 |
-| `heltec_sx1262` | bare SX1262 over SPI | receives perfectly, **transmits badly** - see PHY-notes |
+| `heltec_sx1262` | **Heltec WiFi LoRa 32 V4.3**: SX1262 over SPI behind a KCT8103L front end | receives; transmits a frame EBYTE modules take 29-30 of 30 across rooms since the sync fix of 2026-10-06 (PHY-notes). Output power unmeasured, so transmitting is off unless built with `-DSX1262_TX_ALLOWED=1` |
+| `tdeck_sx1262` | **LILYGO T-Deck / T-Deck Plus**: SX1262 over SPI, no front end | the same |
+
+A **Heltec V3** has the same chip on the same pins and no front end: build `heltec_sx1262` with
+`-DPIN_FEM_VCTRL=-1`, which is the firmware's setting for a board without one. Nobody has tried
+it yet. The target's front-end pins are the V4.3's, so check an earlier V4 against Heltec's
+schematic before flashing it.
 
 The two EBYTE parts are one driver **and one image**. The E22 is the E220 with NETID inserted at
 0x02, pushing REG0..REG3 and the key up a byte, and its configuration mode is M0=0/M1=1 rather
