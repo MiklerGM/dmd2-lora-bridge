@@ -277,7 +277,12 @@ class MainActivity : Activity() {
             // the fraction of a second in which the link finishes verification.
             when (radioAction) {
                 RadioAction.UNPAIR -> Radio.forgetBridge()
-                RadioAction.CHANGE -> Radio.chooseAnotherBridge()
+                RadioAction.CHANGE -> if (Session.serviceRunning) Radio.chooseAnotherBridge() else {
+                    // Only the service looks for bridges: let go of this one and start it, and
+                    // the picker lists every bridge in range.
+                    BleRadioLink.unpin(this)
+                    toggleService()
+                }
                 RadioAction.NONE -> {}
             }
         }
@@ -492,7 +497,10 @@ class MainActivity : Activity() {
 
     private fun renderBridge() {
         val running = Session.serviceRunning
-        val lines = mutableListOf(shortBridgeName() ?: "No bridge yet")
+        // While off there is no link to ask, but the bridge this phone uses is still worth showing,
+        // with the way to choose another.
+        val remembered = if (running) null else BleRadioLink.pinned(this)
+        val lines = mutableListOf(shortName(Radio.bridgeName ?: remembered) ?: "No bridge yet")
         // What it is and what it sends at, once connected. Whatever it is waiting for, the top line
         // already says; the module's own firmware code is in the log for whoever needs it.
         val st = Radio.bridgeStatus?.takeIf { running && Radio.connected }
@@ -507,14 +515,15 @@ class MainActivity : Activity() {
         // local choice; full unpairing is offered when both ends can actually forget each other.
         radioAction = when {
             Radio.canUnpair -> RadioAction.UNPAIR
-            Radio.bridgeSelected -> RadioAction.CHANGE
+            Radio.bridgeSelected || remembered != null -> RadioAction.CHANGE
             else -> RadioAction.NONE
         }
         unpairAction.text = if (radioAction == RadioAction.UNPAIR) "Unpair" else "Change"
         unpairAction.visibility = if (radioAction != RadioAction.NONE) View.VISIBLE else View.INVISIBLE
         bridgeButtons.visibility = if (running || radioAction != RadioAction.NONE) View.VISIBLE else View.GONE
         bridgeCard.visibility =
-            if (running || Radio.bridgeSelected || Radio.bridgeChoices.isNotEmpty()) View.VISIBLE else View.GONE
+            if (running || remembered != null || Radio.bridgeSelected || Radio.bridgeChoices.isNotEmpty()) View.VISIBLE
+            else View.GONE
         renderBridgePicker()
     }
 
@@ -716,8 +725,8 @@ class MainActivity : Activity() {
         else -> link
     }
 
-    private fun shortBridgeName(): String? =
-        Radio.bridgeName?.removePrefix(BleRadioLink.BRIDGE_NAME_PREFIX)?.trimStart('-')?.ifEmpty { null }
+    private fun shortName(bridge: String?): String? =
+        bridge?.removePrefix(BleRadioLink.BRIDGE_NAME_PREFIX)?.trimStart('-')?.ifEmpty { null }
 
     /**
      * Put the whole kept log in Downloads and offer to send it. Downloads needs no permission for

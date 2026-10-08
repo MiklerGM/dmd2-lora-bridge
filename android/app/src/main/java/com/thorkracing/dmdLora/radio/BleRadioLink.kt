@@ -201,10 +201,10 @@ class BleRadioLink(context: Context) : RadioLink {
         handler.postDelayed(scanTimeout!!, SCAN_TIMEOUT_MS)
     }
 
-    private fun prefs() = appContext.getSharedPreferences("bridge", Context.MODE_PRIVATE)
+    private fun prefs() = prefsOf(appContext)
 
     /** The bridge this phone has settled on, if any. */
-    fun pinnedBridge(): String? = prefs().getString(KEY_PINNED, null)
+    fun pinnedBridge(): String? = pinned(appContext)
 
     private fun rememberBridge(name: String) {
         chosen = null
@@ -957,7 +957,22 @@ class BleRadioLink(context: Context) : RadioLink {
 
         /** Firmware advertises this plus an eight-hex-digit per-board suffix. */
         const val BRIDGE_NAME_PREFIX = "LoRaBridge-for-DMD2"
+        private const val PREFS = "bridge"
         private const val KEY_PINNED = "pinned_bridge"
+
+        private fun prefsOf(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+        /** The bridge this phone settled on, as stored: readable with no link, the service off. */
+        fun pinned(context: Context): String? = prefsOf(context).getString(KEY_PINNED, null)
+
+        /**
+         * Let go of that bridge with no link to ask, so the next start lists every one in range.
+         * Like [clearSelection], it touches neither the bridge's key nor the system bond.
+         */
+        fun unpin(context: Context) {
+            prefsOf(context).edit().remove(KEY_PINNED).apply()
+            EventLog.log("bridge selection cleared — choose another")
+        }
         private val UPTIME = Regex(" up=\\d+")
 
         private const val DEFAULT_MTU = 23
