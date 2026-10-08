@@ -45,6 +45,25 @@ the chip) adds less than 2 dB at the antenna at every receiver in both runs.
 reference. If the antenna-swapped runs differ by more than 3 dB at any level, the antennas or
 the placement matter more than this bench controls, and the result is reported as a range.
 
+### Run 1: no result - the reference did not hold
+
+`2026-10-08-power-run1.json` (bench-backup), 10:49-10:51. Every arm reached both receivers, 28 to
+30 of 30. But only the E220 gave levels: the T-Deck's image reports `rssi 0` for every packet,
+because the SX1262 backend never hands the modem's RSSI to the bridge (`radio_last_rssi` returns
+false; the per-packet reading exists only behind the bench flag `RX_STAGES`). And at the E220 the
+E22's own steps read -1.8, -2.5 and -4.8 dB from level 0 (means of 28-30 packets) where its
+datasheet says -5, -9 and -12. By the rules above there is no result.
+
+Not a lag: each E22 packet reads by its own level, not by the level of the E22 packet before it
+(-61.8, -63.6, -64.3, -66.6 by its own; -63.3 to -64.9 by the previous one), so the configuration
+written before each packet is in force when it goes out.
+
+Read but not concluded from, as it was not declared: the Heltec's four levels at the same
+receiver, -48.6, -52.3, -53.3 and -57.2 dBm, span 8.6 dB where the chip's settings span 8, so
+this receiver's scale looks sound over that range and the top level does not look compressed.
+The Heltec's level 0 reads 13 dB above the E22's level 0, which against a 22 dBm E22 would put
+it at 35 dBm, beyond what this amplifier is sold for - so the E22 is the more likely suspect.
+
 ## 2026-09-25: the health probe's register read on the air - a fix, checked before it ships
 
 The EBYTE bridges' periodic probe (`e220_verify`, every 30 s) enters configuration mode and sends
