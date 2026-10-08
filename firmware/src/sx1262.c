@@ -152,10 +152,10 @@
 #define EBYTE_HEADER_LEN 8
 #define EBYTE_XOR        0x12
 
-/* Deliberately conservative and not derived from a measurement of this board, because there is
- * none: the front end adds unknown gain. This is why the backend exports no RADIO_TX_DBM.
+/* What each level sets the chip to, and what leaves the antenna for it (TX_DBM, reported to the
+ * phone as tx_dbm).
  *
- * Not a linear dBm knob either. Writing the wanted dBm straight into SetTxParams and leaving
+ * Not a linear dBm knob. Writing the wanted dBm straight into SetTxParams and leaving
  * SetPaConfig at the +22 dBm pair does not produce that power - RadioLib carries a measured
  * table (radiolib-org/power-tests) precisely because the naive mapping is wrong, and on this
  * bench the naive version reached an E220 zero times out of 27 where the table reached it. */
@@ -169,13 +169,27 @@ static const struct { uint8_t duty, hp_max; int8_t pa_val; } POWER_PA[4] = {
     {4, 1, 6},    /* ~-2 dBm */
     {2, 2, -5},   /* ~-9 dBm */
 };
-#else
+#elif PIN_FEM_VCTRL >= 0
+/* Heltec V4.3: the KCT8103L adds 13 dB to a drive of up to 13 dBm and less above it - 11 dB at
+ * 17, 7 at 21, where the output tops out near 28 dBm (Heltec's table, as in Meshtastic's
+ * LoRaFEMInterface.cpp and RNode's Boards.h). Max is at that ceiling, the others 2-4 dB apart. */
 static const struct { uint8_t duty, hp_max; int8_t pa_val; } POWER_PA[4] = {
-    {1, 2, 22},   /* ~10 dBm */
-    {3, 1, 21},   /* ~6 dBm */
-    {1, 1, 22},   /* ~4 dBm */
-    {2, 1, 14},   /* ~2 dBm */
+    {2, 3, 22},   /* chip 17 dBm, Semtech's optimal setting  -> 28 dBm */
+    {2, 2, 22},   /* chip 14 dBm, Semtech's optimal setting  -> 26 dBm */
+    {1, 2, 22},   /* chip ~10 dBm, RadioLib's measurement   -> 23 dBm */
+    {3, 1, 21},   /* chip ~6 dBm, RadioLib's measurement    -> 19 dBm */
 };
+static const int8_t TX_DBM[4] = {28, 26, 23, 19};
+#else
+/* No front end - the T-Deck, or a Heltec V3: the chip's own output, the strongest three at
+ * Semtech's optimal settings for +22, +17 and +14 dBm (SX1261/2 datasheet, PA operating modes). */
+static const struct { uint8_t duty, hp_max; int8_t pa_val; } POWER_PA[4] = {
+    {4, 7, 22},   /* 22 dBm */
+    {2, 3, 22},   /* 17 dBm */
+    {2, 2, 22},   /* 14 dBm */
+    {1, 2, 22},   /* ~10 dBm, RadioLib's measurement */
+};
+static const int8_t TX_DBM[4] = {22, 17, 14, 10};
 #endif
 
 /* ---- bus ----------------------------------------------------------------- */
@@ -1588,7 +1602,7 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
                 produced = payload;
                 if (have_ps) {
                     s_last_rssi = -(int)ps[0] / 2 - SX_RX_GAIN_DB;
-                    s_have_rssi = SX_RSSI_KNOWN;
+                    s_have_rssi = true;
                 }
 #ifdef SYNC_RX_SWEEP
                 s_sync_hits++;
@@ -1607,19 +1621,22 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
     return produced;
 }
 
-/* This backend cannot know. The front end's gain has never been put on a meter, and the chip's
- * own setting says nothing about what leaves the antenna. */
 const char *radio_name(void) { return "sx1262"; }
 
-/* None from a board whose front end's receive gain is unknown: see SX_RX_GAIN_DB. */
+/* At the antenna: what the front end adds on receive is taken off, see SX_RX_GAIN_DB. */
 bool radio_last_rssi(int *dbm) {
     if (s_have_rssi) *dbm = s_last_rssi;
     return s_have_rssi;
 }
 
 bool radio_tx_dbm(int8_t out[4]) {
+#ifdef POWER_SWEEP
     (void)out;
-    return false;
+    return false;   /* the sweep's settings are not the levels these numbers describe */
+#else
+    memcpy(out, TX_DBM, sizeof(TX_DBM));
+    return true;
+#endif
 }
 
 #ifdef BENCH_CMD

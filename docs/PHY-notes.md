@@ -179,6 +179,15 @@ So the Heltec still transmits only when built to and reports no dBm. Known now: 
 are spaced as the chip's settings are, and level 0 is most likely in the twenties of dBm - above
 every EU limit on these channels, as information.
 
+**Adopted instead, the same day: Heltec's own gain table** for the KCT8103L, the one Meshtastic
+(`kct8103l_tx_gain` in `LoRaFEMInterface.cpp`) and RNode (`PA_KCT8103L_VALUES`) use: 13 dB added
+to a drive of up to 13 dBm, falling to 11 dB at 17 and 7 dB at 21, the output topping out near
+28 dBm. On the drive these runs used, about 10/6/4/2 dBm, it gives 23/19/17/15 dBm; runs 3 and 4
+gave 23.2/19.2/18.0/14.8 on the mean. The firmware now drives the Heltec at 17/14/10/6 dBm for
+28/26/23/19 at the antenna, and a bare chip - the T-Deck - at Semtech's 22/17/14 and ~10 dBm, and
+both report those as `tx_dbm`. Received levels on the Heltec are reported less the LNA's 21 dB
+(Meshtastic's heltec_v4 variant); none of these was measured here.
+
 ## 2026-09-25: the health probe's register read on the air - a fix, checked before it ships
 
 The EBYTE bridges' periodic probe (`e220_verify`, every 30 s) enters configuration mode and sends

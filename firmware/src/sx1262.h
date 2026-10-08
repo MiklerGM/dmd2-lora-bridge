@@ -14,21 +14,12 @@
 
 
 /*
- * Transmission is OFF by default, and that is deliberate rather than cautious boilerplate.
- *
- * Receive is proven: this PHY decoded E220 traffic with the payload CRC passing. Transmit is
- * proven too, at the frame level - a real E220 printed our marker on its UART. What is NOT
- * measured is how many dBm actually leave the antenna: the KCT8103L in front of the chip adds
- * gain nobody here has put on a meter, so a power level cannot be honestly mapped to a number.
- *
- * Until it is, a build that reports tx=1 would be inviting the phone to transmit at an unknown
- * power. -DSX1262_TX_ALLOWED=1 opts in for bench work; shipping it needs a measurement first.
+ * Transmission is on. It was off until what leaves the antenna at each level was known, and now
+ * it is: from Heltec's own gain table for the V4.3's KCT8103L, the one Meshtastic and RNode use,
+ * and from Semtech's datasheet for a bare chip - and runs 3 and 4 of 2026-10-08 (PHY-notes) put
+ * the Heltec within a dB of that table on average. The levels are in sx1262.c, POWER_PA.
  */
-#ifdef SX1262_TX_ALLOWED
 #define RADIO_TX_ENABLED 1
-#else
-#define RADIO_TX_ENABLED 0
-#endif
 
 /* 850.125 MHz + channel, the DMD mapping. The chip covers far more; this is the protocol. */
 #define RADIO_CHANNEL_MIN 0
@@ -93,17 +84,16 @@
 
 /*
  * What the front end adds to a received signal before the modem measures it, in dB, taken off
- * every RSSI reported. A board without one adds nothing. The V4.3's KCT8103L adds an amount
- * nobody has measured, and a reading flattered by an unknown margin is worse than none - it
- * would show a weak link as a strong one - so such a board reports no RSSI until this is set.
- * -DSX_RX_GAIN_DB=0 on the bench reports the modem's raw reading.
+ * every RSSI reported so a reading means the same on every bridge. A board without one adds
+ * nothing. The V4.3's KCT8103L LNA adds 21 dB (Meshtastic's heltec_v4 variant); the 17 dB pad
+ * that board has is on the transmit side only, or Heltec's own receive analysis of the V4 -
+ * the LNA feeding the chip directly, a 3.8 dB better noise figure - could not hold. Unmeasured
+ * here: -DSX_RX_GAIN_DB=0 on the bench reports the modem's raw reading.
  */
-#if !defined(SX_RX_GAIN_DB) && PIN_FEM_VCTRL >= 0
-#define SX_RSSI_KNOWN 0
-#define SX_RX_GAIN_DB 0
-#else
-#define SX_RSSI_KNOWN 1
 #ifndef SX_RX_GAIN_DB
+#if PIN_FEM_VCTRL >= 0
+#define SX_RX_GAIN_DB 21
+#else
 #define SX_RX_GAIN_DB 0
 #endif
 #endif

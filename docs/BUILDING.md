@@ -264,9 +264,8 @@ bonded phone can select the strongest step. That is a lab decision for a proof o
 concept, and the firmware says so out loud: the status reports `min_power_level=0`, which is
 how a build with no floor is told apart from one that still has it. Build with a higher
 `-DMIN_POWER_INDEX` to put it back — `3` restricts the bridge to the weakest step whatever the
-phone asks for. **The lift does not carry over to a new backend.** An SX1262 with a KCT8103L in
-front of it has a different and much less forgiving power story, and it starts with a floor and
-a measurement, not with this flag copied across.
+phone asks for. The SX1262 boards got the same only once what they put out was known: their
+levels are set in `POWER_PA` in `sx1262.c` from published numbers, not from this flag.
 
 **What a level is worth in dBm is the firmware's to say, and only if it was told.** The E220
 index means 30/27/24/21 dBm on an E220-900T30 and 22/17/13/10 on a T22, and nothing in the
@@ -308,8 +307,8 @@ families. Measured, it is not: on index 2 it hears an E220 perfectly well, and t
 | Environment | Radio | State |
 |---|---|---|
 | `esp32dev`, `esp32s3`, `esp32c3` | EBYTE **E220 or E22** over UART | both proven with a real NOR7E in the field: E220 on 2026-09-27, E22 for a riding day on 2026-09-28 |
-| `heltec_sx1262` | **Heltec WiFi LoRa 32 V4.3**: SX1262 over SPI behind a KCT8103L front end | receives; transmits a frame EBYTE modules take 29-30 of 30 across rooms since the sync fix of 2026-10-06 (PHY-notes). Output power unmeasured, so transmitting is off unless built with `-DSX1262_TX_ALLOWED=1` |
-| `tdeck_sx1262` | **LILYGO T-Deck / T-Deck Plus**: SX1262 over SPI, no front end | the same |
+| `heltec_sx1262` | **Heltec WiFi LoRa 32 V4.3**: SX1262 over SPI behind a KCT8103L front end | receives, and transmits a frame EBYTE modules take 29-30 of 30 across rooms since the sync fix of 2026-10-06 (PHY-notes). Levels 28/26/23/19 dBm by Heltec's gain table for the KCT8103L; RSSI reported less its 21 dB LNA. Not ridden yet |
+| `tdeck_sx1262` | **LILYGO T-Deck / T-Deck Plus**: SX1262 over SPI, no front end | the same, at the chip's own 22/17/14/10 dBm (Semtech's datasheet). Not ridden yet |
 
 A **Heltec V3** has the same chip on the same pins and no front end: build `heltec_sx1262` with
 `-DPIN_FEM_VCTRL=-1`, which is the firmware's setting for a board without one. Nobody has tried

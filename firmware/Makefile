@@ -24,15 +24,16 @@ test:
 # environment: `esptool.py write_flash 0x0 <file>` and nothing else.
 #
 # The bootloader offset is 0x1000 on the original ESP32 and 0x0 on the S3 and C3. That single
-# difference is why this is a case statement and not a loop over three identical commands.
+# difference is why this is a case statement and not a loop over identical commands. The Heltec
+# and the T-Deck are S3s.
 # esptool comes from PlatformIO rather than pip, so it is the same version that built the images.
 merged: 
 	@mkdir -p dist
-	@for e in esp32dev esp32s3 esp32c3; do \
+	@for e in esp32dev esp32s3 esp32c3 heltec_sx1262 tdeck_sx1262; do \
 	    case $$e in \
 	        esp32dev) chip=esp32;   boot=0x1000 ;; \
-	        esp32s3)  chip=esp32s3; boot=0x0 ;; \
 	        esp32c3)  chip=esp32c3; boot=0x0 ;; \
+	        *)        chip=esp32s3; boot=0x0 ;; \
 	    esac; \
 	    pio pkg exec -p tool-esptoolpy -- esptool.py --chip $$chip merge_bin \
 	        -o dist/dmd2-lora-bridge-$$e.bin \
