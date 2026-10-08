@@ -91,6 +91,23 @@
 #define PIN_FEM_CTX 5
 #endif
 
+/*
+ * What the front end adds to a received signal before the modem measures it, in dB, taken off
+ * every RSSI reported. A board without one adds nothing. The V4.3's KCT8103L adds an amount
+ * nobody has measured, and a reading flattered by an unknown margin is worse than none - it
+ * would show a weak link as a strong one - so such a board reports no RSSI until this is set.
+ * -DSX_RX_GAIN_DB=0 on the bench reports the modem's raw reading.
+ */
+#if !defined(SX_RX_GAIN_DB) && PIN_FEM_VCTRL >= 0
+#define SX_RSSI_KNOWN 0
+#define SX_RX_GAIN_DB 0
+#else
+#define SX_RSSI_KNOWN 1
+#ifndef SX_RX_GAIN_DB
+#define SX_RX_GAIN_DB 0
+#endif
+#endif
+
 /* Heltec drives the TCXO from DIO3. 1.8 V, not RadioLib's 1.6 V default: a reference running
  * off-voltage drifts the carrier without failing anything loudly. */
 #ifndef SX_TCXO_MV

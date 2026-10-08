@@ -1383,8 +1383,13 @@ static void log_freq_error(const char *what) {
 }
 #endif
 
+/* The last packet handed up, as the modem measured it: see radio_last_rssi. */
+static int s_last_rssi;
+static bool s_have_rssi;
+
 size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_t first_wait_ms) {
     (void)idle_gap_ms;   /* a UART packet boundary; SPI hands over whole packets */
+    s_have_rssi = false;
     if (!bus_lock()) return 0;
 #ifdef SYNC_RX_SWEEP
     sync_sweep_step();
@@ -1517,6 +1522,10 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
         uint8_t frame[EBYTE_HEADER_LEN + 255];
         if (n > sizeof(frame)) n = sizeof(frame);
         if (n && buffer_read(st[1], frame, n)) {
+            /* Measured by the modem for every packet it demodulates: RSSI in half-dBm, SNR in
+             * quarter-dB and signed, then the signal's own RSSI after despreading. */
+            uint8_t ps[3] = {0, 0, 0};
+            const bool have_ps = cmd_read(CMD_GET_PACKET_STATUS, ps, 3);
 #ifdef RX_STAGES
             /*
              * How good the signal was, per packet, rather than how often a rare event fired.
@@ -1531,8 +1540,7 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
              * Scaling is the datasheet's: RSSI in half-dBm, SNR in quarter-dB and signed.
              */
             {
-                uint8_t ps[3] = {0, 0, 0};
-                if (cmd_read(CMD_GET_PACKET_STATUS, ps, 3)) {
+                if (have_ps) {
                     const int rssi = -(int)ps[0] / 2;
                     const int snr4 = (int)(int8_t)ps[1];
                     const int sig = -(int)ps[2] / 2;
@@ -1578,6 +1586,10 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
                 if (payload > out_len) payload = out_len;
                 for (size_t i = 0; i < payload; i++) out[i] = frame[EBYTE_HEADER_LEN + i] ^ EBYTE_XOR;
                 produced = payload;
+                if (have_ps) {
+                    s_last_rssi = -(int)ps[0] / 2 - SX_RX_GAIN_DB;
+                    s_have_rssi = SX_RSSI_KNOWN;
+                }
 #ifdef SYNC_RX_SWEEP
                 s_sync_hits++;
 #endif
@@ -1599,11 +1611,10 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
  * own setting says nothing about what leaves the antenna. */
 const char *radio_name(void) { return "sx1262"; }
 
-/* ponytail: the modem measures it per packet (see RX_STAGES), but this backend has not ridden
- * yet; wire it up when it does rather than report a number nobody has checked. */
+/* None from a board whose front end's receive gain is unknown: see SX_RX_GAIN_DB. */
 bool radio_last_rssi(int *dbm) {
-    (void)dbm;
-    return false;
+    if (s_have_rssi) *dbm = s_last_rssi;
+    return s_have_rssi;
 }
 
 bool radio_tx_dbm(int8_t out[4]) {
