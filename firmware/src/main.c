@@ -469,149 +469,6 @@ static void tx_task(void *arg) {
     }
 }
 
-#ifdef BEACON_TX_MS
-/*
- * Diagnostic beacon. Not a product mode, not the `beacon` of docs/ARCHITECTURE.md - that one
- * has GNSS, a real encoder and a provisioning profile. This is scaffolding for hunting the PHY,
- * and it exists because the phone is a poor transmitter to hunt with: it sleeps, it needs BLE
- * range, it needs DMD2 in the foreground, and its pacing gives only ~5 packets in an 8 s dwell.
- *
- * A fixed payload at a rate we choose turns the probe's dwell from a coin flip into a
- * measurement: at a known transmission count, the correct SF/BW should report a preamble
- * detection per transmission while a wrong one reports the occasional false trigger.
- *
- * -DBEACON_TX_MS=1000 also exceeds the 1% duty cycle 868.0-868.6 MHz allows - a 38-byte packet
- * is roughly 250 ms of air. So does the stock 1.5 s DMD pacing, which is the protocol's choice
- * rather than ours; this is a bench tool and the interval is a build flag so it can be raised.
- */
-/*
- * Selectable so the payload can be varied between runs without touching anything else. What
- * the module puts on the air is 46 bytes when 38 go in, and the difference lives above the
- * PHY - so the way to read it is to change the input and watch which output bytes move.
- *
- * 1 and 2 are the discriminator: same length, every byte constant, different constant. If only
- * a contiguous run of the received bytes changes, the rest is EBYTE framing and its size falls
- * straight out. If all 46 change, a transform is mixing the whole payload and the CRYPT
- * registers - which are write-only and therefore unprovable by readback - become the suspect.
- * 3 and 4 give the length relationship, and 4 is long enough to cross a sub-packet boundary if
- * one exists.
- */
-#ifndef BEACON_PAYLOAD_ID
-#define BEACON_PAYLOAD_ID 0
-#endif
-#if BEACON_PAYLOAD_ID == 0
-static const char BEACON_PAYLOAD[] = "0gICABAREhMUFRYXGBkaGxwdHh8gISIjJCW+7w";
-#elif BEACON_PAYLOAD_ID == 1
-static const char BEACON_PAYLOAD[] = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-#elif BEACON_PAYLOAD_ID == 2
-static const char BEACON_PAYLOAD[] = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
-#elif BEACON_PAYLOAD_ID == 3
-static const char BEACON_PAYLOAD[] = "AAAAAAAAAA";
-#elif BEACON_PAYLOAD_ID == 4
-static const char BEACON_PAYLOAD[] =
-    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-#else
-#error "BEACON_PAYLOAD_ID must be 0..4"
-#endif
-_Static_assert(sizeof(BEACON_PAYLOAD) - 1 <= PACKET_MAX, "beacon payload too long");
-
-static void beacon_task(void *arg) {
-    (void)arg;
-    for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(BEACON_TX_MS));
-#ifdef POWER_SWEEP
-        /*
-         * The label generator and the power control, kept apart - they were one block, and
-         * gating the whole thing for one backend left the payload below referring to a counter
-         * that no longer existed. Every sweep rides on this letter; only the re-apply is a
-         * radio operation.
-         */
-        static uint8_t sweep_level;
-        sweep_level = (uint8_t)((sweep_level + 1) & 0x03);
-#ifdef RADIO_BACKEND_SX1262
-        /*
-         * Re-applying per beacon is how the power actually changes. Not done on an EBYTE
-         * backend: there apply is a 0xC0 write into the module's own flash, which e220_regs.h
-         * reserves for deliberate configuration changes, and a beacon would spend thousands of
-         * write cycles an hour. The letters still cycle, so a sweep that only needs labels -
-         * preamble, length, sync - works on either radio.
-         */
-        state_lock();
-        radio_request_t sweep = s_state.req;
-        sweep.power_level = floor_power(sweep_level);
-        apply_locked(&sweep);
-        state_unlock();
-#endif
-#endif
-        /* The same admission tests handle_tx applies, for the same reasons: a packet queued for
-         * a radio that is not configured goes out on unknown settings, and one queued on a build
-         * that may not transmit fails in the driver and drags the bridge offline and back on
-         * every beacon. */
-        if (!RADIO_TX_ENABLED) continue;
-        bridge_state_t snap = state_snapshot();
-        if (!snap.online || !snap.configured) continue;
-
-#ifdef WIDE_SWEEP
-        static uint8_t wide_level;
-        wide_level = (uint8_t)((wide_level + 1) & 0x0F);
-        size_t len = 38;
-        char *copy = malloc(len + 1);
-        if (!copy) continue;
-        memset(copy, 'A' + wide_level, len);
-        copy[len] = '\0';
-#elif defined(LENGTH_SWEEP)
-        /*
-         * Does the packet fail at acquisition, or does something accumulate while it is on air?
-         * Four lengths, interleaved, nothing else varying - not power, which is what confounded
-         * the settle sweep. A defect that builds up over the transmission punishes the long ones;
-         * one that lands in the preamble or header does not care.
-         *
-         * Every length is a legal wire payload: none is 1 mod 4, and all are base64 characters.
-         */
-        static const uint8_t SWEEP_LEN[4] = {10, 24, 46, 100};
-        static uint8_t len_level;
-        len_level = (uint8_t)((len_level + 1) & 0x03);
-        size_t len = SWEEP_LEN[len_level];
-        char *copy = malloc(len + 1);
-        if (!copy) continue;
-        memset(copy, 'A' + len_level, len);
-        copy[len] = '\0';
-#elif defined(POWER_SWEEP)
-        size_t len = 38;
-        char *copy = malloc(len + 1);
-        if (!copy) continue;
-        memset(copy, 'A' + sweep_level, len);
-        copy[len] = '\0';
-#elif defined(BEACON_SEQ)
-        /*
-         * The bench's own numbered payload - eight digits and 'A' filler to 38 bytes - so each
-         * beacon names itself and a missing number is a lost packet, for runs in which nothing on
-         * a host sends or counts: a board on a power bank, out of reach of any USB cable.
-         */
-        static uint32_t beacon_seq;
-        size_t len = 38;
-        char *copy = malloc(len + 1);
-        if (!copy) continue;
-        int at = snprintf(copy, len + 1, "%08lu", (unsigned long)++beacon_seq);
-        memset(copy + at, 'A', len - (size_t)at);
-        copy[len] = '\0';
-#else
-        size_t len = strlen(BEACON_PAYLOAD);
-        char *copy = malloc(len + 1);
-        if (!copy) continue;
-        memcpy(copy, BEACON_PAYLOAD, len + 1);
-#endif
-        tx_item_t item = {
-            .payload = copy,
-            .generation = snap.generation,
-            .owner_generation = (uint32_t)atomic_load(&s_owner_generation),
-        };
-        if (xQueueSend(s_tx_queue, &item, 0) != pdTRUE) free(copy);
-    }
-}
-#endif
-
 static void pair_button_task(void *arg) {
     (void)arg;
     const TickType_t poll = pdMS_TO_TICKS(100);
@@ -621,7 +478,6 @@ static void pair_button_task(void *arg) {
     watch_this_task();
     for (;;) {
         esp_task_wdt_reset();
-#ifndef BENCH_NO_BLE
         if ((supervise_ms += 100) >= 1000) {
             supervise_ms = 0;
             if (ble_nus_supervise()) {
@@ -629,7 +485,6 @@ static void pair_button_task(void *arg) {
                 restart_for(RESTART_FOR_BLE);
             }
         }
-#endif
         bool button_down = gpio_get_level((gpio_num_t)PIN_PAIR_BUTTON) == 0;
         if (button_down) {
             held_ms += 100;
@@ -1010,20 +865,7 @@ void app_main(void) {
                  : initial == RADIO_BUSY ? "bus busy" : "no answer");
     }
 
-#ifdef BENCH_NO_BLE
-    /*
-     * Bench: no Bluetooth at all.
-     *
-     * The one transmitter that reaches an E220 from this board is a bare sketch that does
-     * nothing but transmit. This firmware is a bridge, so it advertises the whole time - a
-     * 2.4 GHz burst every hundred milliseconds, through the same supply, across the three
-     * hundred milliseconds a packet spends in the air. That moves nothing an RSSI or an SNR
-     * reading would show and everything a correlator would.
-     */
-    ESP_LOGW(TAG, "BENCH_NO_BLE: bluetooth is not started");
-#else
     ble_nus_init(on_ble_line, on_ble_revoke, on_ble_bonds_cleared);
-#endif
 
     gpio_config_t pair_pin = {
         .pin_bit_mask = (1ULL << PIN_PAIR_BUTTON),
@@ -1031,14 +873,6 @@ void app_main(void) {
         .pull_up_en = GPIO_PULLUP_ENABLE,
     };
     gpio_config(&pair_pin);
-#ifdef BEACON_TX_MS
-    ESP_LOGW(TAG, "DIAGNOSTIC BEACON: payload id %d, %u bytes, every %d ms, no phone",
-             BEACON_PAYLOAD_ID, (unsigned)(sizeof(BEACON_PAYLOAD) - 1), BEACON_TX_MS);
-    if (xTaskCreate(beacon_task, "beacon", 3072, NULL, 5, NULL) != pdPASS) {
-        ESP_LOGE(TAG, "cannot create beacon task");
-        abort();
-    }
-#endif
     BaseType_t pair_created = xTaskCreate(pair_button_task, "pair_btn", 2560, NULL, 3, NULL);
     BaseType_t tx_created = xTaskCreate(tx_task, "lora_tx", 4096, NULL, 6, NULL);
     BaseType_t rx_created = xTaskCreate(rx_task, "lora_rx", 4096, NULL, 6, NULL);

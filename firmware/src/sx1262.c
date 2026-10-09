@@ -58,19 +58,9 @@
 #define REG_IQ_CONFIG     0x0736
 #define REG_FREQ_ERROR    0x076B
 #define CMD_SET_RXTX_FALLBACK 0x93
-#define CMD_SET_CAD_PARAMS    0x88
-#define CMD_SET_FS            0xC1
-#define CMD_SET_SYMB_TIMEOUT  0xA0
 
-#ifdef TX_LIKE_RADIOLIB_ALL
-/* The reference clears 0x43FF, not every bit. The same thing on paper - and "the same thing on
- * paper" is what this hunt keeps disproving, so it is measured instead. */
-#define IRQ_CLEAR_HI 0x43
-#define IRQ_CLEAR_LO 0xFF
-#else
 #define IRQ_CLEAR_HI 0xFF
 #define IRQ_CLEAR_LO 0xFF
-#endif
 
 #define IRQ_TX_DONE      (1u << 0)
 #define IRQ_RX_DONE      (1u << 1)
@@ -159,17 +149,7 @@
  * SetPaConfig at the +22 dBm pair does not produce that power - RadioLib carries a measured
  * table (radiolib-org/power-tests) precisely because the naive mapping is wrong, and on this
  * bench the naive version reached an E220 zero times out of 27 where the table reached it. */
-#ifdef POWER_SWEEP
-/* Bench sweep: a deliberately wide span, because the question it answers is whether the front
- * end is in compression - which shows up as the weak settings decoding better than the strong
- * ones, and cannot be seen at all across the 8 dB the shipping table covers. */
-static const struct { uint8_t duty, hp_max; int8_t pa_val; } POWER_PA[4] = {
-    {1, 2, 22},   /* ~10 dBm */
-    {1, 1, 22},   /* ~4 dBm  */
-    {4, 1, 6},    /* ~-2 dBm */
-    {2, 2, -5},   /* ~-9 dBm */
-};
-#elif PIN_FEM_VCTRL >= 0
+#if PIN_FEM_VCTRL >= 0
 /* Heltec V4.3: the KCT8103L adds 13 dB to a drive of up to 13 dBm and less above it - 11 dB at
  * 17, 7 at 21, where the output tops out near 28 dBm (Heltec's table, as in Meshtastic's
  * LoRaFEMInterface.cpp and RNode's Boards.h). Max at that ceiling, Low at about the EU limit
@@ -251,29 +231,8 @@ static bool wait_busy(uint32_t timeout_ms) {
 
 static bool xfer(const uint8_t *tx, uint8_t *rx, size_t len) {
     if (!wait_busy(100)) return false;
-#ifdef SX_BENCH_SPI
-    /* Same driver and command sequence, the working probe's bus implementation. */
-    extern bool sx_bench_spi(const uint8_t *, uint8_t *, size_t);
-    bool ok = sx_bench_spi(tx, rx, len);
-#else
     spi_transaction_t t = {.length = len * 8, .tx_buffer = tx, .rx_buffer = rx};
-#ifdef SX_SOFT_CS
-    /*
-     * Drive the select line ourselves, the way the working reference does, instead of letting
-     * the controller do it. Same waveform on paper; the controller raises it on the last clock
-     * edge, while a software line stays low a moment longer. With the reference's exact bytes
-     * failing through our transport and succeeding through its own, the electrical details of
-     * the transport are what is left.
-     */
-    gpio_set_level((gpio_num_t)PIN_SX_NSS, 0);
-    esp_rom_delay_us(1);
-#endif
     bool ok = spi_device_polling_transmit(s_spi, &t) == ESP_OK;
-#ifdef SX_SOFT_CS
-    esp_rom_delay_us(1);
-    gpio_set_level((gpio_num_t)PIN_SX_NSS, 1);
-#endif
-#endif
     /*
      * BUSY has to be low again before the next command, and it rises a moment *after* NSS does -
      * so sampling it only on the way in samples the gap, and the chip silently discards whatever
@@ -377,25 +336,6 @@ static bool reg_read(uint16_t addr, uint8_t *out, size_t n) {
  * as the cause: later register captures verified the relevant bit, and the EBYTE frame header
  * also needed correction. See docs/PHY-notes.md for the controlled measurements.
  */
-#ifdef SX_REG_TRACE
-/*
- * What the four registers the errata touch actually hold, at a named moment.
- *
- * This driver writes constants into three of them, on the argument that a read which quietly
- * returned a status byte would otherwise be written straight back into a modem register. That
- * argument is only as good as the reads, and nobody has ever looked: the reset values are
- * unknown, so it is not known whether the constants preserve the bits the errata say to
- * preserve or flatten them. Reading before the first write is the only moment the originals
- * still exist - after it, a read-modify-write would be modifying our own constant.
- */
-static void trace_regs(const char *when) {
-    uint8_t md = 0, cl = 0, iq = 0, oc = 0;
-    bool ok = reg_read(REG_TX_MODULATION, &md, 1) && reg_read(REG_TX_CLAMP, &cl, 1) &&
-              reg_read(REG_IQ_CONFIG, &iq, 1) && reg_read(REG_OCP, &oc, 1);
-    ESP_LOGI(TAG, "regs %-22s 0889=%02X 08D8=%02X 0736=%02X 08E7=%02X%s",
-             when, md, cl, iq, oc, ok ? "" : "  (a read failed)");
-}
-#endif
 
 static bool fix_modulation_quality(void) {
     /*
@@ -439,11 +379,7 @@ static bool fix_iq_polarity(void) {
  * read as a finding when it was noise. Correct by the part number, not by measurement.
  */
 static bool set_ocp(void) {
-#ifdef TX_PA_LIKE_RADIOLIB
-    uint8_t v = 0x18;   /* bench: what the working reference actually leaves here */
-#else
     uint8_t v = 0x38;
-#endif
     return reg_write(REG_OCP, &v, 1);
 }
 
@@ -484,20 +420,6 @@ static void fem_power(bool on) {
 static void fem_transmit(bool tx) {
 #if PIN_FEM_VCTRL >= 0
     gpio_set_level((gpio_num_t)PIN_FEM_CTX, tx);
-#ifdef FEM_SETTLE_MS
-    /*
-     * Let the front end settle before a carrier appears.
-     *
-     * This driver used to flip the part from its receive path to its transmit path and start
-     * transmitting microseconds later. The working reference on this board flips it, waits, and
-     * then spends eight more SPI transactions preparing the packet - so by the time it says
-     * SetTx the amplifier has been switched over for something like ten milliseconds. An
-     * amplifier whose bias is still settling puts out corrupt first symbols, and corrupt first
-     * symbols are the signature already measured here: packets lost at the header, never a CRC
-     * error.
-     */
-    if (tx) vTaskDelay(pdMS_TO_TICKS(FEM_SETTLE_MS));
-#endif
     delay_us(1000);
 #else
     (void)tx;
@@ -529,29 +451,8 @@ static bool set_modulation(void) {
     return cmd(CMD_SET_MODULATION, a, 4);
 }
 
-#if defined(PREAMBLE_SWEEP) || defined(WIDE_SWEEP)
-/*
- * Bench: the E220's own preamble length was never measured - the probe received it with 8
- * symbols configured, but that setting governs transmission, and a receiver decodes a longer
- * preamble than it expects. If the module's receiver sniffs the channel rather than listening
- * continuously, too short a preamble is caught only when it happens to be awake, which reads as
- * a fixed low success rate that more power cannot move. That is exactly the 20% plateau this
- * backend hits across 10 dB. Steps ride on power_level so the beacon's payload already labels
- * them.
- */
-static const uint16_t SWEEP_PREAMBLE[4] = {8, 16, 32, 64};
-static uint16_t s_preamble = PHY_PREAMBLE;
-#endif
-
 static bool set_packet_params(uint8_t payload_len) {
-#ifdef TX_LIKE_RADIOLIB_ALL
-    /* The reference treats SetPacketParams as something that can clear erratum 15.4 and
-     * rewrites 0x0736 immediately before every one; we wrote it once, at configure. */
-    fix_iq_polarity();
-#endif
-#if defined(PREAMBLE_SWEEP) || defined(WIDE_SWEEP)
-    const uint16_t pre = s_preamble;
-#elif defined(BENCH_CMD)
+#ifdef BENCH_CMD
     const uint16_t pre = s_once_preamble >= 0 ? (uint16_t)s_once_preamble
                          : s_rx_preamble >= 0 ? (uint16_t)s_rx_preamble : PHY_PREAMBLE;
 #else
@@ -570,24 +471,6 @@ static bool set_packet_params(uint8_t payload_len) {
 static bool set_power(uint8_t level) {
     /* SX1262 PA, then the drive level. The OCP default suits this configuration. */
     const uint8_t i = level & 0x03;
-#ifdef TX_PA_LIKE_RADIOLIB
-    /*
-     * Bench: the exact analogue settings RadioLib leaves on this board, taken from its own SPI
-     * trace rather than from its tables. It is the one transmitter known to reach an E220 from
-     * this hardware, and these three values are all that differ from ours - paDutyCycle and
-     * hpMax, the drive level, and the over-current limit, which this driver deliberately raised
-     * to the SX1262's datasheet figure while the working reference leaves it at 60 mA.
-     *
-     * One level for all four, because the question is not how power maps but whether this
-     * corner of the chip is why nothing decodes.
-     */
-    (void)i;
-    (void)POWER_PA;
-    uint8_t pa[4] = {0x01, 0x04, 0x00, 0x01};
-    if (!cmd(CMD_SET_PA_CONFIG, pa, 4)) return false;
-    uint8_t tx[2] = {0x14, 0x04};
-    return cmd(CMD_SET_TX_PARAMS, tx, 2);
-#else
     uint8_t pa[4] = {POWER_PA[i].duty, POWER_PA[i].hp_max, 0x00 /* SX1262 */, 0x01};
     if (!cmd(CMD_SET_PA_CONFIG, pa, 4)) return false;
     /* Ramp time. 0x04 is 200 us; the field runs to 0x07, 3.4 ms. A gentler ramp is a cleaner
@@ -597,44 +480,12 @@ static bool set_power(uint8_t level) {
 #endif
     uint8_t tx[2] = {(uint8_t)POWER_PA[i].pa_val, TX_RAMP_CODE};
     return cmd(CMD_SET_TX_PARAMS, tx, 2);
-#endif
 }
 
 static bool clear_irq(void) {
     uint8_t c[2] = {IRQ_CLEAR_HI, IRQ_CLEAR_LO};
     return cmd(CMD_CLEAR_IRQ_STATUS, c, 2);
 }
-
-#ifdef TX_REPLAY_RADIOLIB
-#include "radiolib_replay.h"
-
-/*
- * Replay a captured table through our own transfer routine. The buffer write carries our frame
- * rather than the captured one, and the transmission is waited out where the reference waited.
- */
-static bool replay(const uint8_t *tbl, const uint8_t *frame, size_t flen) {
-    uint8_t tx[300], rx[300];
-    for (size_t i = 0; tbl[i];) {
-        size_t n = tbl[i++];
-        if (n > sizeof(tx)) return false;
-        memcpy(tx, &tbl[i], n);
-        i += n;
-        if (tx[0] == CMD_WRITE_BUFFER && frame) {
-            if (2 + flen > sizeof(tx)) return false;
-            memcpy(&tx[2], frame, flen);
-            n = 2 + flen;
-        }
-        if (tx[0] == CMD_SET_TX) fem_transmit(true);
-        if (!xfer(tx, rx, n)) return false;
-        if (tx[0] == CMD_SET_TX) {
-            /* Where the reference sat waiting on its interrupt pin, saying nothing. */
-            vTaskDelay(pdMS_TO_TICKS(400));
-            fem_transmit(false);
-        }
-    }
-    return true;
-}
-#endif
 
 static bool configure(const radio_request_t *req) {
     uint8_t reg = 0x01;                      /* DC-DC, as the Heltec board is wired */
@@ -647,26 +498,7 @@ static bool configure(const radio_request_t *req) {
     uint8_t sync[2] = {PHY_SYNC_MSB, PHY_SYNC_LSB};
     uint8_t base[2] = {0x00, 0x00};
     uint8_t rfsw = 0x01;
-#ifdef TX_KEEP_XOSC
-    /*
-     * Keep the crystal oscillator running between packets, and let it settle before the
-     * carrier.
-     *
-     * STDBY_RC powers the TCXO down, so every SetTx restarts it and waits only the 5 ms that
-     * SetDIO3AsTcxoCtrl allows. The chip calls it ready when it oscillates, not when it is on
-     * frequency, so the first symbols go out on a carrier that is still moving - and it is
-     * re-rolled on every transmission.
-     *
-     * That shape matches what is actually measured, which is why this is worth trying after so
-     * much else was not: the failure is random packet to packet, indifferent to level across
-     * forty decibels, and indifferent to the payload. It would also explain the larger gap,
-     * since the working reference falls back to STDBY_RC too and reaches a module about as
-     * often as we do, while a module - whose firmware we cannot see - reaches one always.
-     */
-    uint8_t fallback = 0x30;   /* STDBY_XOSC: the oscillator stays up between packets */
-#else
     uint8_t fallback = 0x20;   /* fall back to STDBY_RC, not the reset default of FS */
-#endif
     uint8_t calib = 0x7F;
     /*
      * Image rejection is calibrated per band, and the band follows the channel the phone asked
@@ -678,12 +510,6 @@ static bool configure(const radio_request_t *req) {
     uint8_t image[2] = {upper_band ? 0xE1 : 0xD7, upper_band ? 0xE9 : 0xDB};
     uint8_t irq[8] = {0xFF, 0xFF, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00};
 
-#ifdef TX_REPLAY_RADIOLIB
-    (void)reg; (void)tcxo; (void)pkt; (void)fallback; (void)calib; (void)image; (void)irq;
-    (void)sync; (void)base; (void)rfsw; (void)upper_band;
-    ESP_LOGW(TAG, "TX_REPLAY_RADIOLIB: replaying the reference's captured init");
-    return replay(RL_INIT, NULL, 0);
-#endif
     /* Named steps, because "apply failed" on a bus that answers is otherwise a guess. */
 #define STEP(what, expr) do { if (!(expr)) { ESP_LOGW(TAG, "configure: %s failed", what); \
                                              return false; } } while (0)
@@ -697,33 +523,9 @@ static bool configure(const radio_request_t *req) {
      * the status byte of the command after it, which is checked.
      */
     s_cmd_error = false;
-#ifdef TX_LIKE_RADIOLIB_ALL
-    /*
-     * The order the working reference on this board uses, taken from its own SPI trace: packet
-     * type, fallback, CAD and the interrupt masks all go in before the calibration, and the
-     * regulator afterwards. Ours put the regulator first and calibrated straight after the
-     * TCXO. Nothing in the datasheet says either is wrong, which is exactly why it is worth one
-     * measurement rather than another argument.
-     */
-    {
-        uint8_t cad[7] = {0x03, 0x16, 0x0A, 0x00, 0x00, 0x00, 0x00};
-        uint8_t noirq[8] = {0};
-        STEP("tcxo", cmd(CMD_SET_DIO3_TCXO, tcxo, 4));
-        STEP("buffer base", cmd(CMD_SET_BUFFER_BASE, base, 2));
-        STEP("packet type", cmd(CMD_SET_PACKET_TYPE, &pkt, 1));
-        STEP("fallback mode", cmd(CMD_SET_RXTX_FALLBACK, &fallback, 1));
-        STEP("cad params", cmd(CMD_SET_CAD_PARAMS, cad, 7));
-        STEP("clear irq", clear_irq());
-        STEP("irq params off", cmd(CMD_SET_DIO_IRQ_PARAMS, noirq, 8));
-        STEP("calibrate", cmd(CMD_CALIBRATE, &calib, 1));
-        delay_us(5000);
-        STEP("regulator", cmd(CMD_SET_REGULATOR_MODE, &reg, 1));
-    }
-#else
     STEP("regulator", cmd(CMD_SET_REGULATOR_MODE, &reg, 1));
     STEP("tcxo", cmd(CMD_SET_DIO3_TCXO, tcxo, 4));
     STEP("calibrate", cmd(CMD_CALIBRATE, &calib, 1));
-#endif
     delay_us(5000);
     /* Not covered by the calibrate-all above. An earlier comment here claimed 0x6B/0x6F was the
      * 863-870 row; that is the 470-510 one, and the code was briefly wrong to match. */
@@ -736,35 +538,20 @@ static bool configure(const radio_request_t *req) {
      * 28 dB down - and only transmission suffers, because CPS is a don't-care while receiving.
      */
     STEP("dio2 rf switch", cmd(CMD_SET_DIO2_RF_SWITCH, &rfsw, 1));
-#ifndef TX_LIKE_RADIOLIB_ALL
     STEP("packet type", cmd(CMD_SET_PACKET_TYPE, &pkt, 1));
-#endif
     STEP("frequency", set_frequency(req->channel));
     STEP("modulation", set_modulation());
-#ifdef SX_REG_TRACE
-    trace_regs("after reset, untouched");
-#endif
     STEP("errata 15.1", fix_modulation_quality());
     STEP("errata 15.2", fix_pa_clamping());
     STEP("errata 15.4", fix_iq_polarity());
-#ifndef TX_LIKE_RADIOLIB_ALL
     STEP("fallback mode", cmd(CMD_SET_RXTX_FALLBACK, &fallback, 1));
-#endif
     STEP("packet params", set_packet_params(255));
     STEP("sync word", reg_write(REG_LORA_SYNC_MSB, sync, 2));
     STEP("buffer base", cmd(CMD_SET_BUFFER_BASE, base, 2));
-#ifdef PREAMBLE_SWEEP
-    s_preamble = SWEEP_PREAMBLE[req->power_level & 0x03];
-    STEP("power", set_power(1));   /* fixed ~4 dBm: the sweep varies preamble, not power */
-#else
     STEP("power", set_power(req->power_level));
-#endif
     STEP("ocp", set_ocp());
     /* Everything latched, only RxDone and TxDone on DIO1. */
     STEP("irq params", cmd(CMD_SET_DIO_IRQ_PARAMS, irq, 8));
-#ifdef SX_REG_TRACE
-    trace_regs("after configure");
-#endif
     /* Every step above reported a completed transfer; this asks whether the chip also accepted
      * them, so configured=1 means the radio agreed rather than that the bus worked. */
     STEP("no command was rejected", !s_cmd_error);
@@ -781,14 +568,6 @@ static bool configure(const radio_request_t *req) {
 }
 
 static bool enter_rx(void) {
-#ifdef TX_ONLY_BENCH
-    /*
-     * Bench: never leave standby. The working reference on this board is transmit-only, and
-     * sitting in continuous receive between packets is the largest structural difference left
-     * between its SPI sequence and ours. Useless for the bridge, which has to listen.
-     */
-    return true;
-#endif
     uint8_t clear[2] = {IRQ_CLEAR_HI, IRQ_CLEAR_LO};
     uint8_t rx[3] = {0xFF, 0xFF, 0xFF};   /* continuous */
     /*
@@ -815,35 +594,6 @@ static bool enter_rx(void) {
     }
 #else
     if (!set_packet_params(255)) return false;
-#endif
-#ifdef RX_SYMB_TIMEOUT
-    /*
-     * How many preamble symbols this receiver insists on before it will commit.
-     *
-     * At zero - which is the reset value, and what both this driver and RadioLib have always
-     * left it at - the modem accepts a packet the moment it detects a single symbol. Semtech
-     * recommends a non-zero value, so a module's firmware plausibly sets one, and that would
-     * make a module strictly harder to reach than either of our own receivers.
-     *
-     * That matters because our receiver has never been an independent witness: it runs the same
-     * configuration as our transmitter, so anything systematic about our signal is invisible to
-     * it by construction. Setting this turns it into a stricter judge, and if a strict version
-     * of our own receiver stops hearing us while it still hears a module, then the defect has
-     * been reproduced on hardware we can instrument - instead of inside a black box.
-     */
-    {
-        /* Semtech SX126xSetLoRaSymbNumTimeout also updates the sync-timeout register.
-         * https://github.com/Lora-net/LoRaMac-node/blob/master/src/radio/sx126x/sx126x.c */
-        unsigned symbols = RX_SYMB_TIMEOUT > 248 ? 248 : RX_SYMB_TIMEOUT;
-        unsigned mantissa = (symbols + 1) / 2, exponent = 0;
-        while (mantissa > 31) { mantissa = (mantissa + 3) / 4; ++exponent; }
-        uint8_t sn = (uint8_t)(mantissa << (2 * exponent + 1));
-        if (!cmd(CMD_SET_SYMB_TIMEOUT, &sn, 1)) return false;
-        if (symbols) {
-            uint8_t sync_timeout = (uint8_t)(mantissa * 8 + exponent);
-            if (!reg_write(0x0706, &sync_timeout, 1)) return false;
-        }
-    }
 #endif
     if (!cmd(CMD_CLEAR_IRQ_STATUS, clear, 2)) return false;
     fem_transmit(false);
@@ -898,7 +648,6 @@ void radio_init(void) {
     fem_power(true);
     fem_transmit(false);
 
-#ifndef SX_BENCH_SPI
     spi_bus_config_t bus = {
         .mosi_io_num = PIN_SX_MOSI,
         .miso_io_num = PIN_SX_MISO,
@@ -911,22 +660,10 @@ void radio_init(void) {
     spi_device_interface_config_t dev = {
         .clock_speed_hz = 2 * 1000 * 1000,
         .mode = 0,
-#ifdef SX_SOFT_CS
-        .spics_io_num = -1,
-#else
         .spics_io_num = PIN_SX_NSS,
-#endif
         .queue_size = 1,
     };
-#ifdef SX_SOFT_CS
-    {
-        gpio_config_t nss = {.pin_bit_mask = (1ULL << PIN_SX_NSS), .mode = GPIO_MODE_OUTPUT};
-        gpio_config(&nss);
-        gpio_set_level((gpio_num_t)PIN_SX_NSS, 1);
-    }
-#endif
     ESP_ERROR_CHECK(spi_bus_add_device(SPI2_HOST, &dev, &s_spi));
-#endif
 
     gpio_set_level((gpio_num_t)PIN_SX_RST, 0);
     delay_us(2000);
@@ -963,13 +700,6 @@ radio_state_t radio_apply(const radio_request_t *req) {
 }
 
 radio_state_t radio_verify(const radio_request_t *req) {
-#ifdef SYNC_RX_SWEEP
-    /* The sweep is deliberately writing sync words this check would call a mismatch, and a
-     * mismatch takes the bridge out of "configured" - which stops the receive loop, which is
-     * what steps the sweep. Left in, the whole thing freezes on its second candidate. */
-    (void)req;
-    return RADIO_OK;
-#else
     if (!bus_lock()) return RADIO_BUSY;
     uint8_t sync[2] = {0, 0};
     uint8_t tx[6] = {CMD_READ_REGISTER, (uint8_t)(REG_LORA_SYNC_MSB >> 8),
@@ -993,7 +723,6 @@ radio_state_t radio_verify(const radio_request_t *req) {
         return RADIO_MISMATCH;
     }
     return RADIO_OK;
-#endif
 }
 
 #ifdef BENCH_CMD
@@ -1024,109 +753,6 @@ bool radio_send(const uint8_t *data, size_t len) {
 #endif
     size_t total = EBYTE_HEADER_LEN + len;
 
-#ifdef TX_REPLAY_RADIOLIB
-    {
-        /*
-         * TX_REPLAY_VERBATIM keeps the reference's own buffer as well as its commands - the
-         * same header bytes and the same payload - so nothing of ours is left in the
-         * transmission at all. Without it the replay substitutes our frame, which is how the
-         * first replay came to prove something narrower than it claimed: it showed the command
-         * stream was not at fault while quietly carrying our frame inside it.
-         */
-#ifdef TX_REPLAY_VERBATIM
-        const bool rok = replay(RL_PACKET, NULL, 0);
-#else
-        const bool rok = replay(RL_PACKET, frame, total);
-#endif
-        ESP_LOGI(TAG, "replayed packet of %u bytes -> %s", (unsigned)total, rok ? "ok" : "failed");
-        bus_unlock();
-        return rok;
-    }
-#endif
-
-#ifdef WIDE_SWEEP
-    /*
-     * A 4x4 grid, every cell labelled by its payload letter, all sixteen interleaved every two
-     * seconds so they meet identical conditions. Rows vary the preamble; columns vary how the
-     * transmission starts, which is where the defect now has to live - a packet three times
-     * longer on air decodes just as often, so nothing accumulates once it is running.
-     *
-     * Reading the grid gives each factor's effect averaged over the other, which is the whole
-     * point: single sweeps kept landing inside the run-to-run swing of this link.
-     */
-    /* SetPaConfig and SetTxParams are only accepted in standby; this block used to issue them
-     * while the radio was still in continuous receive. */
-    set_standby();
-    uint8_t start = 0;
-    if (len && data[0] >= 'A' && data[0] <= 'P') {
-        const uint8_t v = (uint8_t)(data[0] - 'A');
-        s_preamble = SWEEP_PREAMBLE[v >> 2];
-        start = (uint8_t)(v & 0x03);
-    }
-    /* Column 1 ramps the PA over 3.4 ms instead of 200 us: gentler spectrum while the first
-     * symbols - the ones the far end has to correlate against - are going out. */
-    {
-        uint8_t pa[4] = {2, 1, 0x00, 0x01};
-        cmd(CMD_SET_PA_CONFIG, pa, 4);
-        uint8_t tp[2] = {14, (uint8_t)(start == 1 ? 0x07 : 0x04)};
-        cmd(CMD_SET_TX_PARAMS, tp, 2);
-        uint8_t ocp = 0x38;
-        reg_write(REG_OCP, &ocp, 1);
-    }
-#elif defined(PREAMBLE_SWEEP)
-    /* Take the step from the payload itself rather than from the applied power level: the beacon
-     * queues, the transmit task drains, and a one-item lag between them silently shifts every
-     * label by one step. Reading it here makes the label and the setting the same fact. */
-    if (len && data[0] >= 'A' && data[0] <= 'D') s_preamble = SWEEP_PREAMBLE[data[0] - 'A'];
-#endif
-#ifdef SYNC_TX_SWEEP
-    /*
-     * Which sync register pair does an E220's receiver actually require?
-     *
-     * Receive could not answer it. Sweeping this radio's own receiver showed 0x54, 0x55 and 0x50
-     * in the low nibbles decoding an E220 identically - fifteen packets each - while 0x5F and
-     * both high-nibble controls gave a clean zero. So the correlator is strict about the high
-     * nibbles and loose about part of the low ones, and the pair this driver writes sits inside
-     * the tolerant set rather than having been measured.
-     *
-     * Transmit is the only direction that can settle it. 0x4444 is a control: it must decode
-     * nothing. If it decodes as often as the rest, the far end is not checking sync at all and
-     * this whole line of enquiry is wrong.
-     */
-    static const uint8_t SYNC_TX[4][2] = {
-        {0x54, 0x54},   /* A - what both drivers write today */
-        {0x55, 0x55},   /* B - the raw value, never a RadioLib argument */
-        {0x50, 0x50},   /* C - same tolerant family, different low nibbles */
-        {0x44, 0x44},   /* D - control, must be silent */
-    };
-    if (len && data[0] >= 'A' && data[0] <= 'D') {
-        set_standby();
-        reg_write(REG_LORA_SYNC_MSB, SYNC_TX[data[0] - 'A'], 2);
-    }
-#endif
-#ifdef POWER_CLEAN
-    /*
-     * Transmit power, with one variable this time.
-     *
-     * The earlier sweep moved paDutyCycle and hpMax along with the level at every step, so its
-     * collapse at the bottom - 12 of 156 against 117 of 491, p < 1e-5 - cannot be read as either
-     * a power effect or a PA-structure effect. Here the pair is pinned at Semtech's validated
-     * (4, 7) for the SX1262's high-power PA and only SetTxParams moves, over 24 dB.
-     *
-     * The chain puts roughly (chip - 21 dB) at the front end's input, so +22 dBm here is about
-     * +1 dBm there, inside its rating.
-     */
-    static const int8_t CLEAN_DBM[4] = {22, 14, 6, -2};
-    if (len && data[0] >= 'A' && data[0] <= 'D') {
-        set_standby();
-        uint8_t pa[4] = {0x04, 0x07, 0x00, 0x01};
-        cmd(CMD_SET_PA_CONFIG, pa, 4);
-        uint8_t tp[2] = {(uint8_t)CLEAN_DBM[data[0] - 'A'], 0x04};
-        cmd(CMD_SET_TX_PARAMS, tp, 2);
-        uint8_t ocp = 0x38;
-        reg_write(REG_OCP, &ocp, 1);
-    }
-#endif
 #ifdef BENCH_CMD
     if (s_once_sync >= 0) {
         uint8_t sw[2] = {(uint8_t)(s_once_sync >> 8), (uint8_t)s_once_sync};
@@ -1134,29 +760,15 @@ bool radio_send(const uint8_t *data, size_t len) {
         reg_write(REG_LORA_SYNC_MSB, sw, 2);
     }
 #endif
-#ifdef SX_REG_TRACE
-    trace_regs("just before SetTx");
-#endif
     uint8_t clear[2] = {IRQ_CLEAR_HI, IRQ_CLEAR_LO};
     uint8_t txbase[2] = {0x00, 0x00};
     uint8_t go[3] = {0x00, 0x00, 0x00};   /* no timeout */
-#ifdef TX_LIKE_RADIOLIB_ALL
-    /* The reference re-issues the masks before every packet, asking for TxDone and timeout
-     * only rather than latching everything. */
-    {
-        uint8_t txirq[8] = {0x02, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00};
-        set_standby();
-        cmd(CMD_SET_DIO_IRQ_PARAMS, txirq, 8);
-    }
-#endif
     bool ok = set_standby() && set_packet_params((uint8_t)total) &&
               cmd(CMD_SET_BUFFER_BASE, txbase, 2) &&
               buffer_write(frame, total) && cmd(CMD_CLEAR_IRQ_STATUS, clear, 2);
     if (ok) {
-#ifndef TX_LIKE_RADIOLIB_ALL
         uint8_t noerr[2] = {0x00, 0x00};
         cmd(0x07 /* ClearDeviceErrors */, noerr, 2);
-#endif
 #ifdef BENCH_CMD
         /* Configure calibrates before SetRfFrequency, as Semtech's reference does: this redoes
          * RC, PLL and ADC at the frequency actually in use. Not the image, which is receive-side
@@ -1176,26 +788,6 @@ bool radio_send(const uint8_t *data, size_t len) {
             s_seen_errors = (uint16_t)((err[0] << 8) | err[1]);
         }
 #endif
-#ifdef TCXO_SETTLE_TEST
-        /*
-         * STDBY_RC powers the TCXO down, so every SetTx restarts it and waits only the 5 ms in
-         * SetDIO3AsTcxoCtrl. The chip calls it ready when the oscillator runs, not when it is on
-         * frequency - which is why XOSC_START_ERR stays clean while the carrier is still walking.
-         * At SF11/BW500 a drift over ~60 kHz/s smears the correlation peak out of its bin, and a
-         * TCXO in its first milliseconds moves far faster than that. Receive never sees it: there
-         * the chip sits in RX for seconds with the oscillator already up.
-         *
-         * Raise the oscillator early and let it settle. The step comes from the payload letter,
-         * so the label and the setting cannot drift apart.
-         */
-        static const uint16_t SETTLE_MS[4] = {0, 10, 40, 100};
-        uint16_t settle = (len && data[0] >= 'A' && data[0] <= 'D') ? SETTLE_MS[data[0] - 'A'] : 0;
-        if (settle) {
-            uint8_t xosc = 0x01;   /* STDBY_XOSC */
-            cmd(CMD_SET_STANDBY, &xosc, 1);
-            delay_us((uint32_t)settle * 1000u);
-        }
-#endif
         /*
          * Errata 15.1 belongs here, not in configure(): SetPacketParams above puts bit 2 of
          * REG_TX_MODULATION back, so applying it once at startup looks right in a register dump
@@ -1211,8 +803,8 @@ bool radio_send(const uint8_t *data, size_t len) {
             s_seen_reg_ok = cmd(CMD_SET_REGULATOR_MODE, &reg, 1);
         }
         if (s_once_pa >= 0) {
-            /* The pair pinned at Semtech's validated (4, 7) and only the drive level moving, as in
-             * the clean power sweep; the over-current limit has to follow SetPaConfig. */
+            /* The pair pinned at Semtech's validated (4, 7) and only the drive level moving; the
+             * over-current limit has to follow SetPaConfig. */
             static const int8_t PA_DBM[4] = {22, 14, 6, -2};
             uint8_t pa[4] = {0x04, 0x07, 0x00, 0x01};
             uint8_t tx[2] = {(uint8_t)PA_DBM[s_once_pa], TX_RAMP_CODE};
@@ -1228,42 +820,8 @@ bool radio_send(const uint8_t *data, size_t len) {
             reg_read(REG_TX_MODULATION, &s_seen_txmod, 1);
         }
 #endif
-#ifdef WIDE_SWEEP
-        /* Column 3: hold the oscillator up and let it settle before transmitting. Column 2:
-         * throw the front end over to transmit long before the carrier appears, so any switching
-         * transient is finished well ahead of the preamble. */
-        if (start == 3) {
-            uint8_t xosc = 0x01;
-            cmd(CMD_SET_STANDBY, &xosc, 1);
-            delay_us(40000);
-        }
         fem_transmit(true);
-        if (start == 2) delay_us(19000);
-#else
-        fem_transmit(true);
-#endif
         int64_t t_start = esp_timer_get_time();
-#ifdef TX_KEEP_XOSC
-        {
-            uint8_t xosc = 0x01;   /* STDBY_XOSC */
-            cmd(CMD_SET_STANDBY, &xosc, 1);
-            vTaskDelay(pdMS_TO_TICKS(TX_KEEP_XOSC));
-        }
-#endif
-#ifdef TX_FS_SETTLE_MS
-        /*
-         * Lock the synthesiser before the carrier instead of during it.
-         *
-         * SetTx runs the frequency synthesis itself, so the loop is still pulling in while the
-         * first symbols go out - and it is re-run on every transmission, which is the shape of
-         * this fault: random packet to packet, indifferent to level across forty decibels and
-         * to the payload, invisible to a receiver sharing our configuration. SetFs puts the
-         * chip in that state deliberately and leaves it there to settle. The working reference
-         * does not do this either, and reaches a module about as rarely as we do.
-         */
-        cmd(CMD_SET_FS, NULL, 0);
-        vTaskDelay(pdMS_TO_TICKS(TX_FS_SETTLE_MS));
-#endif
         ok = cmd(CMD_SET_TX, go, 3);
         /*
          * Derived from the compiled PHY, not a flat three seconds: at SF12/BW125 a hundred-byte
@@ -1274,23 +832,6 @@ bool radio_send(const uint8_t *data, size_t len) {
         const uint32_t symbols = PHY_PREAMBLE + 20u +
                                  (8u * (uint32_t)total * 5u) / (4u * (PHY_SF - 2u));
         int64_t deadline = esp_timer_get_time() + (int64_t)symbols * sym_us + 500 * 1000;
-#ifdef TX_QUIET_WAIT
-        /*
-         * Say nothing while the packet is on the air.
-         *
-         * The loop below asks the chip for its interrupt flags every two milliseconds, which
-         * over a 315 ms transmission is about a hundred and fifty SPI transactions - clocking
-         * the bus, waking BUSY and burning the core in a busy wait - all of it happening a few
-         * millimetres from a radio that is mid-chirp. The working reference issues nothing at
-         * all between SetTx and the end of the packet; that silence is the largest thing left
-         * between the two, and it never appeared in a command diff because this driver's own
-         * SPI trace filters GetIrqStatus out.
-         *
-         * Sleeping through the air time leaves the loop to confirm what it finds on the first
-         * look, so the deadline and the failure paths below are unchanged.
-         */
-        vTaskDelay(pdMS_TO_TICKS(((uint32_t)symbols * sym_us) / 1000u + 20u));
-#endif
         while (ok) {
             uint8_t irq[2] = {0, 0};
             if (!cmd_read(CMD_GET_IRQ_STATUS, irq, 2)) { ok = false; break; }
@@ -1319,59 +860,6 @@ bool radio_send(const uint8_t *data, size_t len) {
     bus_unlock();
     return ok;
 }
-
-#ifdef SYNC_RX_SWEEP
-/*
- * Which sync register pair does an E220 actually transmit?
- *
- * The 256-value sweep that found "0x55" swept RadioLib's eight-bit argument, and that argument
- * expands to (high | 0x04, low << 4 | 0x04) - so it covered all sixteen combinations of the two
- * high nibbles while pinning both low nibbles at 4. Of 65536 possible register pairs it visited
- * 256, and exactly one of those decoded.
- *
- * The low nibbles were never varied. If the part transmits, say, 0x55 0x55 and the correlator
- * weighs those bits loosely, this receiver locks anyway - while this transmitter emits 0x54 0x54
- * and the far end's does not. That would be transmit-only, per-packet, indifferent to power,
- * identical in both drivers (they share the convention) and absent on a module that writes its
- * own registers. Which is the whole shape of the defect.
- *
- * Receive is where this is cheap to ask: ~100 % against an E220 beacon, so a slice of half a
- * minute per candidate is plenty. The last two candidates move a high nibble instead, as
- * negative controls: if those decode, sync matching is far looser than any of this assumes.
- */
-static const uint8_t SYNC_TRY[][2] = {
-    {0x54, 0x54},   /* what this driver and RadioLib both write */
-    {0x55, 0x55},   /* the raw value, if the byte was never a RadioLib argument */
-    {0x50, 0x50},
-    {0x5F, 0x5F},
-    {0x54, 0x55},
-    {0x55, 0x54},
-    {0x44, 0x44},   /* control: a different high nibble - should not decode */
-    {0x64, 0x64},   /* control */
-};
-#define SYNC_TRY_N (sizeof(SYNC_TRY) / sizeof(SYNC_TRY[0]))
-#ifndef SYNC_SLICE_MS
-#define SYNC_SLICE_MS 30000
-#endif
-static size_t s_sync_i;
-static int64_t s_sync_until;
-static unsigned s_sync_hits;
-
-static void sync_sweep_step(void) {
-    int64_t now = esp_timer_get_time();
-    if (s_sync_until && now < s_sync_until) return;
-    if (s_sync_until) {
-        ESP_LOGI(TAG, "sync %02X%02X -> %u decoded", SYNC_TRY[s_sync_i][0], SYNC_TRY[s_sync_i][1],
-                 s_sync_hits);
-        s_sync_i = (s_sync_i + 1) % SYNC_TRY_N;
-    }
-    s_sync_hits = 0;
-    s_sync_until = now + (int64_t)SYNC_SLICE_MS * 1000;
-    set_standby();
-    reg_write(REG_LORA_SYNC_MSB, SYNC_TRY[s_sync_i], 2);
-    enter_rx();
-}
-#endif
 
 #ifdef SX_FREQ_ERROR
 /*
@@ -1407,9 +895,6 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
     (void)idle_gap_ms;   /* a UART packet boundary; SPI hands over whole packets */
     s_have_rssi = false;
     if (!bus_lock()) return 0;
-#ifdef SYNC_RX_SWEEP
-    sync_sweep_step();
-#endif
     if (!s_in_rx) enter_rx();
 
     size_t produced = 0;
@@ -1606,9 +1091,6 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
                     s_last_rssi = -(int)ps[0] / 2 - SX_RX_GAIN_DB;
                     s_have_rssi = true;
                 }
-#ifdef SYNC_RX_SWEEP
-                s_sync_hits++;
-#endif
             } else {
                 ESP_LOGW(TAG, "rx: %u bytes but not an EBYTE frame", (unsigned)n);
             }
@@ -1632,13 +1114,8 @@ bool radio_last_rssi(int *dbm) {
 }
 
 bool radio_tx_dbm(int8_t out[4]) {
-#ifdef POWER_SWEEP
-    (void)out;
-    return false;   /* the sweep's settings are not the levels these numbers describe */
-#else
     memcpy(out, TX_DBM, sizeof(TX_DBM));
     return true;
-#endif
 }
 
 #ifdef BENCH_CMD

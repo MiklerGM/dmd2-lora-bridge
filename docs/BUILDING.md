@@ -342,19 +342,9 @@ None of these belong in a shipped image; every one is compiled out unless named.
 | `-DBENCH_CMD=1` | A command interface on the board's own console: `TX seq=<n> [power=] [preamble=] [sync=] [len=] [hdr=] [foff=]` sends exactly one packet with those settings, and answers `TXOK seq= len= foff= air=`. The sequence number leads the payload, so a reception names the transmission that produced it - no phase reconstruction, no estimated denominators. Reads the USB-serial-JTAG directly on chips that have one and UART0 elsewhere, so it does not care where the console is pointed. What a backend cannot honour it refuses: an EBYTE module owns its own preamble, sync word and frequency and says so rather than ignoring them. `foff=` is a signed kHz offset from the channel, bounded at a quarter of the bandwidth. |
 | `-DBENCH_OBSERVE=1` | EBYTE receiver only, with `BENCH_CMD`. No 30 s health probe, so the module stays in normal mode after boot; every UART chunk logged as raw hex before any check; every AUX low pulse logged with start and width; a `RSSI` console command that reads the module's ambient-noise and last-received-RSSI registers (`C0 C1 C2 C3 00 02`, enabled by REG1 bit 5). Pair with `bench/interleave.py --probe`. |
 | `-DSX_TCXO_MV=<mV>` | The TCXO rail SetDIO3AsTcxoCtrl drives. One of 1600/1700/1800/2200/2400/2700/3000/3300; anything else is a compile error rather than a silently ignored knob. |
+| `-DE220_AMBIENT_RSSI=<ms>` | EBYTE only. Turns on the module's ambient-noise register and logs the noise floor at most every that many ms while idle - whether anything is on the air at all when nothing decodes. `RSSIQ` under `BENCH_OBSERVE` reads the same register. |
 
-Sweeps. Each rotates four or sixteen variants every two seconds and spells the variant into the
-payload, so all of them meet identical conditions - this link's success probability wanders with
-sd ~0.10 over ~115 s, which makes cross-run comparison worthless below about 20 points and
-interleaving the only honest design.
-
-| Flag | What it sweeps |
-|---|---|
-| `-DPOWER_SWEEP=1` | Four transmit powers. Also the label generator the other sweeps ride on. Re-applies configuration per beacon, so it is skipped on EBYTE backends where that would write the module's flash thousands of times an hour. |
-| `-DPOWER_CLEAN=1` | Transmit power again with the PA duty/hpMax pair pinned, which the first version varied alongside the level. |
-| `-DPREAMBLE_SWEEP=1` | 8/16/32/64 preamble symbols. |
-| `-DLENGTH_SWEEP=1` | 10/24/46/100-byte payloads - whether a defect accumulates through a packet or strikes at acquisition. |
-| `-DWIDE_SWEEP=1` | A 4x4 grid: preamble length against how the transmission starts. |
-| `-DTCXO_SETTLE_TEST=1` | 0/10/40/100 ms of oscillator settling before transmit. |
-| `-DSYNC_RX_SWEEP=1` | Sync register pairs on the receiver. Disables the liveness check, which would otherwise call the sweep's own writes a mismatch and stall it. |
-| `-DSYNC_TX_SWEEP=1` | Sync register pairs on the transmitter. |
+Comparisons go through `BENCH_CMD` and `bench/interleave.py`, which alternate the variants
+packet by packet: this link's success probability wanders with sd ~0.10 over ~115 s, which makes
+cross-run comparison worthless below about 20 points and interleaving the only honest design.
+The compile-time sweeps that came before it were removed on 2026-10-09 (`docs/PHY-notes.md`).

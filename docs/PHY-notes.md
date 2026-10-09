@@ -4,8 +4,10 @@
 > (`probe/`) and the one-off `bench/analyze_*` scripts cited below were taken out of the
 > repository on 2026-10-09 and are kept on the bench machine, not published. The scripts and
 > the probe are still in the history: `git log --diff-filter=D --stat -- probe bench` names
-> the commit that removed them, and its parent has them. What the notes concluded is in
-> `ARCHITECTURE.md` and `BUILDING.md`.
+> the commit that removed them, and its parent has them. The firmware's compile-time
+> experiments (the sweeps, the RadioLib copies and replay, the beacon) went the same day, in a
+> commit that lists every flag. What the notes concluded is in `ARCHITECTURE.md` and
+> `BUILDING.md`.
 
 What the module's own datasheet does and does not tell us about the air interface,
 gathered while waiting for hardware. Source: EBYTE *E220-900T22S User Manual* (official,
