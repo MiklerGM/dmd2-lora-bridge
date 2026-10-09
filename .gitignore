@@ -22,8 +22,6 @@ firmware/sdkconfig.*
 !firmware/sdkconfig.defaults
 firmware/dist/
 
-# Raw narrowband scope captures are tens of MB: kept in ../bench-backup (beside the repository) with their SHA-256
-# listed in bench/results/README.md, not in git.
-bench/results/*-rssi-*.json.gz
-!bench/results/2026-09-22-rssi-center.json.gz
-!bench/results/2026-09-22-rssi-offsets.json.gz
+# The lab: bench run logs (lab/results), the RadioLib probe project and one-off analyses. Kept
+# on the bench machine, not in git: data is not source, and the history is no place for it.
+lab/

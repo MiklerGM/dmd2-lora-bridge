@@ -20,8 +20,8 @@ There is no third component and no useful way to merge these two. The split is m
 > transmissions, at levels taken from published numbers for each board. The Heltec (V4.3) has a
 > KCT8103L front end; the T-Deck does not.
 > `beacon` mode remains planned: `mode` is reported but not yet persisted or switchable.
-> The Arduino project in `probe/` is diagnostic scaffolding, including a RadioLib reference
-> and function substitutions. Its results are hardware evidence, not release validation.
+> The bench evidence behind these choices (run logs, a RadioLib reference project) is kept on
+> the bench machine rather than in the repository; `docs/PHY-notes.md` is its record.
 
 ## 2. Two independent axes
 
@@ -319,7 +319,7 @@ the first question with no: it is already transmitting from its own GNSS and is 
    cache before the first hardware change and test a failure after the frequency write;
    `configured` must stay false until a complete successful apply. This remains unfixed.
 9. **EBYTE mode changes right after a transmission leaked onto the air; fixed 2026-09-25.**
-   The reverse-link run in `bench/results/2026-09-21-reverse-link.json` first captured a
+   The reverse-link run of 2026-09-21 first captured a
    `C1 00 08` register-read request on air and a transient failed health check, and every later
    bench run showed it (`C1 00 09` from an E22): about one health probe in six under traffic,
    always 30-100 ms after the same module's own transmission ended, where the module takes the
@@ -327,7 +327,7 @@ the first question with no: it is already transmitting from its own GNSS and is 
    after 500 ms without a transmission (`lock_quiet` in `e220.c`), and a probe that finds the
    module busy retries on the next pass. Checked on hardware: 15 minutes of both bridges
    transmitting every 2.4 s, 30 probes each, nothing on the air
-   (`bench/results/2026-09-25-probe-leak.tsv`; docs/PHY-notes.md).
+   (docs/PHY-notes.md).
 10. **A first BLE connection can stall for 30 s.** Seen twice on 2026-09-26 with a Samsung
     S24, right after an app reinstall and right after unpairing one bridge and pairing the other:
     the bridge logs `NimBLE: ATT handler not found; op=0x1d` as the phone connects - an ATT

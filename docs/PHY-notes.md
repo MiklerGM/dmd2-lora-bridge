@@ -1,5 +1,12 @@
 # Radio PHY notes (EBYTE E220-900 family)
 
+> **The lab notebook.** The run logs (`bench/results/...`), the RadioLib probe project
+> (`probe/`) and the one-off `bench/analyze_*` scripts cited below were taken out of the
+> repository on 2026-10-09 and are kept on the bench machine, not published. The scripts and
+> the probe are still in the history: `git log --diff-filter=D --stat -- probe bench` names
+> the commit that removed them, and its parent has them. What the notes concluded is in
+> `ARCHITECTURE.md` and `BUILDING.md`.
+
 What the module's own datasheet does and does not tell us about the air interface,
 gathered while waiting for hardware. Source: EBYTE *E220-900T22S User Manual* (official,
 cdebyte.com). The E220-900T30x DMD uses shares this PHY register model; only the power
@@ -1954,7 +1961,7 @@ RSSI every 100 us with actual timestamps saved. A chirp crossing the passband ma
 This observes timing before the LoRa demodulator, while the adjacent E220 still judges delivery.
 It is not an IQ recording and cannot measure phase noise or certify the full transmitted waveform.
 The instrument, qualification criteria and raw data are documented in
-[`bench/results/README.md`](../bench/results/README.md#2026-09-22-narrowband-rssi-observation).
+`bench/results/README.md` (2026-09-22 narrowband RSSI observation).
 
 The central-frequency pilot passed the criteria fixed beforehand: six-pulse preamble trains
 with fitted periods 4087--4102 us in all eight Heltec and all eight E22 captures, none in two
@@ -1985,7 +1992,7 @@ across center and offset runs. Accepted and rejected Heltec packets do not separ
 coarse timing features, but accepted counts remain small. The short final SFD portion can
 fall outside these frequency slices, and RF phase is not observed: **this does not prove
 the entire SFD or signal identical**. The exploratory overlay and its reproducible script
-are in [`bench/results`](../bench/results/2026-09-22-waveform-review.png).
+are in `bench/results/2026-09-22-waveform-review.png`.
 
 The next controls worth running on this bench, without moving boards, are:
 
@@ -2037,7 +2044,7 @@ Sweeps using an even-length constant marker and `A0 01` are not invalidated by t
 The claim below that the layer above the PHY was already solved was premature.
 
 The controlled comparison and full raw captures are retained in
-[`bench/results`](../bench/results/README.md). Among 90 deliberately incorrect counter-header
+`bench/results`. Among 90 deliberately incorrect counter-header
 frames, **none reached E220**; six accidentally correct ones in those same arms produced two
 receptions. Correct headers yielded 19/48 with RadioLib and 8/48 with our TX, versus E22 48/48.
 A subsequent comparison reversed the driver ordering (3/24 versus 10/24); do not treat the

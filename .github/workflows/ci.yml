@@ -58,27 +58,7 @@ jobs:
           restore-keys: pio-${{ runner.os }}-
       - run: pip install --upgrade platformio
       - run: make check-firmware
-      # One gcc invocation; it needs neither the Arduino framework nor a board.
-      - run: make check-probe
       - run: make check-bench
-
-  # The probe's own build. Deliberately not in the release job's needs: it is diagnostic
-  # scaffolding that will churn while the PHY is being hunted, and a broken probe must be
-  # visible without being able to hold up a bridge release.
-  probe:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.12'
-      - uses: actions/cache@v6
-        with:
-          path: ~/.platformio
-          key: pio-probe-${{ runner.os }}-${{ hashFiles('probe/platformio.ini') }}
-          restore-keys: pio-probe-${{ runner.os }}-
-      - run: pip install --upgrade platformio
-      - run: pio run -d probe
 
   # Tags only, and only behind both checks: a release nobody ran the suite on is worse
   # than no release.
