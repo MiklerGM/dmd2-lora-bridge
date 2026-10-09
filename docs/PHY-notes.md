@@ -1101,7 +1101,7 @@ the T-Deck's antenna removed it received both at -102 to -104 dBm with SNR 0.25 
 20/20 of the Heltec's packets and **no header error** (`2026-09-24-tdeck-noantenna-check.json`);
 at strong levels today it lost 10-17 % of them, all at the header. Twenty packets do not show
 that (p about 0.06), and those SNRs were printed by firmware that dropped the sign between -1 and
-0 dB (fixed in `f4dd5c6`). But it is the first condition that has looked like it changes a loss,
+0 dB (fixed in `1159231`). But it is the first condition that has looked like it changes a loss,
 and the obvious question follows: does an EBYTE receiver stop losing our packets at a weak level?
 The valid power sweep went down to -81 dBm only.
 
@@ -2815,7 +2815,7 @@ The E220's read +39.99 and +35.99 once the SDR had an antenna.
 An SX126x builds each sync symbol from the **top five bits** of its register byte, times four:
 0x54 gives 40, 0x48 gives 36, 0x44 gives 32, and the low three bits do nothing. We wrote
 `0x54 0x54`, RadioLib's expansion of "sync 0x55". EBYTE's pair is `0x54 0x48`, and the firmware
-writes that now (ca0ce56).
+writes that now (c19f175).
 
 That also explains both sweeps above. The transmit sweep's three working pairs, `5454`, `5555`
 and `5050`, all send 40 and 40: one condition compared with itself. The receive sweep's "low
@@ -2905,7 +2905,7 @@ misses left no header error behind while the near receivers took the same packet
 did not recognise the preamble at all. Not conclusive at these numbers.
 
 **The RSSI byte** reads 0 when a signal is off the top of its scale, which our conversion had
-turned into -256 dBm (d0e1b17).
+turned into -256 dBm (608383c).
 
 **For 10-02:** the phone's bridge was sending far less than the NOR7Es around it, whose stock app
 runs the same module at 30 dBm from a proper supply. That fits what the riders saw: the tablet

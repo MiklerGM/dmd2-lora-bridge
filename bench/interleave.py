@@ -89,7 +89,7 @@ while True:
 """
 
 TX_REPLY = re.compile(r"\bTX(OK|FAIL) seq=(\d+)\b")
-# The bridge logs "rx 38 bytes, rssi -58: 00000042AAAA..." (before d8c7682 without the rssi) -
+# The bridge logs "rx 38 bytes, rssi -58: 00000042AAAA..." (before 84ecc58 without the rssi) -
 # the payload starts with its sequence number.
 RX = re.compile(r"rx \d+ bytes(?:, rssi -?\d+)?: (\d{8})")
 
