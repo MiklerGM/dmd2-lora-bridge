@@ -311,7 +311,9 @@ the first question with no: it is already transmitting from its own GNSS and is 
    open to any app on the device. Its protection level must remain `normal` because DMD2 and this app have different
    signing keys; a deliberately malicious app can declare the same permission. The global
    35-second CFG interval still bounds flash writes, but this is not cryptographic caller
-   authentication.
+   authentication. Outbound is the other way round: the permission limits who may send to DMD2,
+   not who receives, so until 2026-10-10 riders and chat reached any app registered for the
+   actions. They are now addressed to DMD2's package.
 8. **SX1262 configuration confirmation is weaker than the contract above.** Its verifier
    reads the sync word and compares a cached logical request, not hardware channel and power,
    which the chip cannot read back. Three holes in that were fixed 2026-10-10. A partial failed

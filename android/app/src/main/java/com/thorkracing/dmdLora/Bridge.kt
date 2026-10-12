@@ -16,11 +16,18 @@ object Bridge {
     fun freqLabel(channel: Int): String = "%.3f MHz".format(Locale.US, Regions.freqMhz(channel))
 
     /**
+     * Addressed to DMD2's package. An action alone reaches every app that registers for it, and
+     * these carry where riders are and what they wrote: holding LORA_BRIDGE limits who may send
+     * them, not who receives them.
+     */
+    private fun toDmd2(action: String) = Intent(action).setPackage(DmdLora.DMD2_PACKAGE)
+
+    /**
      * DMD2 sends us nothing until it has seen connected=true, so this is the handshake,
      * not a status nicety.
      */
     fun sendStatusUpdate(context: Context, connected: Boolean) {
-        val i = Intent(DmdLora.ACTION_STATUS_UPDATE).apply {
+        val i = toDmd2(DmdLora.ACTION_STATUS_UPDATE).apply {
             putExtra(DmdLora.EX_CONNECTED, connected)
             // DMD2 uses enabled=false to remember an intentional user stop. Reporting true
             // here made it revive this service after the UI's Stop button within one timeout.
@@ -42,7 +49,7 @@ object Bridge {
 
     /** Inject riders heard on the radio so DMD2 renders them as group members. */
     fun sendGroupDataReceived(context: Context, riders: JSONArray, groupId: String?) {
-        val i = Intent(DmdLora.ACTION_GROUP_DATA_RECEIVED).apply {
+        val i = toDmd2(DmdLora.ACTION_GROUP_DATA_RECEIVED).apply {
             putExtra(DmdLora.EX_RIDERS_JSON, riders.toString())
             // Optional. When present it must match, so only set it when we are sure of the group.
             if (!groupId.isNullOrEmpty()) {
@@ -55,7 +62,7 @@ object Bridge {
     }
 
     fun sendChatReceived(context: Context, name: String, senderHash: Int, text: String) {
-        val i = Intent(DmdLora.ACTION_CHAT_MESSAGE_RECEIVED).apply {
+        val i = toDmd2(DmdLora.ACTION_CHAT_MESSAGE_RECEIVED).apply {
             putExtra(DmdLora.EX_SENDER_NAME, name)
             putExtra(DmdLora.EX_SENDER_HASH, senderHash)
             putExtra(DmdLora.EX_MESSAGE, text)

@@ -13,9 +13,12 @@ Re-verify after updates.
 ## 1. Android IPC — DMD2 ⇄ companion
 
 Transport is ordinary Android broadcast Intents. Permission
-`com.thorkracing.dmdlora.permission.LORA_BRIDGE` gates both our DMD-facing receiver/service and
-the DMD2-bound direction; both apps must hold it. This intentionally sets the supported DMD2
-baseline to 4.013: 4.009 did not hold the permission when calling the companion.
+`com.thorkracing.dmdlora.permission.LORA_BRIDGE` guards the DMD2-bound direction only: DMD2's
+receiver requires it of the sender, so this app declares and holds it. Our receiver and service
+no longer require it: DMD2 4.017 does not hold it on the calls it makes (dumpsys on hardware,
+2026-09-16), and with the guard every inbound message was silently dropped. Inbound is therefore
+open to any app on the device, a recorded trade-off (the manifest, ARCHITECTURE item 7). What we
+send is addressed to DMD2's package, so no other app receives riders or chat.
 
 ### DMD2 → us (explicit `ComponentName`, so our package name must match)
 
@@ -36,7 +39,7 @@ adopts that request; no field is ever merged with remembered state.
 `riders_json` from DMD2 is an array of `{user_id, display_name, lat, lon, speed, status,
 position_age_s, timestamp}`; at most 8 echoed peers plus ourselves.
 
-### us → DMD2 (implicit broadcast; we must hold the permission)
+### us → DMD2 (broadcast to package `com.thorkracing.dmd2launcher`; we must hold the permission)
 
 | Action | Extras |
 |---|---|

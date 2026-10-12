@@ -6,7 +6,8 @@ object DmdLora {
 
     const val PERMISSION = "com.thorkracing.dmdlora.permission.LORA_BRIDGE"
 
-    /** DMD2 itself, for opening it from the app. Android 11+ needs it listed under <queries>. */
+    /** DMD2 itself: the only recipient of what we broadcast, and what the app opens. Android 11+
+     *  needs it listed under <queries>. */
     const val DMD2_PACKAGE = "com.thorkracing.dmd2launcher"
 
     // DMD2 -> us
