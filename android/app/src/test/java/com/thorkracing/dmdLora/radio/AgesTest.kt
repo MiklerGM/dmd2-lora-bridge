@@ -36,6 +36,8 @@ class AgesTest {
         assertEquals("moved since its last packet 2 s ago", 3, a.ageS(0x0B80, 54.001, 20.0, 3600, 2_000))
         assertEquals("standing still keeps the learnt offset", 3, a.ageS(0x0B80, 54.001, 20.0, 3600, 4_000))
         assertEquals("then ages as the claim does", 33, a.ageS(0x0B80, 54.001, 20.0, 3630, 34_000))
+        assertEquals("clock put right, first heard with its fix 5 min old", 300, a.ageS(0x0B80, 54.001, 20.0, 300, 35_000))
+        assertEquals("and ageing from there", 600, a.ageS(0x0B80, 54.001, 20.0, 600, 335_000))
         val honest = SenderAge()
         honest.ageS(0x1986, 54.0, 20.0, 1, 0)
         assertEquals("an honest claim is never raised", 1, honest.ageS(0x1986, 54.001, 20.0, 1, 30_000))

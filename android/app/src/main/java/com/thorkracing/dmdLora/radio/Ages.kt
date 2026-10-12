@@ -77,7 +77,8 @@ class OwnFix {
  * changed since the previous packet we heard, the fix is at most that interval old. A device
  * whose GPS clock is off - the X70 sent every fresh fix as 3600 s old - becomes fresh on our map,
  * and through our retellings on everyone else's. While it stands still, the offset learnt while
- * it moved keeps applying.
+ * it moved keeps applying until a claim falls below it. Then its clock has been put right, by how
+ * much nothing says, so the offset goes and the claim stands: a fix it then loses ages on our map.
  */
 class SenderAge {
     private class Last(val lat24: Int, val lon24: Int, val atMs: Long, val offsetS: Int)
@@ -90,12 +91,13 @@ class SenderAge {
         val lon24 = Codec.encodeLon(lon)
         val prev = last[sender]
         val moved = prev != null && (prev.lat24 != lat24 || prev.lon24 != lon24)
+        val offset = (prev?.offsetS ?: 0).takeIf { it <= claimedS } ?: 0
         val age = if (moved) {
             minOf(claimedS, ((nowMs - prev!!.atMs) / 1000).toInt() + 1)
         } else {
-            maxOf(0, claimedS - (prev?.offsetS ?: 0))
+            claimedS - offset
         }
-        last[sender] = Last(lat24, lon24, nowMs, if (moved) claimedS - age else prev?.offsetS ?: 0)
+        last[sender] = Last(lat24, lon24, nowMs, if (moved) claimedS - age else offset)
         return age
     }
 
