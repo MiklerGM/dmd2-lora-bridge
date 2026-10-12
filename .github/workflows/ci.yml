@@ -56,7 +56,9 @@ jobs:
           path: ~/.platformio
           key: pio-${{ runner.os }}-${{ hashFiles('firmware/platformio.ini') }}
           restore-keys: pio-${{ runner.os }}-
-      - run: pip install --upgrade platformio
+      # Pinned like the platform in platformio.ini: the CLI is a build input too. Bump it
+      # deliberately, to the version the last local build used.
+      - run: pip install platformio==6.1.19
       - run: make check-firmware
       - run: make check-bench
 
@@ -89,7 +91,7 @@ jobs:
           path: ~/.platformio
           key: pio-${{ runner.os }}-${{ hashFiles('firmware/platformio.ini') }}
           restore-keys: pio-${{ runner.os }}-
-      - run: pip install --upgrade platformio
+      - run: pip install platformio==6.1.19    # see the note in the firmware job
 
       # The same key that signed every APK handed out so far, or riders have to uninstall
       # before they can update. Missing secrets stop the release here rather than producing
