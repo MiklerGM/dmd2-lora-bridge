@@ -1,4 +1,4 @@
-# Host-side checks for code that has no ESP-IDF dependencies.
+# Host-side checks, built without ESP-IDF.
 test:
 	@gcc -std=c11 -Wall -Wextra -Werror -o /tmp/test_ebyte_frame test/test_ebyte_frame.c
 	@/tmp/test_ebyte_frame
@@ -18,6 +18,14 @@ test:
 	@/tmp/test_wire_payload
 	@gcc -std=c11 -Wall -Wextra -Werror -o /tmp/test_probe test/test_probe.c
 	@/tmp/test_probe
+	@# The SX1262 backend itself, on ESP-IDF headers left empty: the test defines what it uses.
+	@# Sign comparison is waived because ESP-IDF's own build turns that warning off.
+	@mkdir -p /tmp/test_sx1262_idf/driver /tmp/test_sx1262_idf/freertos
+	@cd /tmp/test_sx1262_idf && touch driver/gpio.h driver/spi_master.h esp_log.h esp_rom_sys.h \
+		esp_timer.h freertos/FreeRTOS.h freertos/semphr.h freertos/task.h
+	@gcc -std=c11 -Wall -Wextra -Werror -Wno-sign-compare \
+		-I/tmp/test_sx1262_idf -o /tmp/test_sx1262 test/test_sx1262.c
+	@/tmp/test_sx1262
 
 
 # One flashable file per board, for people who want to run the bridge without a build

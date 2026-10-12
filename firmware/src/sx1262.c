@@ -49,6 +49,8 @@
 #define CMD_READ_BUFFER          0x1E
 #define CMD_GET_RX_BUFFER_STATUS 0x13
 #define CMD_GET_PACKET_STATUS    0x14
+#define CMD_GET_STATUS           0xC0
+#define CHIP_MODE_RX             0x5   /* status bits 6:4 */
 
 #define REG_LORA_SYNC_MSB 0x0740
 #define REG_LORA_SYNC_LSB 0x0741
@@ -229,10 +231,28 @@ static bool wait_busy(uint32_t timeout_ms) {
     return true;
 }
 
+/*
+ * Set when the chip reported a command error, and cleared by a sequence about to check it
+ * (configure, enter_rx). A transfer that the SPI driver completed says the bus worked, not that
+ * the radio accepted what it was told - and publishing configured=1 on the strength of the former
+ * is how a rejected frequency or power would pass unnoticed.
+ */
+static bool s_cmd_error;
+/* What a transfer clocks back when its caller wants none of it, since the status byte rides on
+ * writes too: the largest write, rounded up to the four bytes DMA receives in. Bus lock only. */
+static uint8_t s_miso[260];
+/* The command that the next transfer's status byte will be about. */
+static uint8_t s_last_opcode;
+
 static bool xfer(const uint8_t *tx, uint8_t *rx, size_t len) {
+    if (!rx) {
+        if (len > sizeof(s_miso)) return false;
+        rx = s_miso;
+    }
     if (!wait_busy(100)) return false;
     spi_transaction_t t = {.length = len * 8, .tx_buffer = tx, .rx_buffer = rx};
-    bool ok = spi_device_polling_transmit(s_spi, &t) == ESP_OK;
+    const bool sent = spi_device_polling_transmit(s_spi, &t) == ESP_OK;
+    bool ok = sent;
     /*
      * BUSY has to be low again before the next command, and it rises a moment *after* NSS does -
      * so sampling it only on the way in samples the gap, and the chip silently discards whatever
@@ -248,6 +268,20 @@ static bool xfer(const uint8_t *tx, uint8_t *rx, size_t len) {
         delay_us(1);
         ok = wait_busy(100);
     }
+    /*
+     * Status bits 3:1 - 3 command timeout, 4 processing error, 5 failure to execute - and about
+     * the command before this one, since the byte goes out while this one is still arriving. So a
+     * refusal is heard one transfer late, whatever kind of transfer that is: one that never looked,
+     * like a register write, would let a refused SetTxParams pass as applied.
+     */
+    if (sent && len > 1) {
+        const uint8_t status = (uint8_t)((rx[1] >> 1) & 0x07);
+        if (status >= 3 && status <= 5) {
+            ESP_LOGW(TAG, "command %02X rejected, status %u", s_last_opcode, status);
+            s_cmd_error = true;
+        }
+    }
+    s_last_opcode = tx[0];
 #ifdef SX_SPI_TRACE
     /*
      * Bench only: the same view RadioLib's RLB_SPI debug gives, so the two can be diffed.
@@ -275,27 +309,20 @@ static bool xfer(const uint8_t *tx, uint8_t *rx, size_t len) {
     return ok;
 }
 
-/*
- * Set when the chip reported a command error, cleared at the start of configure(). A transfer
- * that the SPI driver completed says the bus worked, not that the radio accepted what it was
- * told - and publishing configured=1 on the strength of the former is how a rejected frequency
- * or power would pass unnoticed.
- */
-static bool s_cmd_error;
-
 static bool cmd(uint8_t opcode, const uint8_t *args, size_t n) {
-    uint8_t buf[16], st[16] = {0};
+    uint8_t buf[16];
     if (n + 1 > sizeof(buf)) return false;
     buf[0] = opcode;
     if (n) memcpy(&buf[1], args, n);
-    if (!xfer(buf, st, n + 1)) return false;
-    /* Status bits 3:1: 3 command timeout, 4 processing error, 5 failure to execute. */
-    const uint8_t status = (uint8_t)((st[n ? 1 : 0] >> 1) & 0x07);
-    if (status >= 3 && status <= 5) {
-        ESP_LOGW(TAG, "command %02X rejected, status %u", opcode, status);
-        s_cmd_error = true;
-    }
-    return true;
+    return xfer(buf, NULL, n + 1);
+}
+
+/* GetStatus: the chip's mode, or -1 when the bus did not answer. Every transfer's status byte
+ * tells of the command before it, so this is also how the last command of a sequence is heard. */
+static int chip_mode(void) {
+    uint8_t tx[2] = {CMD_GET_STATUS, 0x00}, rx[4] = {0};
+    if (!xfer(tx, rx, 2)) return -1;
+    return (rx[1] >> 4) & 0x07;
 }
 
 static bool cmd_read(uint8_t opcode, uint8_t *out, size_t n) {
@@ -482,11 +509,6 @@ static bool set_power(uint8_t level) {
     return cmd(CMD_SET_TX_PARAMS, tx, 2);
 }
 
-static bool clear_irq(void) {
-    uint8_t c[2] = {IRQ_CLEAR_HI, IRQ_CLEAR_LO};
-    return cmd(CMD_CLEAR_IRQ_STATUS, c, 2);
-}
-
 static bool configure(const radio_request_t *req) {
     uint8_t reg = 0x01;                      /* DC-DC, as the Heltec board is wired */
     /* The voltage comes from SX_TCXO_MV rather than a literal, which is what that macro always
@@ -553,7 +575,9 @@ static bool configure(const radio_request_t *req) {
     /* Everything latched, only RxDone and TxDone on DIO1. */
     STEP("irq params", cmd(CMD_SET_DIO_IRQ_PARAMS, irq, 8));
     /* Every step above reported a completed transfer; this asks whether the chip also accepted
-     * them, so configured=1 means the radio agreed rather than that the bus worked. */
+     * them, so configured=1 means the radio agreed rather than that the bus worked. Each refusal
+     * is told on the transfer after it, so the last command is only heard from by asking. */
+    STEP("status", chip_mode() >= 0);
     STEP("no command was rejected", !s_cmd_error);
     {
         uint8_t sy[2] = {0, 0}, md = 0, cl = 0, oc = 0;
@@ -595,9 +619,14 @@ static bool enter_rx(void) {
 #else
     if (!set_packet_params(255)) return false;
 #endif
+    s_cmd_error = false;   /* what that transfer told was about the command before it */
     if (!cmd(CMD_CLEAR_IRQ_STATUS, clear, 2)) return false;
     fem_transmit(false);
     if (!cmd(CMD_SET_RX, rx, 3)) return false;
+    /* Listening once the chip says so, not once the bus took the command: a SetRx it refused
+     * leaves it in standby over a transfer that worked, and only the next transfer tells. The
+     * same goes for a payload limit it did not take. */
+    if (chip_mode() != CHIP_MODE_RX || s_cmd_error) return false;
     s_in_rx = true;
     return true;
 }
@@ -686,6 +715,11 @@ radio_state_t radio_apply(const radio_request_t *req) {
         return RADIO_MISMATCH;
     }
     if (!bus_lock()) return RADIO_BUSY;
+    /* Forgotten before the first write rather than after a failure. A sequence that stops
+     * partway - a transfer that fails, or a rejected command found only once every write has
+     * gone - leaves the chip partly on the new request, and the old one kept here would then
+     * pass every radio_verify against a radio that no longer holds it. */
+    s_have_applied = false;
     bool ok = configure(req) && enter_rx();
     if (ok) {
         s_applied = *req;
@@ -708,6 +742,7 @@ radio_state_t radio_verify(const radio_request_t *req) {
     bool answered = xfer(tx, rx, 6);
     sync[0] = rx[4];
     sync[1] = rx[5];
+    const bool listening = s_in_rx;
     bus_unlock();
 
     if (!answered) return RADIO_NO_ANSWER;
@@ -720,6 +755,13 @@ radio_state_t radio_verify(const radio_request_t *req) {
     }
     if (!s_have_applied || s_applied.channel != req->channel ||
         s_applied.power_level != req->power_level || s_applied.lbt != req->lbt) {
+        return RADIO_MISMATCH;
+    }
+    /* radio_send reports the packet, not the return to receive that follows it. If that failed
+     * and radio_receive has not managed it since, this radio is configured and deaf - which no
+     * register shows, so it is said here, and a new apply is what brings it back. */
+    if (!listening) {
+        ESP_LOGW(TAG, "verify: not receiving");
         return RADIO_MISMATCH;
     }
     return RADIO_OK;

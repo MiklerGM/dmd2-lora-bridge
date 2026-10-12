@@ -313,11 +313,18 @@ the first question with no: it is already transmitting from its own GNSS and is 
    35-second CFG interval still bounds flash writes, but this is not cryptographic caller
    authentication.
 8. **SX1262 configuration confirmation is weaker than the contract above.** Its verifier
-   reads the sync word and compares a cached logical request, not hardware channel and power.
-   A partial failed apply also leaves the previous cache valid: the periodic verifier can
-   reopen TX under that old request although the chip was partly changed. Invalidate that
-   cache before the first hardware change and test a failure after the frequency write;
-   `configured` must stay false until a complete successful apply. This remains unfixed.
+   reads the sync word and compares a cached logical request, not hardware channel and power,
+   which the chip cannot read back. Three holes in that were fixed 2026-10-10. A partial failed
+   apply left the previous cache valid, so the periodic verifier could reopen TX under the old
+   request on a chip partly changed; the cache is now forgotten before the first hardware write
+   and set only after a complete apply, so `configured` stays false until one succeeds. A
+   command the chip refused went unnoticed when the transfer after it - the one that reports it
+   - was a register access, or when it was the last of a sequence; every transfer's status byte
+   is now read, and a sequence ends by asking. And a receiver that did not get back into RX
+   after a transmission, its SetRx lost or refused, passed as healthy; RX now counts only once
+   the chip reports it, and the verifier reports a radio that is not listening. All three are
+   tested on the host against a fake chip that, like the real one, reports each command's
+   outcome one transfer late (`firmware/test/test_sx1262.c`).
 9. **EBYTE mode changes right after a transmission leaked onto the air; fixed 2026-09-25.**
    The reverse-link run of 2026-09-21 first captured a
    `C1 00 08` register-read request on air and a transient failed health check, and every later
