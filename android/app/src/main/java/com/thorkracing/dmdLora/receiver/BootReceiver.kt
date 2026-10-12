@@ -11,8 +11,8 @@ import com.thorkracing.dmdLora.service.LoraService
  * Brings the bridge back after a reboot, when the rider has asked for that.
  *
  * Starting a foreground service from the background is otherwise forbidden from Android 12
- * onwards; receiving BOOT_COMPLETED is one of the few exemptions. It can still be refused, so
- * the failure is caught and reported rather than crashing on the way out of boot.
+ * onwards; receiving BOOT_COMPLETED is one of the few exemptions. It can still be refused, which
+ * [LoraService.start] reports rather than crashing on the way out of boot.
  */
 class BootReceiver : BroadcastReceiver() {
 
@@ -27,11 +27,6 @@ class BootReceiver : BroadcastReceiver() {
             EventLog.log("boot: autostart or bridge is off, staying put")
             return
         }
-        try {
-            LoraService.start(context)
-            EventLog.log("boot: service started")
-        } catch (e: Exception) {
-            EventLog.log("boot: could not start service (${e.javaClass.simpleName})")
-        }
+        if (LoraService.start(context)) EventLog.log("boot: service started")
     }
 }

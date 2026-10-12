@@ -296,9 +296,24 @@ class LoraService : Service() {
         private const val AMBER = 0xFFF9A825.toInt()
         private const val GREEN = 0xFF2E7D32.toInt()
 
-        fun start(context: Context) {
+        /**
+         * False when Android refused. From the background, without one of its exemptions - the
+         * battery one the app asks for, say - a foreground service may not start, and the refusal
+         * is an exception that would take the whole app down with the receiver that asked. The
+         * request behind the start is already recorded, and DMD2, answered with connected=false,
+         * starts this service itself when the bridge goes quiet.
+         */
+        fun start(context: Context): Boolean {
             val i = Intent(context, LoraService::class.java).setAction(DmdLora.ACTION_START)
-            context.startForegroundService(i)
+            return try {
+                context.startForegroundService(i)
+                true
+            } catch (e: IllegalStateException) { // ForegroundServiceStartNotAllowedException, API 31+
+                EventLog.log("cannot start the bridge from the background (${e.javaClass.simpleName}); " +
+                    "open this app, or let it run unrestricted in its battery settings")
+                Bridge.sendStatusUpdate(context, connected = false)
+                false
+            }
         }
 
         fun startByUser(context: Context) {
