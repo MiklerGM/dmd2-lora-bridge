@@ -16,6 +16,8 @@ one transmitter are reported, never one transmitter against another.
 
 import argparse
 import collections
+import contextlib
+import io
 import json
 import re
 import statistics
@@ -73,14 +75,15 @@ def ladders(matched, sent):
 
 
 def ladder_holds(steps, ref_dbm):
-    """Whether a transmitter's steps from level 0 are within LADDER_TOL of its datasheet's."""
-    return all(abs(steps[k] - (ref_dbm[k] - ref_dbm[0])) <= LADDER_TOL for k in steps)
+    """Whether a transmitter's steps from level 0 are within LADDER_TOL of its datasheet's. Weak
+    levels may be missing, but level 0 alone is no step at all and holds nothing."""
+    return any(k != 0 for k in steps) and all(
+        abs(steps[k] - (ref_dbm[k] - ref_dbm[0])) <= LADDER_TOL for k in steps)
 
 
-def report(run, capture, start, fs, ref, ref_dbm):
+def report(run, bursts, start, ref, ref_dbm):
     sent = {int(k): v for k, v in run["sent"].items()}
     windows = {int(k): tuple(v) for k, v in run["tx_times"].items() if int(k) in sent}
-    bursts = read_bursts(capture, fs)
     matched = match(bursts, windows, start)
     print(f"{len(bursts)} bursts in the recording, {len(matched)} matched to {len(windows)} packets")
     holds = None
@@ -89,7 +92,9 @@ def report(run, capture, start, fs, ref, ref_dbm):
             print(f"  {tx}: level 0 has too few clean bursts")
             continue
         steps = {k: v[0] - levels[0][0] for k, v in levels.items() if v[0] is not None and v[1] >= MIN_BURSTS}
-        print(f"  {tx}: " + "  ".join(f"level {k} {levels[k][0]:+6.1f} dBFS ({levels[k][1]})" for k in sorted(levels)))
+        print(f"  {tx}: " + "  ".join(
+            f"level {k} " + (f"{v:+6.1f} dBFS" if v is not None else "excluded, no clean burst") + f" ({n})"
+            for k, (v, n) in sorted(levels.items())))
         print(f"  {tx}: steps from level 0 " + "  ".join(f"{k}: {steps[k]:+5.1f}" for k in sorted(steps) if k))
         if tx == ref:
             holds = ladder_holds(steps, ref_dbm)
@@ -112,6 +117,13 @@ def self_check():
     assert ladders(mixed, {1: "e0", 2: "e0", 3: "e0", 4: "e0"})["e"][0] == (-21.0, 3)
     assert ladder_holds({0: 0.0, 1: -4.0, 2: -10.5, 3: -11.0}, [22, 17, 13, 10])
     assert not ladder_holds({0: 0.0, 1: -2.0, 2: -2.0, 3: -5.0}, [22, 17, 13, 10])
+    # A clean level 0 beside a level whose every burst clipped: reported rather than a traceback,
+    # and with no step left to check, the reference is not called good.
+    run = {"sent": {s: "e0" if s <= 20 else "e1" for s in range(1, 22)},
+           "tx_times": {s: (10.0 * s, 10.0 * s + 0.5) for s in range(1, 22)}}
+    bursts = [(10.0 * s + 0.1, -20.0 if s <= 20 else -5.0, 0.0 if s <= 20 else 0.4, 8) for s in range(1, 22)]
+    with contextlib.redirect_stdout(io.StringIO()):
+        assert report(run, bursts, 0.0, "e", [22, 17, 13, 10]) is False
     print("analyze_sdr_power: self-check passes")
 
 
@@ -131,7 +143,11 @@ def main():
     if not (args.run and args.capture and args.start):
         ap.error("give run.json, capture.cu8 and --start")
     ref_dbm = [float(x) for x in args.ref_dbm.split(",")]
-    holds = report(json.load(open(args.run)), args.capture, args.start, args.fs, args.ref, ref_dbm)
+    run = json.load(open(args.run))
+    if run.get("invalid"):   # set by interleave.py; captures from before it have none
+        print("marked invalid, not used: " + "; ".join(run["invalid"]))
+        return 1
+    holds = report(run, read_bursts(args.capture, args.fs), args.start, args.ref, ref_dbm)
     return 0 if holds else 1
 
 

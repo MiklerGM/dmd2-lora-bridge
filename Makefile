@@ -10,11 +10,13 @@ check-firmware:
 	@cd firmware && pio run -s
 	@echo "firmware: host tests pass, image built"
 
-# The bench runner's scheduler, which decides the order two transmitters take turns in. It
-# needs no hardware and no pyserial, and it is the one part of that script that can be wrong
-# without anything looking wrong - an uneven schedule quietly biases every number it prints.
+# The parts of the bench that can be wrong without anything looking wrong: the runner's
+# scheduler and its readers - an uneven schedule or a dead reader quietly biases every number it
+# prints - and the power analyzers' rules for what counts as a reference. No hardware, no pyserial.
 check-bench:
 	@python3 bench/interleave.py --self-check
+	@python3 bench/analyze_power.py --self-check
+	@python3 bench/analyze_sdr_power.py --self-check
 
 # Build a debug APK named after the commit it came from, so which build is on the phone is
 # never in doubt.

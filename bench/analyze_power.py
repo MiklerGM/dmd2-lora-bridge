@@ -13,6 +13,8 @@ reference's own steps is left out of that run.
 """
 
 import argparse
+import contextlib
+import io
 import json
 import re
 import statistics
@@ -50,9 +52,10 @@ def medians(run):
 
 def estimate(arms, dut, ref, ref_dbm):
     """{dut level: dBm}, each against the reference level nearest it in received strength, so
-    the receiver's scale only has to hold over a few dB. None if the reference's steps fail."""
+    the receiver's scale only has to hold over a few dB. None if the reference's steps fail, or
+    if it has none: weak levels may be missing (run 3's rule), but level 0 alone checks nothing."""
     refs = {int(a[len(ref):]): v for a, v in arms.items() if a.startswith(ref)}
-    if 0 not in refs:
+    if 0 not in refs or len(refs) < 2:
         return None
     for level, v in refs.items():
         if abs((v - refs[0]) - (ref_dbm[level] - ref_dbm[0])) > LADDER_TOL:
@@ -79,8 +82,11 @@ def combine(estimates):
 def report(runs, dut, ref, ref_dbm):
     estimates = []
     for name, run in runs:
-        meds, dropped = medians(run)
         print(f"\n{name}")
+        if run.get("invalid"):   # set by interleave.py; captures from before it have none
+            print("  marked invalid, left out: " + "; ".join(run["invalid"]))
+            continue
+        meds, dropped = medians(run)
         for d in dropped:
             print(f"  dropped {d}")
         for rx, arms in meds.items():
@@ -88,7 +94,7 @@ def report(runs, dut, ref, ref_dbm):
             e = estimate(arms, dut, ref, ref_dbm)
             print(f"  {rx:>8}: {row}")
             if e is None:
-                print(f"  {rx:>8}: reference steps off its datasheet - left out")
+                print(f"  {rx:>8}: reference steps off its datasheet, or none to check - left out")
             else:
                 estimates.append(e)
                 print(f"  {rx:>8}: " + "  ".join(f"{dut}{k} {v:5.1f} dBm" for k, v in sorted(e.items())))
@@ -128,10 +134,17 @@ def self_check():
     assert estimate(meds["far"], "h", "e", [22, 17, 13, 10]) == e, "a common offset must cancel"
     # A reference whose steps are off its datasheet is not used.
     assert estimate(dict(meds["near"], e3=-60), "h", "e", [22, 17, 13, 10]) is None
+    # Nor one with only level 0 left, which has no step to hold.
+    assert estimate({"e0": -60, "h0": -55}, "h", "e", [22, 17, 13, 10]) is None
     # Too few packets, or a saturated reading, drops the arm at that receiver.
     few = {"sent": {"1": "h0"}, "log": {"near": ["rx 38 bytes, rssi -50: 00000001..."]}}
     assert medians(few)[1] == ["near/h0: 1 decoded"]
     assert combine([{0: 26}, {0: 27}])[0] == (26.5, 2.0, 2)
+    # A run interleave.py marked invalid is no evidence, however good its numbers look.
+    run = {"sent": sent, "log": logs}
+    with contextlib.redirect_stdout(io.StringIO()):
+        assert report([("run", run)], "h", "e", [22, 17, 13, 10]) is not None
+        assert report([("run", dict(run, invalid=["far: ssh session ended"]))], "h", "e", [22, 17, 13, 10]) is None
     print("analyze_power: self-check passes")
 
 
