@@ -57,4 +57,22 @@ class AgesTest {
         assertEquals("but once it reports itself 2 km away, that point is history", 500,
             r.ageS(0x0B80, 54.0, 20.0, 0.0, 0, 500_000))
     }
+
+    @Test fun aFrozenCopyNeverGetsYounger() {
+        // The hour of 2026-09-30, pruned every minute: retold on the air for 25 minutes, then only by
+        // our own DMD2, whose copy encodes one LSB over. Each side in its caller's order - the radio
+        // dates, then records; the outbound path records, then dates.
+        val r = RetoldAge(FirstHand())
+        for (minute in 0..60) {
+            val now = minute * 60_000L
+            val age = if (minute < 25) {
+                r.ageS(0x1986, 53.86402, 22.34631, 62.0, 0, now).also { r.saw(0x1986, 53.86402, 22.34631, now) }
+            } else {
+                r.saw(0x1986, 53.86402 + 2.2e-5, 22.34631, now)
+                r.ageS(0x1986, 53.86402 + 2.2e-5, 22.34631, 62.0, 0, now)
+            }
+            assertEquals("minute $minute", minute * 60, age)
+            r.prune(now)
+        }
+    }
 }

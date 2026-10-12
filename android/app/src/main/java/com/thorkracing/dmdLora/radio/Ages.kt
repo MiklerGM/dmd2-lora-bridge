@@ -121,35 +121,57 @@ class SenderAge {
  * these floors.
  */
 class RetoldAge(private val firstHand: FirstHand) {
-    private val seen = HashMap<Long, Long>() // rider + wire position -> first seen, monotonic ms
+    /** When a point was first heard of, and when last; monotonic ms. */
+    private class Seen(var firstMs: Long, var lastMs: Long)
+
+    private val seen = HashMap<Long, Seen>() // rider + wire position
 
     /** A sighting of [rider] at a point, from anyone: the rider itself, a reteller, our own DMD2. */
     @Synchronized
     fun saw(rider: Int, lat: Double, lon: Double, nowMs: Long) {
-        seen.putIfAbsent(key(rider, Codec.encodeLat(lat), Codec.encodeLon(lon)), nowMs)
+        remember(rider, Codec.encodeLat(lat), Codec.encodeLon(lon), nowMs)
     }
 
     /** The age to pass on for a retold point: the claim, raised to what the evidence proves. */
     @Synchronized
     fun ageS(rider: Int, lat: Double, lon: Double, speedKmh: Double, claimedS: Int, nowMs: Long): Int {
-        val lat24 = Codec.encodeLat(lat)
-        val lon24 = Codec.encodeLon(lon)
-        // One LSB either way: the stock encoder truncates, so each stock hop can move a point by one.
-        var first = nowMs
-        for (dLat in -1..1) for (dLon in -1..1) {
-            seen[key(rider, lat24 + dLat, lon24 + dLon)]?.let { if (it < first) first = it }
-        }
-        seen.putIfAbsent(key(rider, lat24, lon24), first)
+        val first = remember(rider, Codec.encodeLat(lat), Codec.encodeLon(lon), nowMs)
         val sinceFirst = ((nowMs - first) / 1000).toInt()
         val atSpeed = speedKmh >= MOVING_KMH
         val superseded = firstHand.reportedElsewhereSince(rider, lat, lon, first)
         return if (atSpeed || superseded) maxOf(claimedS, sinceFirst) else claimedS
     }
 
-    /** Forget points from long ago; called every few minutes. */
+    /**
+     * Forget points nobody has mentioned for a while; called every few minutes. Not points first
+     * heard of long ago: a frozen copy is still being retold an hour on, and forgetting when it
+     * was first heard of would hand it back as new.
+     *
+     * ponytail: a rider lapping a circuit at speed comes back to a point still mentioned less than
+     * KEEP_MS ago, and is retold there as old as its first lap. Restart a point and its one-LSB
+     * neighbours on the rider's own report from there, if laps ever matter.
+     */
     @Synchronized
     fun prune(nowMs: Long) {
-        seen.values.removeIf { nowMs - it > KEEP_MS }
+        seen.values.removeIf { nowMs - it.lastMs > KEEP_MS }
+    }
+
+    /**
+     * Records a sighting and returns when the point was first heard of. One LSB either way is the
+     * same point - the stock encoder truncates, so each stock hop can move a point by one - and the
+     * earliest of those is kept in the point's own entry, so the evidence outlives the neighbour it
+     * came from: our own DMD2's copy of a frozen point can sit one LSB from the one on the air.
+     */
+    private fun remember(rider: Int, lat24: Int, lon24: Int, nowMs: Long): Long {
+        var first = nowMs
+        for (dLat in -1..1) for (dLon in -1..1) {
+            seen[key(rider, lat24 + dLat, lon24 + dLon)]?.let { if (it.firstMs < first) first = it.firstMs }
+        }
+        seen.getOrPut(key(rider, lat24, lon24)) { Seen(first, nowMs) }.apply {
+            firstMs = first
+            lastMs = nowMs
+        }
+        return first
     }
 
     @Synchronized
