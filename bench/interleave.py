@@ -124,6 +124,68 @@ def reset(port):
     port.rts = False
 
 
+def pump(reader, stream):
+    """Collect a board's lines until told to stop. A reader that ends early says why in
+    reader.failed: silence from a dead reader reads exactly like a receiver that heard nothing."""
+    while not reader.stop.is_set():
+        try:
+            raw = stream.readline()
+        except Exception as e:
+            if not reader.stop.is_set():
+                reader.failed = f"read failed: {e}"
+            return
+        if not raw:
+            # A serial port reads empty when its timeout passes; a pipe only once ssh has gone.
+            if reader.proc and not reader.stop.is_set():
+                reader.failed = "ssh session ended"
+                return
+            continue
+        line = raw.decode("utf-8", "replace").rstrip()
+        with reader.lock:
+            reader.lines.append(line)
+            reader.times.append(time.time())
+        m = RX.search(line)
+        if m:
+            reader.seen.setdefault(int(m.group(1)), time.time())
+
+
+def booted(reader):
+    with reader.lock:
+        return any("bridge up" in line for line in reader.lines)
+
+
+def ready(readers, timeout=15.0):
+    """Whether every board has printed its boot banner, waiting up to timeout. One never shown to
+    be listening would be counted as one that heard nothing, so the run ends before sending."""
+    end = time.time() + timeout
+    while True:
+        late = [r for r in readers if r.failed or not booted(r)]
+        if not late:
+            return True
+        if time.time() > end:
+            for r in late:
+                print(f"  ! {r.name}: {r.failed or 'no boot banner'} - not shown to be listening, "
+                      f"so nothing was sent")
+            for r in readers:
+                r.close()
+            return False
+        time.sleep(0.2)
+
+
+def invalid(sent, readers, stopped=None):
+    """Why a finished run is no measurement, printed; empty if it is one. Partial data is still
+    worth keeping, so the caller reports and saves it either way and only the exit code says."""
+    faults = [f"{r.name}: {r.failed}" for r in readers if r.failed]
+    if stopped:
+        faults.append(f"stopped early: {stopped}")
+    if not sent:
+        faults.append("nothing was transmitted: every packet was refused or unanswered. Check that "
+                      "the transmitters are running this firmware and not sitting in the bootloader.")
+    for f in faults:
+        print(f"  ! INVALID - {f}")
+    return faults
+
+
 class Node(threading.Thread):
     """One board, one connection, both roles.
 
@@ -140,7 +202,7 @@ class Node(threading.Thread):
         self.name, self.spec = name, spec
         self.seen, self.lines, self.times = {}, [], []
         self.stop = threading.Event()
-        self.proc, self.port = None, None
+        self.proc, self.port, self.failed = None, None, None
         self.lock = threading.Lock()
         if remote(spec):
             host, dev = spec.split(":", 1)
@@ -161,21 +223,7 @@ class Node(threading.Thread):
         self.start()
 
     def run(self):
-        stream = self.proc.stdout if self.proc else self.port
-        while not self.stop.is_set():
-            try:
-                raw = stream.readline()
-            except Exception:
-                break
-            if not raw:
-                continue
-            line = raw.decode("utf-8", "replace").rstrip()
-            with self.lock:
-                self.lines.append(line)
-                self.times.append(time.time())
-            m = RX.search(line)
-            if m:
-                self.seen.setdefault(int(m.group(1)), time.time())
+        pump(self, self.proc.stdout if self.proc else self.port)
 
     def write(self, text):
         data = text.encode()
@@ -261,8 +309,10 @@ class Receiver(threading.Thread):
         self.seen = {}          # seq -> arrival time
         self.lines, self.times = [], []
         self.stop = threading.Event()
+        self.lock = threading.Lock()
         self.proc = None
         self.port = None
+        self.failed = None
 
     def _open(self):
         if remote(self.spec):
@@ -287,20 +337,7 @@ class Receiver(threading.Thread):
         return self.port
 
     def run(self):
-        stream = self._open()
-        while not self.stop.is_set():
-            try:
-                raw = stream.readline()
-            except Exception:
-                break          # the port went away, which on the way out is expected
-            if not raw:
-                continue
-            line = raw.decode("utf-8", "replace").rstrip()
-            self.lines.append(line)
-            self.times.append(time.time())
-            m = RX.search(line)
-            if m:
-                self.seen.setdefault(int(m.group(1)), time.time())
+        pump(self, self._open())
 
     def close(self):
         """Stop first and wait, then close: closing the port under a blocked reader raises."""
@@ -414,6 +451,33 @@ def self_check():
         assert Transmitter.send(tx, 1, "", timeout=0.2) is expected, chunks
     print("acknowledgements: all checks pass")
 
+    # A reader whose port or ssh session goes away has to say so, or its silence passes for a
+    # receiver that heard nothing. A serial timeout, though, is only a pause.
+    def stream(reader, reads):
+        """Hands out reads in turn - bytes, or an exception to raise - then stops the reader."""
+        it = iter(reads)
+
+        def readline():
+            r = next(it, None)
+            if isinstance(r, Exception):
+                raise r
+            if r is None:
+                reader.stop.set()
+                return b""
+            return r
+        return SimpleNamespace(readline=readline)
+
+    for proc, reads, failed in (
+        (None, [b"", b"bridge up\n"], None),
+        (None, [b"bridge up\n", OSError("unplugged")], "read failed: unplugged"),
+        (object(), [b"bridge up\n", b""], "ssh session ended"),
+    ):
+        r = SimpleNamespace(name="check", stop=threading.Event(), proc=proc, failed=None,
+                            lock=threading.Lock(), lines=[], times=[], seen={})
+        pump(r, stream(r, reads))
+        assert r.failed == failed and r.lines == ["bridge up"], (reads, r.failed, r.lines)
+    print("readers: all checks pass")
+
 
 def matrix(args):
     """Every board transmits in its turn; every other board listens. One run, all pairings.
@@ -425,6 +489,8 @@ def matrix(args):
     nodes = [Node(*spec.split("=", 1)) for spec in args.node]
     print(f"{len(nodes)} boards, {args.n} packets each, every pairing in one run")
     time.sleep(6.0)   # ssh sessions up, and any board that reset on open finished booting
+    if not ready(nodes):
+        return 1
 
     by_name = {n.name: n for n in nodes}
     rng = random.Random(args.seed) if args.seed is not None else None
@@ -442,6 +508,9 @@ def matrix(args):
     time.sleep(args.settle)
     for n in nodes:
         n.close()
+    faults = invalid(sent, nodes)
+    if not sent:
+        return 1
 
     table = defaultdict(lambda: defaultdict(int))
     totals = defaultdict(int)
@@ -471,9 +540,10 @@ def matrix(args):
             "sent": sent,
             "seen": {n.name: sorted(n.seen) for n in nodes},
             "log": {n.name: n.lines for n in nodes},
+            "invalid": faults,
         }, indent=1))
         print(f"\nraw result in {args.out}")
-    return 0
+    return 1 if faults else 0
 
 
 def main():
@@ -552,6 +622,9 @@ def main():
     # Long enough for an ssh session to come up and for a board that reset when its port was
     # opened to finish booting. A receiver still booting is a receiver that misses packets.
     time.sleep(6.0)
+    observers = rxs + [t for t in txs if isinstance(t, Node)]
+    if not ready(observers):
+        return 1
 
     print(f"{len(arms)} arms on {len(txs)} transmitters, {len(rxs)} receivers, "
           f"{args.n} packets each, seed {args.seed}")
@@ -585,6 +658,7 @@ def main():
     sent = {}                      # seq -> arm name
     tx_times, probe = {}, {}       # seq -> [sent, answered]; seq -> {receiver: reply}
     neighbour, state = {}, None    # seq -> the toggled receiver's state when it went out
+    stopped = None                 # why the schedule was cut short, which breaks its palindrome
     per_block = args.block * (2 if args.precede else 1)
     counter = itertools.count(1)
     for i, (name, tx, extra) in enumerate(schedule, 1):
@@ -593,7 +667,8 @@ def main():
             want = cycle[b % len(cycle)]
             reply = toggle.command(want, f"{want} ", timeout=8.0)
             if reply is None or "FAILED" in reply:
-                print(f"\n  ! {toggle.name} did not confirm {want}; stopping")
+                stopped = f"{toggle.name} did not confirm {want}"
+                print(f"\n  ! {stopped}; stopping")
                 break
             state = want
             time.sleep(1.0)
@@ -618,21 +693,14 @@ def main():
     time.sleep(args.settle)
     if toggle and state != pair[-1]:
         toggle.command(pair[-1], f"{pair[-1]} ", timeout=8.0)   # leave it in the resting state
-    for r in rxs + [t for t in txs if isinstance(t, Node)]:
+    for r in observers:
         r.close()
 
     for r in rxs:
-        banner = [l for l in r.lines if "bridge up" in l]
-        if banner:
-            print(f"{r.name}: {banner[-1].split('bridge up: ', 1)[-1].strip()}")
-        else:
-            print(f"{r.name}: WARNING - never printed a boot banner, so nothing here says it "
-                  f"was listening at all ({len(r.lines)} lines captured)")
-
+        banner = [l for l in r.lines if "bridge up" in l][-1]   # ready() saw one
+        print(f"{r.name}: {banner.split('bridge up: ', 1)[-1].strip()}")
+    faults = invalid(sent, observers, stopped)
     if not sent:
-        print("\nnothing was transmitted: every packet was refused or unanswered, so there is "
-              "no measurement here. Check that the transmitters are running this firmware and "
-              "not sitting in the bootloader.")
         return 1
 
     # ---- results ----------------------------------------------------------
@@ -669,8 +737,10 @@ def main():
             "probe": probe,
             "neighbour": neighbour,
             "argv": sys.argv,
+            "invalid": faults,
         }, indent=1))
         print(f"\nraw result in {args.out}")
+    return 1 if faults else 0
 
 
 if __name__ == "__main__":
