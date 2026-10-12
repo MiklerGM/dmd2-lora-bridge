@@ -174,6 +174,12 @@ Deliberately a button and not a timeout: a bike spends much of its life parked a
 so "open up when the trusted phone is out of range" would mean "open up to whoever waits for
 the owner to walk away".
 
+The same goes for storage that will not open at start-up (`storage will not open` on the
+console; where an LED is fitted, the double flash). The bridge does not erase it on its own,
+which would forget the phone and hand the bridge to whoever pairs next: Bluetooth stays off until
+BOOT is held for 3 s, which erases the storage, bond included, with the same three flashes. Then
+pair the phone again.
+
 > If the app logs `system pairing not removed`, clear it by hand in Android's Bluetooth
 > settings — `removeBond()` is not public API and can be refused.
 

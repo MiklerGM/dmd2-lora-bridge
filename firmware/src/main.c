@@ -782,15 +782,55 @@ static void bench_task(void *arg) {
 }
 #endif
 
+/*
+ * Storage that will not open is not erased on the firmware's own say-so. The bonds live there,
+ * and an empty bond store means nobody owns the bridge: the next phone to pair would claim it,
+ * which is what is_stranger refuses for a store it merely cannot read. So Bluetooth waits for
+ * someone at the board to hold BOOT - the gesture that forgets the phone anyway, confirmed with
+ * the same three flashes - and shows the fault pattern meanwhile.
+ */
+static void erase_storage_when_asked(esp_err_t why) {
+    led_set_module_ok(false);
+    int held_ms = 0, quiet_ms = 0;
+    while (held_ms < PAIR_HOLD_MS) {
+        esp_task_wdt_reset();
+        if (quiet_ms == 0) {
+            ESP_LOGE(TAG, "storage will not open (%s): bluetooth stays off until BOOT is held for "
+                     "%d s, which erases it and forgets the paired phone",
+                     esp_err_to_name(why), PAIR_HOLD_MS / 1000);
+        }
+        quiet_ms = (quiet_ms + 100) % 10000;
+        held_ms = gpio_get_level((gpio_num_t)PIN_PAIR_BUTTON) == 0 ? held_ms + 100 : 0;
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    ESP_LOGW(TAG, "BOOT held - erasing storage");
+    ESP_ERROR_CHECK(nvs_flash_erase());
+    led_bond_cleared();
+    /* On only once it is let go: the pair button task, started later, would read the same hold
+     * as a request to forget the phone and restart the board for it. */
+    while (gpio_get_level((gpio_num_t)PIN_PAIR_BUTTON) == 0) {
+        esp_task_wdt_reset();
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
+
 void app_main(void) {
     s_reset = reset_name();
     ESP_LOGI(TAG, "started after: %s", s_reset);
     /* Watched through the slow part of start-up as well: radio_init alone can wait seconds per
      * module it tries, and a start that hangs there never reaches Bluetooth. */
     watch_this_task();
+    /* Before storage and the radio, so a board waiting on either still shows it is alive. */
+    led_init();
+    gpio_config_t pair_pin = {
+        .pin_bit_mask = (1ULL << PIN_PAIR_BUTTON),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+    };
+    gpio_config(&pair_pin);
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
+        erase_storage_when_asked(err);
         err = nvs_flash_init();
     }
     ESP_ERROR_CHECK(err);
@@ -843,9 +883,6 @@ void app_main(void) {
     vTaskDelay(pdMS_TO_TICKS(100));   /* let the rail settle before the radio is spoken to */
 #endif
 
-    /* Before the radio, so a board that hangs in radio_init still shows it is alive. */
-    led_init();
-
     radio_init();
     esp_task_wdt_reset();
 #ifdef BENCH_OBSERVE
@@ -867,12 +904,6 @@ void app_main(void) {
 
     ble_nus_init(on_ble_line, on_ble_revoke, on_ble_bonds_cleared);
 
-    gpio_config_t pair_pin = {
-        .pin_bit_mask = (1ULL << PIN_PAIR_BUTTON),
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-    };
-    gpio_config(&pair_pin);
     BaseType_t pair_created = xTaskCreate(pair_button_task, "pair_btn", 2560, NULL, 3, NULL);
     BaseType_t tx_created = xTaskCreate(tx_task, "lora_tx", 4096, NULL, 6, NULL);
     BaseType_t rx_created = xTaskCreate(rx_task, "lora_rx", 4096, NULL, 6, NULL);
