@@ -60,18 +60,14 @@ _Static_assert(RADIO_DEFAULT_CHANNEL >= RADIO_CHANNEL_MIN &&
 _Static_assert(RADIO_DEFAULT_POWER_LEVEL >= 0 && RADIO_DEFAULT_POWER_LEVEL <= 3,
                "E220 power level must stay inside 0..3");
 
-/*
- * What each power level is worth in dBm - but only for a build that was told which variant is
- * fitted, with -DE220_VARIANT_T30 or -DE220_VARIANT_T22. The index is all the module
- * understands and the two variants read it completely differently, so a build that was not
- * told reports no tx_dbm at all. An unknown transmit power has to look unknown on the phone:
- * a guessed number is worse than a blank, because it invites someone to trust it.
- */
-
-
 void e220_init(void);
 
-/* Fills out with the dBm of power levels 0..3, if the module said what it is. */
+/*
+ * Fills out with the dBm of power levels 0..3, from the rated power the module reported at init,
+ * or from the build's E220_VARIANT_* / E22_VARIANT_* flag for one that did not report 30 or 22.
+ * Otherwise false: an unknown transmit power has to look unknown on the phone, because a guessed
+ * one invites trust.
+ */
 bool e220_tx_dbm(int8_t out[4]);
 
 typedef enum {

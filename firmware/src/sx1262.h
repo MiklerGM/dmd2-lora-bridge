@@ -7,9 +7,10 @@
  * only says what this backend is, so the status line and the CFG range checks can read it.
  *
  * Measured on hardware, see docs/PHY-notes.md: air rate index 2 of an EBYTE E220 is
- * SF11 / BW500 / sync 0x55 / explicit header / CRC on / LDRO forced on, carrying an eight-byte
- * EBYTE frame whose payload is XORed with 0x12. This backend reproduces that exactly, which is
- * what lets a board with a bare SX1262 join a group of E220s.
+ * SF11 / BW500 / sync symbols 40 and 36 (0x54 0x48 in this chip's register, read off the air
+ * 2026-10-06) / explicit header / CRC on / LDRO forced on, carrying an eight-byte EBYTE frame
+ * whose payload is XORed with 0x12. This backend reproduces that exactly, which is what lets a
+ * board with a bare SX1262 join a group of E220s.
  */
 
 
@@ -29,12 +30,6 @@
 #define RADIO_DEFAULT_CHANNEL 18
 #endif
 #define RADIO_DEFAULT_POWER_LEVEL 3
-
-/*
- * No RADIO_TX_DBM on purpose. A build that does not know what a power level is worth must report
- * nothing rather than a guess, and the phone then shows the transmit power as unknown - see
- * PowerLevel in the Android side. The front-end gain is the missing measurement.
- */
 
 /* Heltec WiFi LoRa 32 V3/V4: the SX1262 is wired on the board. Overridable because Heltec has
  * moved pins between revisions, and a guessed pin is a radio that never answers. */

@@ -170,7 +170,8 @@ delivering. It is not proof that anyone received the packet. `RSSI` comes on its
 the `RX` it measured, because an app that predates it could not decode an `RX` with anything
 after the payload; lines from the bridge's other tasks may come between the two, so Android
 pairs an `RSSI` with the next `RX`. An E220 reports it through the RSSI byte the bridge's own
-register profile enables and the firmware strips; the SX1262 backend does not report it yet.
+register profile enables and the firmware strips; the SX1262 backend reports the modem's own
+per-packet RSSI, less what its front end adds on receive (`SX_RX_GAIN_DB`).
 
 All three `CFG` keys are required; a line that is malformed, repeats a key, names an unknown
 key or is out of range is refused whole without touching the radio. If a syntactically valid

@@ -278,12 +278,14 @@ how a build with no floor is told apart from one that still has it. Build with a
 phone asks for. The SX1262 boards got the same only once what they put out was known: their
 levels are set in `POWER_PA` in `sx1262.c` from published numbers, not from this flag.
 
-**What a level is worth in dBm is the firmware's to say, and only if it was told.** The E220
-index means 30/27/24/21 dBm on an E220-900T30 and 22/17/13/10 on a T22, and nothing in the
-module identifies which is fitted. Build with `-DE220_VARIANT_T30` or `-DE220_VARIANT_T22` and
-the bridge reports `tx_dbm=`; build without and it reports none, and the app shows the transmit
-power as unknown. A guessed number is worse than a blank one, because it invites someone to
-trust it. The app no longer carries either table.
+**What a level is worth in dBm is the firmware's to say, and only if it knows.** The E220
+index means 30/27/24/21 dBm on an E220-900T30 and 22/17/13/10 on a T22. The bridge asks the
+module: its read-only product-information block carries the part's rated power, and the bridge
+reports `tx_dbm=` from that. `-DE220_VARIANT_T30` or `-DE220_VARIANT_T22` (`-DE22_VARIANT_M30`,
+`-DE22_VARIANT_T22` for an E22) only stands in for a module that does not report 30 or 22 dBm;
+without one, such a module gets no `tx_dbm`, and the app shows the transmit power as unknown. A
+guessed number is worse than a blank one, because it invites someone to trust it. The app no
+longer carries either table.
 
 **On 3V3 a T30's steps were not what they say.** Against an E22 at 10 dBm in the same run, levels
 3, 2, 1 and 0 came out at -1, +8, +12 and +14 dB instead of +11, +14, +17 and +20, the weakest step

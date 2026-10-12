@@ -109,10 +109,11 @@ Only the classic ESP32 board is built with an indicator, on GPIO2. See `docs/BUI
 - A NOR7E requests the strongest step with LBT off. That is *its* configuration, not a licence
   for ours. Transmit power is a setting in the app (**Settings → TX power**), defaulting to the
   weakest step, and it is DMD's own 0..3 scale rather than dBm — what a level is worth depends
-  on the module fitted, which only the firmware knows. This build carries `-DMIN_POWER_INDEX=0`,
-  so the firmware's floor is lifted and the whole range is reachable at runtime; the status
-  reports `min_power_level=0` so a build with no floor is never mistaken for one that has it.
-  That lift is a lab decision for the E220 proof of concept and does not carry over to any other
-  radio. Note that the weakest step is not automatically legal either: 868.0–868.6 MHz in
+  on the module fitted, which only the firmware knows. Every board's build carries
+  `-DMIN_POWER_INDEX=0`, so the firmware's floor is lifted and the whole range is reachable at
+  runtime; the status reports `min_power_level=0` so a build with no floor is never mistaken for
+  one that has it. That lift is a lab decision for this proof of concept; the SX1262 boards got
+  it only once their levels were known from published numbers (`POWER_PA` in `sx1262.c`).
+  Note that the weakest step is not automatically legal either: 868.0–868.6 MHz in
   Germany allows 25 mW ERP, about 14 dBm, and no step of an E220-900T30 reaches that without
   attenuation. See `docs/BUILDING.md`.
