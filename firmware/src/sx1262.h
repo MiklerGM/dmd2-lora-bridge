@@ -56,6 +56,15 @@
 #endif
 
 /*
+ * Receive enable, on a board whose antenna switch takes one line for receive while DIO2 drives
+ * the transmit side - Seeed's Wio-SX1262 (Wio Tracker L1), for one. High while listening, low
+ * for transmitting. -1, the default, is a board without one.
+ */
+#ifndef PIN_SX_RXEN
+#define PIN_SX_RXEN -1
+#endif
+
+/*
  * KCT8103L front end. It comes up unpowered, and that failure is invisible: SPI answers, every
  * command succeeds, and the radio is deaf and mute the whole time. All three pins are needed -
  * driving only the enable leaves it unpowered and just as dead. -DPIN_FEM_VCTRL=-1 disables the

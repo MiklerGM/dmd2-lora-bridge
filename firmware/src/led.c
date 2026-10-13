@@ -6,9 +6,7 @@
 
 #include <stdatomic.h>
 
-#include <driver/gpio.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
+#include "port.h"
 
 /*
  * Priority, highest first. One indicator cannot carry four independent facts at once, so the
@@ -24,7 +22,7 @@
  * switched on.
  *
  * ponytail: a module that dies while healthy is only noticed at the next probe, so the fault
- * pattern can lag by up to RADIO_PROBE_MS (30 s). Shortening that is a main.c decision about
+ * pattern can lag by up to RADIO_PROBE_MS (30 s). Shortening that is a bridge.c decision about
  * how often to disturb the UART, not something this file should paper over.
  */
 
@@ -32,11 +30,11 @@ static atomic_bool s_module_ok = ATOMIC_VAR_INIT(true);
 static atomic_bool s_bond_cleared = ATOMIC_VAR_INIT(false);
 static atomic_bool s_activity = ATOMIC_VAR_INIT(false);
 
-static void flash(int on_ms, int off_ms) {
-    gpio_set_level((gpio_num_t)PIN_LED, 1);
-    vTaskDelay(pdMS_TO_TICKS(on_ms));
-    gpio_set_level((gpio_num_t)PIN_LED, 0);
-    vTaskDelay(pdMS_TO_TICKS(off_ms));
+static void flash(uint32_t on_ms, uint32_t off_ms) {
+    port_pin_set(PIN_LED, 1);
+    port_sleep_ms(on_ms);
+    port_pin_set(PIN_LED, 0);
+    port_sleep_ms(off_ms);
 }
 
 static void led_task(void *arg) {
@@ -63,20 +61,16 @@ static void led_task(void *arg) {
             flash(20, 60);
             break;
         case LED_IDLE:
-            vTaskDelay(pdMS_TO_TICKS(50));
+            port_sleep_ms(50);
             break;
         }
     }
 }
 
 void led_init(void) {
-    gpio_config_t led = {
-        .pin_bit_mask = (1ULL << PIN_LED),
-        .mode = GPIO_MODE_OUTPUT,
-    };
-    gpio_config(&led);
-    gpio_set_level((gpio_num_t)PIN_LED, 0);
-    xTaskCreate(led_task, "led", 2048, NULL, 1, NULL);
+    port_pin_output(PIN_LED);
+    port_pin_set(PIN_LED, 0);
+    port_task_create(led_task, "led", 2048, 1);
 }
 
 void led_set_module_ok(bool ok) {

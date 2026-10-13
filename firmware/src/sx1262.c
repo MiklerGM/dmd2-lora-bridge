@@ -3,18 +3,10 @@
 
 #include "radio.h"
 #include "ebyte_frame.h"
+#include "port.h"
 
 #include <stdio.h>
 #include <string.h>
-
-#include "driver/gpio.h"
-#include "driver/spi_master.h"
-#include "esp_log.h"
-#include "esp_rom_sys.h"
-#include "esp_timer.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
-#include "freertos/task.h"
 
 #define TAG "sx1262"
 
@@ -178,8 +170,7 @@ static const int8_t TX_DBM[4] = {22, 20, 17, 14};
 
 /* ---- bus ----------------------------------------------------------------- */
 
-static spi_device_handle_t s_spi;
-static SemaphoreHandle_t s_lock;
+static port_mutex_t s_lock;
 static radio_request_t s_applied;
 static bool s_have_applied;
 static bool s_in_rx;
@@ -202,28 +193,26 @@ static int64_t s_t_preamble, s_t_header;
 
 #define LOCK_WAIT_MS 2000
 
-static bool bus_lock(void) {
-    return xSemaphoreTake(s_lock, pdMS_TO_TICKS(LOCK_WAIT_MS)) == pdTRUE;
-}
-static void bus_unlock(void) { xSemaphoreGive(s_lock); }
+static bool bus_lock(void) { return port_mutex_take(s_lock, LOCK_WAIT_MS); }
+static void bus_unlock(void) { port_mutex_give(s_lock); }
 
 /*
- * Everything here is timed against esp_timer, never against ticks.
+ * Everything here is timed against the microsecond clock, never against ticks.
  *
- * CONFIG_FREERTOS_HZ is 100 on this build, so a tick is 10 ms and pdMS_TO_TICKS() of anything
- * under 10 rounds to zero - vTaskDelay(0) yields rather than waiting. Every sub-10 ms delay in
- * this driver was therefore not happening at all, which is what made the chip look absent: BUSY
- * is high for a few hundred microseconds after most commands, and a "100 ms" timeout built from
- * pdMS_TO_TICKS(1) expired in well under a millisecond.
+ * CONFIG_FREERTOS_HZ is 100 on the ESP32 builds, so a tick is 10 ms and pdMS_TO_TICKS() of
+ * anything under 10 rounds to zero - vTaskDelay(0) yields rather than waiting. Every sub-10 ms
+ * delay in this driver was therefore not happening at all, which is what made the chip look
+ * absent: BUSY is high for a few hundred microseconds after most commands, and a "100 ms" timeout
+ * built from pdMS_TO_TICKS(1) expired in well under a millisecond.
  */
-static void delay_us(uint32_t us) { esp_rom_delay_us(us); }
+static void delay_us(uint32_t us) { port_delay_us(us); }
 
 /* The chip raises BUSY while it digests a command; talking over it is ignored silently. */
 static bool wait_busy(uint32_t timeout_ms) {
-    int64_t deadline = esp_timer_get_time() + (int64_t)timeout_ms * 1000;
-    while (gpio_get_level((gpio_num_t)PIN_SX_BUSY) != 0) {
-        if (esp_timer_get_time() > deadline) {
-            ESP_LOGW(TAG, "BUSY stuck high for %ums", (unsigned)timeout_ms);
+    int64_t deadline = port_uptime_us() + (int64_t)timeout_ms * 1000;
+    while (port_pin_get(PIN_SX_BUSY) != 0) {
+        if (port_uptime_us() > deadline) {
+            LOGW(TAG, "BUSY stuck high for %ums", (unsigned)timeout_ms);
             return false;
         }
         delay_us(50);
@@ -250,8 +239,7 @@ static bool xfer(const uint8_t *tx, uint8_t *rx, size_t len) {
         rx = s_miso;
     }
     if (!wait_busy(100)) return false;
-    spi_transaction_t t = {.length = len * 8, .tx_buffer = tx, .rx_buffer = rx};
-    const bool sent = spi_device_polling_transmit(s_spi, &t) == ESP_OK;
+    const bool sent = port_radio_spi_xfer(tx, rx, len);
     bool ok = sent;
     /*
      * BUSY has to be low again before the next command, and it rises a moment *after* NSS does -
@@ -277,7 +265,7 @@ static bool xfer(const uint8_t *tx, uint8_t *rx, size_t len) {
     if (sent && len > 1) {
         const uint8_t status = (uint8_t)((rx[1] >> 1) & 0x07);
         if (status >= 3 && status <= 5) {
-            ESP_LOGW(TAG, "command %02X rejected, status %u", s_last_opcode, status);
+            LOGW(TAG, "command %02X rejected, status %u", s_last_opcode, status);
             s_cmd_error = true;
         }
     }
@@ -302,8 +290,8 @@ static bool xfer(const uint8_t *tx, uint8_t *rx, size_t len) {
             ko += (size_t)snprintf(out + ko, sizeof(out) - ko, "%02X ", tx[i]);
             ki += (size_t)snprintf(in + ki, sizeof(in) - ki, "%02X ", rx ? rx[i] : 0);
         }
-        ESP_LOGI(TAG, "SPI ->%s%s  <-%s%s", out, len > show ? "..." : "",
-                 rx ? in : "(discarded)", rx && len > show ? "..." : "");
+        LOGI(TAG, "SPI ->%s%s  <-%s%s", out, len > show ? "..." : "",
+             rx ? in : "(discarded)", rx && len > show ? "..." : "");
     }
 #endif
     return ok;
@@ -436,17 +424,20 @@ static void fem_power(bool on) {
     /* The supply has to be up before any control pin is driven, and VFEM_Ctrl only enables an
      * LDO whose output then ramps through 10 uF. Driving CSD in the same breath violates the
      * documented power-on sequence on every boot. */
-    gpio_set_level((gpio_num_t)PIN_FEM_VCTRL, on);
+    port_pin_set(PIN_FEM_VCTRL, on);
     if (on) delay_us(10000);
-    gpio_set_level((gpio_num_t)PIN_FEM_CSD, on);
+    port_pin_set(PIN_FEM_CSD, on);
 #else
     (void)on;
 #endif
 }
 
 static void fem_transmit(bool tx) {
+#if PIN_SX_RXEN >= 0
+    port_pin_set(PIN_SX_RXEN, !tx);
+#endif
 #if PIN_FEM_VCTRL >= 0
-    gpio_set_level((gpio_num_t)PIN_FEM_CTX, tx);
+    port_pin_set(PIN_FEM_CTX, tx);
     delay_us(1000);
 #else
     (void)tx;
@@ -533,7 +524,7 @@ static bool configure(const radio_request_t *req) {
     uint8_t irq[8] = {0xFF, 0xFF, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00};
 
     /* Named steps, because "apply failed" on a bus that answers is otherwise a guess. */
-#define STEP(what, expr) do { if (!(expr)) { ESP_LOGW(TAG, "configure: %s failed", what); \
+#define STEP(what, expr) do { if (!(expr)) { LOGW(TAG, "configure: %s failed", what); \
                                              return false; } } while (0)
     STEP("standby", set_standby());
     /*
@@ -585,7 +576,7 @@ static bool configure(const radio_request_t *req) {
         reg_read(REG_TX_MODULATION, &md, 1);
         reg_read(REG_TX_CLAMP, &cl, 1);
         reg_read(REG_OCP, &oc, 1);
-        ESP_LOGI(TAG, "regs sync=%02x%02x txmod=%02x clamp=%02x ocp=%02x", sy[0], sy[1], md, cl, oc);
+        LOGI(TAG, "regs sync=%02x%02x txmod=%02x clamp=%02x ocp=%02x", sy[0], sy[1], md, cl, oc);
     }
 #undef STEP
     return true;
@@ -634,21 +625,20 @@ static bool enter_rx(void) {
 /* ---- radio.h ------------------------------------------------------------- */
 
 void radio_init(void) {
-    s_lock = xSemaphoreCreateMutex();
-    configASSERT(s_lock != NULL);
+    s_lock = port_mutex_create();
 
-    gpio_config_t out = {
-        .pin_bit_mask = (1ULL << PIN_SX_RST)
+    static const int outputs[] = {
+        PIN_SX_RST,
 #if PIN_FEM_VCTRL >= 0
-                        | (1ULL << PIN_FEM_VCTRL) | (1ULL << PIN_FEM_CSD) | (1ULL << PIN_FEM_CTX)
+        PIN_FEM_VCTRL, PIN_FEM_CSD, PIN_FEM_CTX,
 #endif
-        ,
-        .mode = GPIO_MODE_OUTPUT,
+#if PIN_SX_RXEN >= 0
+        PIN_SX_RXEN,
+#endif
     };
-    gpio_config(&out);
-    gpio_config_t in = {.pin_bit_mask = (1ULL << PIN_SX_BUSY) | (1ULL << PIN_SX_DIO1),
-                        .mode = GPIO_MODE_INPUT};
-    gpio_config(&in);
+    for (size_t i = 0; i < sizeof(outputs) / sizeof(outputs[0]); i++) port_pin_output(outputs[i]);
+    port_pin_input(PIN_SX_BUSY);
+    port_pin_input(PIN_SX_DIO1);
 
 #if PIN_FEM_VCTRL >= 0
     /*
@@ -661,47 +651,29 @@ void radio_init(void) {
      * question means anything. Reading it first - as the first version of this did - answers
      * "V4.2" on every board, including one with 4.3 printed on it.
      */
-    gpio_set_level((gpio_num_t)PIN_FEM_VCTRL, 1);
+    port_pin_set(PIN_FEM_VCTRL, 1);
     delay_us(10000);
-    {
-        gpio_config_t probe = {.pin_bit_mask = (1ULL << PIN_FEM_CSD),
-                               .mode = GPIO_MODE_INPUT};
-        gpio_config(&probe);
-        delay_us(1000);
-        int csd = gpio_get_level((gpio_num_t)PIN_FEM_CSD);
-        ESP_LOGI(TAG, "front end: with Vfem up, CSD idles %s -> %s", csd ? "high" : "low",
-                 csd ? "V4.3, KCT8103L (CPS on DIO2)" : "V4.2, GC1109 (CPS on GPIO46, undriven)");
-        gpio_config(&out);
-    }
+    port_pin_input(PIN_FEM_CSD);
+    delay_us(1000);
+    const int csd = port_pin_get(PIN_FEM_CSD);
+    LOGI(TAG, "front end: with Vfem up, CSD idles %s -> %s", csd ? "high" : "low",
+         csd ? "V4.3, KCT8103L (CPS on DIO2)" : "V4.2, GC1109 (CPS on GPIO46, undriven)");
+    port_pin_output(PIN_FEM_CSD);
 #endif
     fem_power(true);
     fem_transmit(false);
 
-    spi_bus_config_t bus = {
-        .mosi_io_num = PIN_SX_MOSI,
-        .miso_io_num = PIN_SX_MISO,
-        .sclk_io_num = PIN_SX_SCK,
-        .quadwp_io_num = -1,
-        .quadhd_io_num = -1,
-        .max_transfer_sz = 512,
-    };
-    ESP_ERROR_CHECK(spi_bus_initialize(SPI2_HOST, &bus, SPI_DMA_CH_AUTO));
-    spi_device_interface_config_t dev = {
-        .clock_speed_hz = 2 * 1000 * 1000,
-        .mode = 0,
-        .spics_io_num = PIN_SX_NSS,
-        .queue_size = 1,
-    };
-    ESP_ERROR_CHECK(spi_bus_add_device(SPI2_HOST, &dev, &s_spi));
+    port_radio_spi_init(PIN_SX_NSS, PIN_SX_SCK, PIN_SX_MOSI, PIN_SX_MISO);
 
-    gpio_set_level((gpio_num_t)PIN_SX_RST, 0);
+    port_pin_set(PIN_SX_RST, 0);
     delay_us(2000);
-    gpio_set_level((gpio_num_t)PIN_SX_RST, 1);
-    vTaskDelay(pdMS_TO_TICKS(20));
+    port_pin_set(PIN_SX_RST, 1);
+    port_sleep_ms(20);
 
-    ESP_LOGI(TAG, "spi up (nss=%d sck=%d mosi=%d miso=%d busy=%d dio1=%d), FEM %s",
-             PIN_SX_NSS, PIN_SX_SCK, PIN_SX_MOSI, PIN_SX_MISO, PIN_SX_BUSY, PIN_SX_DIO1,
-             PIN_FEM_VCTRL >= 0 ? "powered, RX path" : "not fitted");
+    LOGI(TAG, "spi up (nss=%d sck=%d mosi=%d miso=%d busy=%d dio1=%d), FEM %s",
+         PIN_SX_NSS, PIN_SX_SCK, PIN_SX_MOSI, PIN_SX_MISO, PIN_SX_BUSY, PIN_SX_DIO1,
+         PIN_FEM_VCTRL >= 0 ? "powered, RX path" : PIN_SX_RXEN >= 0 ? "none, RX enable"
+                                                                   : "not fitted");
 }
 
 radio_state_t radio_apply(const radio_request_t *req) {
@@ -711,7 +683,7 @@ radio_state_t radio_apply(const radio_request_t *req) {
      * honest answer until it is implemented.
      */
     if (req->lbt) {
-        ESP_LOGW(TAG, "listen-before-talk requested; this backend does not implement it");
+        LOGW(TAG, "listen-before-talk requested; this backend does not implement it");
         return RADIO_MISMATCH;
     }
     if (!bus_lock()) return RADIO_BUSY;
@@ -726,8 +698,8 @@ radio_state_t radio_apply(const radio_request_t *req) {
         s_have_applied = true;
     }
     bus_unlock();
-    ESP_LOGI(TAG, "apply ch=%u power_level=%u lbt=%d -> %s",
-             req->channel, req->power_level, (int)req->lbt, ok ? "ok" : "FAILED");
+    LOGI(TAG, "apply ch=%u power_level=%u lbt=%d -> %s",
+         req->channel, req->power_level, (int)req->lbt, ok ? "ok" : "FAILED");
     /* No answer is the only failure this bus reports: an SX1262 that does not respond leaves
      * BUSY high, and every command above returns false on that. */
     return ok ? RADIO_OK : RADIO_NO_ANSWER;
@@ -749,8 +721,8 @@ radio_state_t radio_verify(const radio_request_t *req) {
     /* The sync word is the one register that proves configuration rather than mere presence:
      * a chip that reset itself comes back with the 0x1424 default, not ours. */
     if (sync[0] != PHY_SYNC_MSB || sync[1] != PHY_SYNC_LSB) {
-        ESP_LOGW(TAG, "verify: sync word is %02X%02X, expected %02X%02X",
-                 sync[0], sync[1], PHY_SYNC_MSB, PHY_SYNC_LSB);
+        LOGW(TAG, "verify: sync word is %02X%02X, expected %02X%02X",
+             sync[0], sync[1], PHY_SYNC_MSB, PHY_SYNC_LSB);
         return RADIO_MISMATCH;
     }
     if (!s_have_applied || s_applied.channel != req->channel ||
@@ -761,7 +733,7 @@ radio_state_t radio_verify(const radio_request_t *req) {
      * and radio_receive has not managed it since, this radio is configured and deaf - which no
      * register shows, so it is said here, and a new apply is what brings it back. */
     if (!listening) {
-        ESP_LOGW(TAG, "verify: not receiving");
+        LOGW(TAG, "verify: not receiving");
         return RADIO_MISMATCH;
     }
     return RADIO_OK;
@@ -863,7 +835,7 @@ bool radio_send(const uint8_t *data, size_t len) {
         }
 #endif
         fem_transmit(true);
-        int64_t t_start = esp_timer_get_time();
+        int64_t t_start = port_uptime_us();
         ok = cmd(CMD_SET_TX, go, 3);
         /*
          * Derived from the compiled PHY, not a flat three seconds: at SF12/BW125 a hundred-byte
@@ -873,14 +845,14 @@ bool radio_send(const uint8_t *data, size_t len) {
         const uint32_t sym_us = ((1u << PHY_SF) * 1000u) / PHY_BW_KHZ;
         const uint32_t symbols = PHY_PREAMBLE + 20u +
                                  (8u * (uint32_t)total * 5u) / (4u * (PHY_SF - 2u));
-        int64_t deadline = esp_timer_get_time() + (int64_t)symbols * sym_us + 500 * 1000;
+        int64_t deadline = port_uptime_us() + (int64_t)symbols * sym_us + 500 * 1000;
         while (ok) {
             uint8_t irq[2] = {0, 0};
             if (!cmd_read(CMD_GET_IRQ_STATUS, irq, 2)) { ok = false; break; }
             uint16_t flags = ((uint16_t)irq[0] << 8) | irq[1];
             if (flags & IRQ_TX_DONE) break;
             if (flags & IRQ_TIMEOUT) { ok = false; break; }
-            if (esp_timer_get_time() > deadline) { ok = false; break; }
+            if (port_uptime_us() > deadline) { ok = false; break; }
             delay_us(2000);
         }
         fem_transmit(false);
@@ -892,10 +864,10 @@ bool radio_send(const uint8_t *data, size_t len) {
             if (xfer(sx, sr, 2)) st = sr[1];
         }
         cmd_read(0x17 /* GetDeviceErrors */, err, 2);
-        ESP_LOGI(TAG, "send: %u bytes, air %lld us, status 0x%02x, errors 0x%04x", (unsigned)total,
-                 esp_timer_get_time() - t_start, st, (unsigned)((err[0] << 8) | err[1]));
+        LOGI(TAG, "send: %u bytes, air %lld us, status 0x%02x, errors 0x%04x", (unsigned)total,
+             port_uptime_us() - t_start, st, (unsigned)((err[0] << 8) | err[1]));
     }
-    if (!ok) ESP_LOGW(TAG, "send: %u bytes did not complete", (unsigned)total);
+    if (!ok) LOGW(TAG, "send: %u bytes did not complete", (unsigned)total);
     /* Back to listening whatever happened: a radio parked in standby hears nothing and says
      * nothing about it. */
     enter_rx();
@@ -924,7 +896,7 @@ static void log_freq_error(const char *what) {
         if (raw & 0x80000) { raw = (~raw + 1) & 0xFFFFF; sign = -1; }
         /* 1.55 * raw / (1600 / bw_khz), bw = 500 kHz -> 0.484 Hz per count */
         int32_t hz = sign * (int32_t)((raw * 155u) / 320u);
-        ESP_LOGI(TAG, "%s %+ld Hz (raw %lu)", what, (long)hz, (unsigned long)raw);
+        LOGI(TAG, "%s %+ld Hz (raw %lu)", what, (long)hz, (unsigned long)raw);
     }
 }
 #endif
@@ -940,8 +912,8 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
     if (!s_in_rx) enter_rx();
 
     size_t produced = 0;
-    int64_t deadline = esp_timer_get_time() + (int64_t)first_wait_ms * 1000;
-    while (esp_timer_get_time() < deadline) {
+    int64_t deadline = port_uptime_us() + (int64_t)first_wait_ms * 1000;
+    while (port_uptime_us() < deadline) {
         uint8_t irq[2] = {0, 0};
         if (!cmd_read(CMD_GET_IRQ_STATUS, irq, 2)) break;
         uint16_t flags = ((uint16_t)irq[0] << 8) | irq[1];
@@ -969,16 +941,16 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
              * same for preamble length. Both were argued about for a day; this poll is 10 ms
              * and the steps to tell apart are 45.
              */
-            const int64_t t_now = esp_timer_get_time();
+            const int64_t t_now = port_uptime_us();
             if (flags & IRQ_PREAMBLE) {
                 s_t_preamble = t_now;
                 s_t_header = 0;
             }
             if ((flags & IRQ_HEADER_VALID) && s_t_header == 0) s_t_header = t_now;
             if (flags & IRQ_RX_DONE) {
-                ESP_LOGI(TAG, "timing: preamble->header %lld ms, header->done %lld ms",
-                         (s_t_header && s_t_preamble) ? (s_t_header - s_t_preamble) / 1000 : -1,
-                         s_t_header ? (t_now - s_t_header) / 1000 : -1);
+                LOGI(TAG, "timing: preamble->header %lld ms, header->done %lld ms",
+                     (s_t_header && s_t_preamble) ? (s_t_header - s_t_preamble) / 1000 : -1,
+                     s_t_header ? (t_now - s_t_header) / 1000 : -1);
                 s_t_preamble = 0;
                 s_t_header = 0;
             }
@@ -995,12 +967,12 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
         if (flags & IRQ_TIMEOUT) s_stage_timeout++;
         if (flags & IRQ_RX_DONE) s_stage_rx_done++;
         {
-            int64_t now = esp_timer_get_time();
+            int64_t now = port_uptime_us();
             if (now >= s_stage_next) {
                 s_stage_next = now + 30 * 1000 * 1000;
-                ESP_LOGI(TAG, "stages: preamble %u -> header %u -> rx %u | hdr_err %u crc_err %u timeout %u",
-                         s_stage_preamble, s_stage_header, s_stage_rx_done,
-                         s_stage_hdr_err, s_stage_crc_err, s_stage_timeout);
+                LOGI(TAG, "stages: preamble %u -> header %u -> rx %u | hdr_err %u crc_err %u timeout %u",
+                     s_stage_preamble, s_stage_header, s_stage_rx_done,
+                     s_stage_hdr_err, s_stage_crc_err, s_stage_timeout);
             }
         }
 #endif
@@ -1023,18 +995,18 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
              * flat out draws current and makes noise a few centimetres from the receiver, and
              * this firmware is being compared against ones that do not do it.
              *
-             * One tick, because the tick is 100 Hz and anything under it rounds to no delay at
-             * all. Granularity costs nothing: the modem latches these flags until they are
-             * cleared, so a slower poll reads the same events a little later.
+             * 10 ms, one tick on the ESP32 builds, whose 100 Hz tick turns anything shorter into
+             * no delay at all. Granularity costs nothing: the modem latches these flags until
+             * they are cleared, so a slower poll reads the same events a little later.
              */
-            vTaskDelay(1);
+            port_sleep_ms(10);
             continue;
         }
         uint8_t clear[2] = {IRQ_CLEAR_HI, IRQ_CLEAR_LO};
         if (flags & (IRQ_CRC_ERR | IRQ_HEADER_ERR)) {
 #ifdef RX_STAGES
             const long long since_preamble =
-                s_t_preamble ? (esp_timer_get_time() - s_t_preamble) / 1000 : -1;
+                s_t_preamble ? (port_uptime_us() - s_t_preamble) / 1000 : -1;
             s_t_preamble = s_t_header = 0;
             /*
              * The same measurements for a reception that died. Measured 2026-09-24: at a header
@@ -1046,10 +1018,10 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
                 if (cmd_read(CMD_GET_PACKET_STATUS, ps, 3)) {
                     const int snr4 = (int)(int8_t)ps[1];
                     const int mag = snr4 < 0 ? -snr4 : snr4;
-                    ESP_LOGI(TAG, "rx fail %s rssi %d dBm, snr %s%d.%02d dB, signal rssi %d dBm, "
-                             "preamble->fail %lld ms", (flags & IRQ_HEADER_ERR) ? "hdr" : "crc",
-                             -(int)ps[0] / 2, snr4 < 0 ? "-" : "", mag / 4, mag % 4 * 25,
-                             -(int)ps[2] / 2, since_preamble);
+                    LOGI(TAG, "rx fail %s rssi %d dBm, snr %s%d.%02d dB, signal rssi %d dBm, "
+                         "preamble->fail %lld ms", (flags & IRQ_HEADER_ERR) ? "hdr" : "crc",
+                         -(int)ps[0] / 2, snr4 < 0 ? "-" : "", mag / 4, mag % 4 * 25,
+                         -(int)ps[2] / 2, since_preamble);
                 }
             }
 #ifdef SX_FREQ_ERROR
@@ -1091,8 +1063,8 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
                      * out as "0.75" - exactly the range this instrument is read in near the
                      * sensitivity limit. */
                     const int mag = snr4 < 0 ? -snr4 : snr4;
-                    ESP_LOGI(TAG, "rx quality rssi %d dBm, snr %s%d.%02d dB, signal rssi %d dBm",
-                             rssi, snr4 < 0 ? "-" : "", mag / 4, mag % 4 * 25, sig);
+                    LOGI(TAG, "rx quality rssi %d dBm, snr %s%d.%02d dB, signal rssi %d dBm",
+                         rssi, snr4 < 0 ? "-" : "", mag / 4, mag % 4 * 25, sig);
                 }
             }
             /*
@@ -1103,7 +1075,7 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
             {
                 uint8_t cr = 0, crc = 0;
                 if (reg_read(0x0749, &cr, 1) && reg_read(0x076B, &crc, 1))
-                    ESP_LOGI(TAG, "rx header regs 0749=%02X 076B=%02X", cr, crc);
+                    LOGI(TAG, "rx header regs 0749=%02X 076B=%02X", cr, crc);
             }
             /*
              * The header exactly as it came off the air. This backend builds its own EBYTE frame
@@ -1112,13 +1084,13 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
              * below looks at two bytes of the eight; a module's firmware need not be so
              * forgiving, so the other six are worth seeing rather than assuming.
              */
-            ESP_LOGI(TAG, "rx frame %u bytes, header %02X %02X %02X %02X %02X %02X %02X %02X",
-                     (unsigned)n, frame[0], frame[1], frame[2], frame[3],
-                     frame[4], frame[5], frame[6], frame[7]);
+            LOGI(TAG, "rx frame %u bytes, header %02X %02X %02X %02X %02X %02X %02X %02X",
+                 (unsigned)n, frame[0], frame[1], frame[2], frame[3],
+                 frame[4], frame[5], frame[6], frame[7]);
 #ifdef RX_RAW_FRAME
             char hex[2 * 255 + 1];
             for (size_t i = 0; i < n; ++i) snprintf(hex + 2 * i, 3, "%02X", frame[i]);
-            ESP_LOGI(TAG, "rx raw: %s", hex);
+            LOGI(TAG, "rx raw: %s", hex);
 #endif
 #endif
             /* Strip EBYTE's frame and undo the obfuscation, so the caller sees exactly the
@@ -1134,7 +1106,7 @@ size_t radio_receive(uint8_t *out, size_t out_len, uint32_t idle_gap_ms, uint32_
                     s_have_rssi = true;
                 }
             } else {
-                ESP_LOGW(TAG, "rx: %u bytes but not an EBYTE frame", (unsigned)n);
+                LOGW(TAG, "rx: %u bytes but not an EBYTE frame", (unsigned)n);
             }
         }
 #ifdef SX_FREQ_ERROR
@@ -1196,9 +1168,9 @@ bool radio_bench_tx(const bench_tx_t *req, const uint8_t *payload, size_t len, u
         set_frequency(chan);
         bus_unlock();
     }
-    const int64_t t0 = esp_timer_get_time();
+    const int64_t t0 = port_uptime_us();
     const bool ok = radio_send(payload, len);
-    if (air_us) *air_us = (uint32_t)(esp_timer_get_time() - t0);
+    if (air_us) *air_us = (uint32_t)(port_uptime_us() - t0);
     s_once_preamble = -1;
     s_once_sync = -1;
     s_once_hdr = -1;
@@ -1210,18 +1182,18 @@ bool radio_bench_tx(const bench_tx_t *req, const uint8_t *payload, size_t len, u
         set_ocp();
         enter_rx();
         bus_unlock();
-        ESP_LOGI(TAG, "txpa seq=%lu pa=%d", (unsigned long)req->seq, req->pa);
+        LOGI(TAG, "txpa seq=%lu pa=%d", (unsigned long)req->seq, req->pa);
     }
     if (req->cal >= 0) {
-        ESP_LOGI(TAG, "txcal seq=%lu cal=%d rejected=%d errors=%04X", (unsigned long)req->seq,
-                 req->cal, req->cal ? (int)s_seen_cal_rejected : 0, s_seen_errors);
+        LOGI(TAG, "txcal seq=%lu cal=%d rejected=%d errors=%04X", (unsigned long)req->seq,
+             req->cal, req->cal ? (int)s_seen_cal_rejected : 0, s_seen_errors);
     }
     /* The regulator has no readback, so its command status is the evidence; the modulation bit
      * is read back. Logged after the packet so nothing sits between the write and SetTx. */
     if (req->ldo >= 0 || req->txmod >= 0) {
-        ESP_LOGI(TAG, "txcfg seq=%lu ldo=%d reg_cmd=%s txmod=%d 0889=%02X", (unsigned long)req->seq,
-                 req->ldo, req->ldo >= 0 ? (s_seen_reg_ok ? "ok" : "FAILED") : "-", req->txmod,
-                 req->txmod >= 0 ? s_seen_txmod : 0);
+        LOGI(TAG, "txcfg seq=%lu ldo=%d reg_cmd=%s txmod=%d 0889=%02X", (unsigned long)req->seq,
+             req->ldo, req->ldo >= 0 ? (s_seen_reg_ok ? "ok" : "FAILED") : "-", req->txmod,
+             req->txmod >= 0 ? s_seen_txmod : 0);
     }
     /* Back to DC-DC, which the next packet and receive assume. ldo=0 pays this too. */
     if (req->ldo >= 0 && bus_lock()) {
