@@ -28,6 +28,29 @@ test:
 	@/tmp/test_sx1262
 
 
+# The nRF52840 build (Seeed Wio Tracker L1), on Zephyr: zephyr/setup.sh makes the workspace once,
+# then this builds zephyr/build/zephyr/zephyr.uf2, the file to copy onto the board's USB drive.
+# A bench build: make nrf NRF_FLAGS=-DBENCH_CMD=1
+ZEPHYR_WS ?= $(abspath ../../zephyr-ws)
+NRF_BOARD ?= wio_tracker_l1
+NRF_FLAGS ?=
+nrf:
+	@test -f $(ZEPHYR_WS)/env.sh || { echo "no Zephyr workspace at $(ZEPHYR_WS): run zephyr/setup.sh"; exit 1; }
+	@. $(ZEPHYR_WS)/env.sh && cd $(ZEPHYR_WS) && west build -b $(NRF_BOARD) \
+	    -d $(CURDIR)/zephyr/build $(CURDIR)/zephyr -- -DEXTRA_CFLAGS="$(NRF_FLAGS)"
+	@ls -l zephyr/build/zephyr/zephyr.uf2
+
+# The bond store's own read (zephyr/src/store.c) on native_sim's simulated flash: ownership rests
+# on it, and on the host is the only place a corrupted record can be made to order.
+nrf-test:
+	@test -f $(ZEPHYR_WS)/env.sh || { echo "no Zephyr workspace at $(ZEPHYR_WS): run zephyr/setup.sh"; exit 1; }
+	@mkdir -p zephyr/tests/store/build
+	@. $(ZEPHYR_WS)/env.sh && cd $(ZEPHYR_WS) && west build -b native_sim/native/64 \
+	    -d $(CURDIR)/zephyr/tests/store/build $(CURDIR)/zephyr/tests/store \
+	    >$(CURDIR)/zephyr/tests/store/build/west.log 2>&1 || { cat $(CURDIR)/zephyr/tests/store/build/west.log; exit 1; }
+	@out=$$(zephyr/tests/store/build/zephyr/zephyr.exe -flash_in_ram 2>&1); rc=$$?; \
+	    echo "$$out" | grep -E "PASS -|FAIL -|Assertion"; exit $$rc
+
 # One flashable file per board, for people who want to run the bridge without a build
 # environment: `esptool.py write_flash 0x0 <file>` and nothing else.
 #
@@ -51,4 +74,4 @@ merged:
 	    echo "dist/dmd2-lora-bridge-$$e.bin"; \
 	done
 
-.PHONY: test merged
+.PHONY: test merged nrf nrf-test
