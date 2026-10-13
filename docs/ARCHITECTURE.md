@@ -97,7 +97,13 @@ The app does **not** know, and must never be given: register values, air-rate or
 indices, transparent versus fixed mode, module keys, M0/M1, SPI or front-end pins. A phone that
 knows those cannot be pointed at a different radio without being rewritten.
 
-### 4.2 Firmware, shared across backends (`firmware/`, ESP-IDF)
+### 4.2 Firmware, shared across backends (`firmware/`, ESP-IDF or Zephyr)
+
+All of this is `bridge.c` and the radio backends, written against `port.h`: a clock, locks, a
+queue, tasks, pins, the radio's SPI bus, the watchdog and restart. `port_esp.*` supplies those
+on ESP-IDF and `firmware/zephyr/src/port_zephyr.*` on Zephyr, for the nRF52840 boards. The
+Bluetooth host is per platform - NimBLE on an ESP32, Zephyr's own on an nRF52 - behind
+`ble_nus.h`, with the same owner rules on both.
 
 1. **BLE transport** — Nordic UART Service, bonding, one central, newline-delimited lines.
    A successful ownership clear revokes queued work and restarts after the physical button is

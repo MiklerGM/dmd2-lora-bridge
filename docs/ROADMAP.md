@@ -612,6 +612,16 @@ A fourth read, of `ef20149`, found two — both of them regressions from the rou
   measured chip settings), which the radiated runs of 2026-10-08 matched on average but only to
   ±8.5 dB. A conducted measurement, into an attenuator, is still to do. A battery also rides
   through the supply dips that hung the E220 bridge at engine starts.
+- **nRF52840, started 2026-10-12.** The ready-made boards with a battery and a case are mostly
+  an nRF52840 with an SX1262 - Seeed's Wio Tracker L1 Pro, Elecrow's ThinkNode M1, RAK's
+  WisMesh, Heltec's T114 - and draw a fraction of an ESP32-S3's current. The firmware now builds
+  for the L1 on Zephyr, sharing the bridge and the SX1262 backend with the ESP32 builds
+  (`docs/BUILDING.md`); an L1 Pro is on order. On the first board, in this order: the radio
+  against the E220 and E22 on the bench, as the Heltec was; pairing, FORGET and the button with
+  the app; whether `reset=` survives the bootloader (a restart note lost to it reads `sw`);
+  whether the hardware watchdog can be left running across a UF2 update, since only the kernel's
+  watches now; the current drawn, with the GNSS held in standby; then a ride. After that, the
+  ThinkNode M1's board file.
 - **Then:** a browser flasher (ESP Web Tools over our merged images, usable already for the E220
   and E22 bridges), and perhaps switching one board between this firmware and stock Meshtastic -
   two app partitions side by side. Meshtastic as a protocol stays out of scope, below.

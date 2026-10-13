@@ -88,6 +88,50 @@ The S3 and C3 devkits are deliberately built without one. Their LED is a WS2812,
 `led_strip`/RMT rather than `gpio_set_level`, and the S3-DevKitC-1 moved it between revisions
 (GPIO48 on the first, GPIO38 on v1.1), so there is no single pin to pick.
 
+## nRF52840 bridge (Zephyr)
+
+The same bridge on an nRF52840, built with Zephyr instead of ESP-IDF: the **Seeed Wio Tracker
+L1**, and the L1 Pro, which is the L1 in a case with a 2000 mAh battery. Everything above the
+platform is shared with the ESP32 builds - `bridge.c`, the SX1262 backend, the CFG and wire
+checks; what differs is what sits under `port.h`, the Bluetooth host, and start-up, all in
+`firmware/zephyr/src`. **Built, not yet run on a board.**
+
+Once, a workspace beside this repository - about 3 GB, the ARM toolchain and a Zephyr checkout
+with only the Nordic modules:
+
+```sh
+firmware/zephyr/setup.sh                        # or setup.sh <dir>, then make ... ZEPHYR_WS=<dir>
+make -C firmware nrf                            # firmware/zephyr/build/zephyr/zephyr.uf2
+make -C firmware nrf NRF_FLAGS=-DBENCH_CMD=1    # the bench build, the same commands as an ESP32's
+make -C firmware nrf-test                       # the bond store's read, on native_sim
+```
+
+To flash, double-tap the board's reset button: it shows up as a USB drive, `TRACKER L1`; copy
+`zephyr.uf2` onto it. That bootloader is the one the board ships with and the one Meshtastic's
+`.uf2` goes through, so going back is the same copy with their file. Logs and the bench console
+are on the board's own USB, `/dev/ttyACM*`.
+
+- **The first boot after Meshtastic or MeshCore** clears their file system, which sits where this
+  firmware keeps its settings, and says so in the log. Storage of its own that will not open is
+  never erased unasked: hold the button 3 s, as on an ESP32.
+- **Who owns the bridge is read from flash directly**, not through Zephyr's settings layer, which
+  reports success whatever happened and deletes every entry it fails to read. If that read fails,
+  nothing is loaded - one load would delete the owner for good - and Bluetooth stays off, start
+  after start, until the button is held 3 s, which erases the settings partition. If the read
+  works but disagrees with the bonds Bluetooth loaded, no new phone pairs until the button clears
+  the store; a phone it does hold keys for still connects. `make -C firmware nrf-test` corrupts
+  an owner on simulated flash and checks both.
+- **The bench runner cannot restart this board**: opening its USB does not reset it, and a reset
+  would take the USB device with it. `bench/interleave.py` asks every board for its banner
+  (`BANNER`) after opening the port, so a running L1 counts as ready.
+- **A fatal error restarts the board** (`reset=panic`) instead of halting it, as on an ESP32.
+- **Pins come from the board's devicetree** (`lora0`, `led0`, `sw0`; `src/board.h` reads them),
+  not from build flags. The L1's SX1262 has no amplifier, so its levels are the chip's own
+  22/20/17/14 dBm, as on the T-Deck. Its receive-enable line is driven high to listen and low to
+  transmit, and its GNSS is put into standby at boot.
+- **The button** is the user button: hold it 3 s to forget the phone. **The LED** is the user LED,
+  with the same patterns as an ESP32 board's.
+
 ## Milestone 1 — does DMD2 accept us?
 
 No radio needed.
@@ -322,6 +366,7 @@ families. Measured, it is not: on index 2 it hears an E220 perfectly well, and t
 | `esp32dev`, `esp32s3`, `esp32c3` | EBYTE **E220 or E22** over UART | both proven with a real NOR7E in the field: E220 on 2026-09-27, E22 for a riding day on 2026-09-28 |
 | `heltec_sx1262` | **Heltec WiFi LoRa 32 V4.3**: SX1262 over SPI behind a KCT8103L front end | receives, and transmits a frame EBYTE modules take 29-30 of 30 across rooms since the sync fix of 2026-10-06 (PHY-notes). Levels 28/24/19/14 dBm by Heltec's gain table for the KCT8103L; RSSI reported less its 21 dB LNA. Not ridden yet |
 | `tdeck_sx1262` | **LILYGO T-Deck / T-Deck Plus**: SX1262 over SPI, no front end | the same, at the chip's own 22/20/17/14 dBm (RadioLib's measured settings). Not ridden yet |
+| `make nrf` (Zephyr, `wio_tracker_l1`) | **Seeed Wio Tracker L1 / L1 Pro**: nRF52840, SX1262 over SPI, no front end | built, not yet run on a board. The chip's own 22/20/17/14 dBm |
 
 A **Heltec V3** has the same chip on the same pins and no front end: build `heltec_sx1262` with
 `-DPIN_FEM_VCTRL=-1`, which is the firmware's setting for a board without one. Nobody has tried
@@ -347,7 +392,7 @@ None of these belong in a shipped image; every one is compiled out unless named.
 | `-DSX_FREQ_ERROR=1` | Logs RegFreqError after each reception - what the modem pulled the incoming carrier by, so two references can be compared directly. |
 | `-DSX_SPI_TRACE=1` | Logs every SX1262 SPI transaction in the shape RadioLib's own debug output uses, so the two can be diffed byte for byte. |
 | `-DPHY_ALT_RATE=1` | SF12/BW125 instead of SF11/BW500, for testing whether a defect is bandwidth-specific. Errata 15.1 follows the bandwidth automatically. |
-| `-DBENCH_CMD=1` | A command interface on the board's own console: `TX seq=<n> [power=] [preamble=] [sync=] [len=] [hdr=] [foff=]` sends exactly one packet with those settings, and answers `TXOK seq= len= foff= air=`. The sequence number leads the payload, so a reception names the transmission that produced it - no phase reconstruction, no estimated denominators. Reads the USB-serial-JTAG directly on chips that have one and UART0 elsewhere, so it does not care where the console is pointed. What a backend cannot honour it refuses: an EBYTE module owns its own preamble, sync word and frequency and says so rather than ignoring them. `foff=` is a signed kHz offset from the channel, bounded at a quarter of the bandwidth. |
+| `-DBENCH_CMD=1` | A command interface on the board's own console: `TX seq=<n> [power=] [preamble=] [sync=] [len=] [hdr=] [foff=]` sends exactly one packet with those settings, and answers `TXOK seq= len= foff= air=`. The sequence number leads the payload, so a reception names the transmission that produced it - no phase reconstruction, no estimated denominators. Reads the USB-serial-JTAG directly on chips that have one and UART0 elsewhere, so it does not care where the console is pointed. What a backend cannot honour it refuses: an EBYTE module owns its own preamble, sync word and frequency and says so rather than ignoring them. `foff=` is a signed kHz offset from the channel, bounded at a quarter of the bandwidth. `BANNER` prints the `bridge up:` line again, with `up=` - which every nRF52 build answers too, bench or not, because the runner cannot restart those boards to see it. |
 | `-DBENCH_OBSERVE=1` | EBYTE receiver only, with `BENCH_CMD`. No 30 s health probe, so the module stays in normal mode after boot; every UART chunk logged as raw hex before any check; every AUX low pulse logged with start and width; a `RSSI` console command that reads the module's ambient-noise and last-received-RSSI registers (`C0 C1 C2 C3 00 02`, enabled by REG1 bit 5). Pair with `bench/interleave.py --probe`. |
 | `-DSX_TCXO_MV=<mV>` | The TCXO rail SetDIO3AsTcxoCtrl drives. One of 1600/1700/1800/2200/2400/2700/3000/3300; anything else is a compile error rather than a silently ignored knob. |
 | `-DE220_AMBIENT_RSSI=<ms>` | EBYTE only. Turns on the module's ambient-noise register and logs the noise floor at most every that many ms while idle - whether anything is on the air at all when nothing decodes. `RSSIQ` under `BENCH_OBSERVE` reads the same register. |
