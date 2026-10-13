@@ -46,6 +46,7 @@ port.dtr = False
 port.rts = True
 time.sleep(0.15)
 port.rts = False
+port.write(b"BANNER\\n")
 stop = threading.Event()
 
 def to_port():
@@ -81,6 +82,7 @@ port.dtr = False
 port.rts = True
 time.sleep(0.15)
 port.rts = False
+port.write(b"BANNER\\n")
 while True:
     line = port.readline()
     if line:
@@ -111,17 +113,25 @@ def tx_result(line, seq):
 
 def reset(port):
     """Pulse the board's reset line: DTR low so it boots the application, then a dip on RTS.
+    Then ask for the banner, for a board the pulse cannot reset.
 
     Every run starts from a fresh receiver, and the point is not hygiene but evidence. A board
     that has quietly stopped reporting looks exactly like one that heard nothing, and this bench
     has now lost an hour to that twice. A reset puts the boot banner at the top of the captured
     log, so afterwards there is a line in the record saying the receiver was alive and which
     module it was carrying.
+
+    An nRF52 on its own USB is not reset by the pulse, and could not usefully be: its USB device
+    goes away with its reset, and the port open here with it. It answers BANNER with the same
+    line instead, up= saying how long it has been running. A board that did reset is still
+    booting when the request arrives and prints its banner anyway.
     """
     port.dtr = False
     port.rts = True
     time.sleep(0.15)
     port.rts = False
+    port.write(b"BANNER\n")
+    port.flush()
 
 
 def pump(reader, stream):
@@ -320,9 +330,9 @@ class Receiver(threading.Thread):
             # pyserial on the far end rather than stty and cat: cat delivered almost nothing
             # here, and a reader that silently returns no bytes is indistinguishable from a
             # receiver that heard nothing - which is the one confusion this bench cannot
-            # afford. Opening the port resets the board, so its boot banner lands at the top
-            # of the captured log and says out loud that the receiver is alive and which
-            # module it is.
+            # afford. Opening the port resets the board, or asks one it cannot reset, so its
+            # banner lands at the top of the captured log and says out loud that the receiver
+            # is alive and which module it is.
             script = base64.b64encode(REMOTE_READER.encode()).decode()
             # -tt so that killing ssh takes the remote reader with it instead of leaving it
             # holding the port.
@@ -477,6 +487,13 @@ def self_check():
         pump(r, stream(r, reads))
         assert r.failed == failed and r.lines == ["bridge up"], (reads, r.failed, r.lines)
     print("readers: all checks pass")
+
+    # The scripts sent over ssh are compiled only on the far end, where a syntax error shows as a
+    # board that never answers. An escape the template swallowed once made both of them that.
+    for name, script in (("REMOTE_NODE", REMOTE_NODE), ("REMOTE_READER", REMOTE_READER)):
+        compile(script, name, "exec")
+        assert 'b"BANNER\\n"' in script, name
+    print("remote scripts: compile")
 
 
 def matrix(args):
