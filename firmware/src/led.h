@@ -33,7 +33,7 @@ static inline led_state_t led_pick(bool bond_cleared, bool module_ok, bool linke
     return LED_IDLE;
 }
 
-/* Latest known state of the radio module. Pushed rather than polled because main.c owns it. */
+/* Latest known state of the radio module. Pushed rather than polled because bridge.c owns it. */
 void led_set_module_ok(bool ok);
 
 /*
