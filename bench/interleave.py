@@ -125,13 +125,22 @@ def reset(port):
     goes away with its reset, and the port open here with it. It answers BANNER with the same
     line instead, up= saying how long it has been running. A board that did reset is still
     booting when the request arrives and prints its banner anyway.
+
+    The request is not waited for. A board whose firmware never reads its console - an ESP32
+    bridge that is not a bench build, on its own USB - takes no bytes, and a write that waited
+    for them hung the reader before it read the banner the reset had just produced.
     """
+    import serial
     port.dtr = False
     port.rts = True
     time.sleep(0.15)
     port.rts = False
-    port.write(b"BANNER\n")
-    port.flush()
+    port.write_timeout = 0.2
+    try:
+        port.write(b"BANNER\n")
+    except serial.SerialTimeoutException:
+        pass
+    port.write_timeout = None
 
 
 def pump(reader, stream):
