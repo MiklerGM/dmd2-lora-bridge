@@ -128,6 +128,9 @@ are on the board's own USB, `/dev/ttyACM*`.
   would take the USB device with it. `bench/interleave.py` asks every board for its banner
   (`BANNER`) after opening the port, so a running L1 counts as ready.
 - **A fatal error restarts the board** (`reset=panic`) instead of halting it, as on an ESP32.
+- **The chip's own watchdog runs under the task watchdog**, at 20 s, so a hang with interrupts
+  off restarts the board too (`reset=wdt`). It cannot be stopped once started, and the UF2
+  bootloader feeds it: an update still goes through, however long the drive sits open.
 - **Pins come from the board's devicetree** (`lora0`, `led0`, `sw0`; `src/board.h` reads them),
   not from build flags. The L1's SX1262 has no amplifier, so its levels are the chip's own
   22/20/17/14 dBm, as on the T-Deck. Its receive-enable line is driven high to listen and low to

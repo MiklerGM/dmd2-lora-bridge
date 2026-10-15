@@ -98,14 +98,16 @@ static void wdt_expired(int channel, void *user_data) {
 }
 
 /*
- * Kernel timers only, no hardware fallback yet: the nRF52's hardware watchdog cannot be stopped
- * once started, and whether the UF2 bootloader feeds it while a new image is being copied is
- * not known here. A hang with interrupts off therefore goes unnoticed until that is settled.
+ * Kernel timers, with the chip's own watchdog under them (prj.conf: 20 s): the task watchdog
+ * feeds it from a timer interrupt, so a hang with interrupts off still restarts the board, as
+ * reset=wdt. Once started it cannot be stopped, and it runs on through a software restart;
+ * the UF2 bootloader feeds it, so an update is not cut short (an L1 Pro sat 45 s in its drive
+ * with it running, then took a new image).
  */
 int port_wdt_watch(void) {
     static bool ready;
     if (!ready) {
-        ready = task_wdt_init(NULL) == 0;
+        ready = task_wdt_init(DEVICE_DT_GET(DT_ALIAS(watchdog0))) == 0;
     }
     const int channel = ready ? task_wdt_add(30 * 1000, wdt_expired, NULL) : -1;
     if (channel < 0) LOGW(TAG, "task watchdog unavailable (%d)", channel);
