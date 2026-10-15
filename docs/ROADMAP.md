@@ -618,10 +618,12 @@ A fourth read, of `ef20149`, found two — both of them regressions from the rou
   for the L1 on Zephyr, sharing the bridge and the SX1262 backend with the ESP32 builds
   (`docs/BUILDING.md`). On the first board, an L1 Pro, in this order: the radio against the
   E220 and E22 on the bench, as the Heltec was - **done 2026-10-15**, level with a Heltec in both
-  directions (E22 to L1 39/40, L1 to E22 39/40); pairing, FORGET and the button with
-  the app; whether `reset=` survives the bootloader (a restart note lost to it reads `sw`);
-  whether the hardware watchdog can be left running across a UF2 update, since only the kernel's
-  watches now; the current drawn, with the GNSS held in standby; then a ride. After that, the
+  directions (E22 to L1 39/40, L1 to E22 39/40); pairing, FORGET and the button with the app,
+  and positions from DMD2 4.034 through the L1 to the E220 (50/50) and E22 (49/50) - **done
+  2026-10-15**, the bond kept across a reflash; whether `reset=` survives the bootloader -
+  **it does**, FORGET and the button both came back as `reset=bond_reset`; whether the hardware
+  watchdog can be left running across a UF2 update, since only the kernel's watches now; the
+  current drawn, with the GNSS held in standby and the OLED off; then a ride. After that, the
   ThinkNode M1's board file.
 - **Then:** a browser flasher (ESP Web Tools over our merged images, usable already for the E220
   and E22 bridges), and perhaps switching one board between this firmware and stock Meshtastic -
