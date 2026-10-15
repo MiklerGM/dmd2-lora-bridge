@@ -94,7 +94,8 @@ The same bridge on an nRF52840, built with Zephyr instead of ESP-IDF: the **Seee
 L1**, and the L1 Pro, which is the L1 in a case with a 2000 mAh battery. Everything above the
 platform is shared with the ESP32 builds - `bridge.c`, the SX1262 backend, the CFG and wire
 checks; what differs is what sits under `port.h`, the Bluetooth host, and start-up, all in
-`firmware/zephyr/src`. **Built, not yet run on a board.**
+`firmware/zephyr/src`. **Runs on an L1 Pro; its radio matches a Heltec's against the E220 and
+E22 (2026-10-15). The app and the rest of M8 are still to try.**
 
 Once, a workspace beside this repository - about 3 GB, the ARM toolchain and a Zephyr checkout
 with only the Nordic modules:
@@ -107,7 +108,9 @@ make -C firmware nrf-test                       # the bond store's read, on nati
 ```
 
 To flash, double-tap the board's reset button: it shows up as a USB drive, `TRACKER L1`; copy
-`zephyr.uf2` onto it. That bootloader is the one the board ships with and the one Meshtastic's
+`zephyr.uf2` onto it. Once this firmware runs, `BOOTLOADER` on its console does the same as the
+double tap. Before the first flash, the drive's `CURRENT.UF2` is the board's own image (the
+SoftDevice and Meshtastic, not Meshtastic's settings) - copy it off to keep it. That bootloader is the one the board ships with and the one Meshtastic's
 `.uf2` goes through, so going back is the same copy with their file. Logs and the bench console
 are on the board's own USB, `/dev/ttyACM*`.
 
@@ -366,7 +369,7 @@ families. Measured, it is not: on index 2 it hears an E220 perfectly well, and t
 | `esp32dev`, `esp32s3`, `esp32c3` | EBYTE **E220 or E22** over UART | both proven with a real NOR7E in the field: E220 on 2026-09-27, E22 for a riding day on 2026-09-28 |
 | `heltec_sx1262` | **Heltec WiFi LoRa 32 V4.3**: SX1262 over SPI behind a KCT8103L front end | receives, and transmits a frame EBYTE modules take 29-30 of 30 across rooms since the sync fix of 2026-10-06 (PHY-notes). Levels 28/24/19/14 dBm by Heltec's gain table for the KCT8103L; RSSI reported less its 21 dB LNA. Not ridden yet |
 | `tdeck_sx1262` | **LILYGO T-Deck / T-Deck Plus**: SX1262 over SPI, no front end | the same, at the chip's own 22/20/17/14 dBm (RadioLib's measured settings). Not ridden yet |
-| `make nrf` (Zephyr, `wio_tracker_l1`) | **Seeed Wio Tracker L1 / L1 Pro**: nRF52840, SX1262 over SPI, no front end | built, not yet run on a board. The chip's own 22/20/17/14 dBm |
+| `make nrf` (Zephyr, `wio_tracker_l1`) | **Seeed Wio Tracker L1 / L1 Pro**: nRF52840, SX1262 over SPI, no front end | runs on an L1 Pro; radio checked against EBYTE on the bench. The chip's own 22/20/17/14 dBm |
 
 A **Heltec V3** has the same chip on the same pins and no front end: build `heltec_sx1262` with
 `-DPIN_FEM_VCTRL=-1`, which is the firmware's setting for a board without one. Nobody has tried
