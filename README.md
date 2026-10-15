@@ -1,5 +1,11 @@
 # Unofficial LoRa Bridge for DMD2
 
+> **For research and as a historical record only.** DMD2 4.036 and later do not work with this
+> project: from 4.036 (October 2026), DMD2 sends nothing to this app, and its release notes say
+> *"Group rides over LoRa now work only with DMD's own LoRa app"*. Everything here was built,
+> tested and ridden with earlier versions (most recently 4.034). It is published to document
+> that work, not as a product or the basis for one.
+
 Put a **plain Android phone running stock DMD2** into a **DMD2 Group Ride over LoRa**,
 with no DMD hardware — position sharing both ways with riders on DMD NOR7E devices,
 without mobile internet.
