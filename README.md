@@ -38,7 +38,7 @@ the whole test suite, which needs neither a phone nor a radio.
 | A real NOR7E hearing us, and us hearing it | **positions both ways** on every ride, and help works; chat from the NOR7E to us is not confirmed (`docs/ROADMAP.md`, M6) |
 | E220-900T30 supply | **5 V, not 3V3**: on 3V3 it transmitted 20-30 dB below its setting (`docs/BUILDING.md`) |
 | Ready-made SX1262 boards (Heltec WiFi LoRa 32 V4.3, LILYGO T-Deck) | on the bench: they receive and transmit, EBYTE modules take their packets since the sync fix of 2026-10-06, and their levels come from published numbers (Heltec 28/24/19/14 dBm, T-Deck 22/20/17/14). Not ridden yet (M8) |
-| nRF52840 boards (Seeed Wio Tracker L1 / L1 Pro), on Zephyr | builds, sharing the bridge and the SX1262 backend with the ESP32 boards; not yet run on a board (M8) |
+| nRF52840 boards (Seeed Wio Tracker L1 / L1 Pro), on Zephyr | runs on an L1 Pro and reaches the E220 and E22 as a Heltec does, sharing the bridge and the SX1262 backend with the ESP32 boards; the app and a ride still to do (M8) |
 
 The protocol was recovered by static analysis, and the radio layer was measured on the air
 (`docs/PHY-notes.md`). See `docs/ROADMAP.md` for what remains and `docs/BUILDING.md` for
