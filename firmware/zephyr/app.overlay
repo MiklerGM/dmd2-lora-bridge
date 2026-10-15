@@ -1,0 +1,14 @@
+/*
+ * The USB console holds one 64-byte packet for a character write and, without flow control,
+ * drops whatever does not fit: every log line past 64 bytes lost its tail, the bench's
+ * "bridge up" among them. With it, a full packet makes the writer sleep 1 ms and retry. The only
+ * writer is the deferred log thread (printk goes through the log), so the bridge never waits;
+ * with no host reading, the log buffer overflows instead, and a panic's output, written from
+ * the fault handler, is still dropped rather than waited for.
+ *
+ * ponytail: with no host, the log thread wakes every 1 ms for as long as USB stays unread;
+ * turn flow control on only while DTR is set if the current-draw measurement shows it.
+ */
+&board_cdc_acm_uart {
+	hw-flow-control;
+};
