@@ -70,6 +70,11 @@
 #if DT_NODE_HAS_COMPAT(DT_ROOT, seeed_wio_tracker_l1)
 #define PIN_GNSS_STANDBY (1 * 32 + 9)
 #endif
+/* Its OLED keeps lit whatever the last firmware drew - Meshtastic's welcome screen, after
+ * Meshtastic - since a restart does not reset it. main.c puts it to sleep. */
+#if DT_HAS_CHOSEN(zephyr_display) && DT_NODE_HAS_COMPAT(DT_CHOSEN(zephyr_display), sinowealth_sh1106)
+#define BOARD_OLED_SH1106 DT_CHOSEN(zephyr_display)
+#endif
 
 /* As every ESP32 build: the phone may ask for any of the four levels. */
 #ifndef MIN_POWER_INDEX
