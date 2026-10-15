@@ -131,7 +131,8 @@ are on the board's own USB, `/dev/ttyACM*`.
 - **Pins come from the board's devicetree** (`lora0`, `led0`, `sw0`; `src/board.h` reads them),
   not from build flags. The L1's SX1262 has no amplifier, so its levels are the chip's own
   22/20/17/14 dBm, as on the T-Deck. Its receive-enable line is driven high to listen and low to
-  transmit, and its GNSS is put into standby at boot.
+  transmit; its GNSS is put into standby and its OLED switched off at boot, so the screen no longer
+  shows the last image Meshtastic drew.
 - **The button** is the user button: hold it 3 s to forget the phone. **The LED** is the user LED,
   with the same patterns as an ESP32 board's.
 
