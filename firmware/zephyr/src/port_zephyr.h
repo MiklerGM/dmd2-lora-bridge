@@ -64,3 +64,8 @@ int port_console_getc(uint32_t timeout_ms);
 /* Opening the console does not restart this board - its USB would go with it - so every build
  * reads the console for the bench's BANNER request (bridge.c). */
 #define PORT_CONSOLE_NO_RESET 1
+
+/* The UF2 bootloader's drive, on the console's BOOTLOADER request: a new image without the
+ * reset button's double tap. */
+#define PORT_BOOTLOADER 1
+void port_restart_to_bootloader(void);

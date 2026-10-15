@@ -54,6 +54,8 @@
  *   int     port_console_getc(uint32_t timeout_ms)                   the next byte, or -1
  *   PORT_CONSOLE_NO_RESET                       defined where opening the console cannot restart
  *                                               the board, so the bench asks for its banner
+ *   void    port_restart_to_bootloader(void)    where PORT_BOOTLOADER is defined: restarts into
+ *                                               the board's bootloader, ready for a new image
  *
  *   LOGI(tag, fmt, ...), LOGW(...), LOGE(...)   one line each
  */

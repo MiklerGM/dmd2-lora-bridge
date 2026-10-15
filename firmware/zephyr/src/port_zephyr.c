@@ -14,6 +14,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/reboot.h>
 #include <zephyr/task_wdt/task_wdt.h>
+#include <hal/nrf_power.h>
 
 #define TAG "port"
 
@@ -180,6 +181,15 @@ static __noinit uint32_t s_restart_note;
 
 void port_restart(uint32_t note) {
     s_restart_note = note;
+    sys_reboot(SYS_REBOOT_COLD);
+}
+
+/* Adafruit's UF2 bootloader, the one the L1 ships with, stays in its drive mode when it starts
+ * with this in GPREGRET. Zephyr's sys_reboot() ignores its type on the nRF52, so it is set here. */
+#define UF2_BOOTLOADER_MAGIC 0x57
+
+void port_restart_to_bootloader(void) {
+    nrf_power_gpregret_set(NRF_POWER, 0, UF2_BOOTLOADER_MAGIC);
     sys_reboot(SYS_REBOOT_COLD);
 }
 
