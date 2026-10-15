@@ -371,10 +371,9 @@ BT_CONN_CB_DEFINE(s_conn_callbacks) = {
     .security_changed = on_security_changed,
 };
 
+/* tx is the phone's offer, rx ours; what both sides use is the smaller (bt_gatt_get_mtu). */
 static void on_mtu(struct bt_conn *conn, uint16_t tx, uint16_t rx) {
-    (void)conn;
-    (void)rx;
-    LOGI(TAG, "mtu now %u", tx);
+    LOGI(TAG, "mtu now %u (phone %u, bridge %u)", bt_gatt_get_mtu(conn), tx, rx);
 }
 
 static struct bt_gatt_cb s_gatt_callbacks = {
