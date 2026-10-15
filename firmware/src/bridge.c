@@ -745,6 +745,9 @@ static void console_task(void *arg) {
             announce();
             continue;
         }
+#ifdef PORT_BOOTLOADER
+        if (strcmp(line, "BOOTLOADER") == 0) port_restart_to_bootloader();
+#endif
 #ifdef BENCH_CMD
         bench_line(line);
 #endif
