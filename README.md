@@ -14,8 +14,8 @@ Two components, nothing else:
 
 ```
 ┌──────────────┐  broadcasts  ┌──────────────────┐    BLE    ┌───────────────┐  868 MHz
-│ DMD2 (stock) │ ◄──────────► │  companion app   │ ◄───────► │ ESP32 bridge  │ ◄······► NOR7E
-│ unmodified   │              │ (Android/Kotlin) │           │ + EBYTE E220  │
+│ DMD2 (stock) │ ◄──────────► │  companion app   │ ◄───────► │ LoRa bridge   │ ◄······► NOR7E
+│ unmodified   │              │ (Android/Kotlin) │           │ ESP32 / nRF52 │
 └──────────────┘              └──────────────────┘           └───────────────┘
                                     ours                           ours
 ```
@@ -23,7 +23,7 @@ Two components, nothing else:
 | Component | Path | What it is |
 |---|---|---|
 | **Companion app** | `android/` | Replaces `com.thorkracing.dmdLora`. Speaks DMD2's broadcast contract on one side, BLE to the bridge on the other. Owns the packet codec. |
-| **ESP32 bridge** | `firmware/` | BLE transport on one side, a LoRa radio backend on the other. Owns the radio entirely — registers, limits, readiness — and no protocol logic. |
+| **Bridge** | `firmware/` | An ESP32 or nRF52840 board with an EBYTE E220 or E22, or a bare SX1262. BLE transport on one side, a LoRa radio backend on the other. Owns the radio entirely — registers, limits, readiness — and no protocol logic. |
 
 Read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) first, then [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
@@ -31,20 +31,21 @@ Read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) first, then [`docs/ROADMAP.m
 
 **Experimental, and ridden.** Positions are shared with stock DMD2 devices, a NOR7E included,
 with no network: group rides from 2026-09-27 to 10-02 on E220 and E22 bridges. `make check` runs
-the whole test suite, which needs neither a phone nor a radio.
+the whole test suite, which needs neither a phone nor a radio; the nRF52 build and its store
+test need the Zephyr workspace (`make -C firmware nrf nrf-test`).
 
 | | State |
 |---|---|
 | Packet codec, receive path, injection contract | JVM tests pass, including byte-for-byte reproduction of the reference vectors |
 | E220 register packing, CFG parsing | host tests pass under plain gcc |
-| Stock DMD2 accepts the app | **proven** - DMD2 sends us group data and chat, and shows riders we inject |
+| Stock DMD2 accepts the app | **proven** up to 4.034 - DMD2 sends us group data and chat, and shows riders we inject. 4.036 and later send nothing (see the top) |
 | Works with no network | **proven** - on the bench in airplane mode, and on every ride since |
 | BLE link, bonding, reconnect, autostart | **proven** on the rides with the `proto=2` contract |
 | Explicit bridge selection | implemented and host-tested where pure; multi-board behaviour is not yet checked on hardware |
 | A real NOR7E hearing us, and us hearing it | **positions both ways** on every ride, and help works; chat from the NOR7E to us is not confirmed (`docs/ROADMAP.md`, M6) |
 | E220-900T30 supply | **5 V, not 3V3**: on 3V3 it transmitted 20-30 dB below its setting (`docs/BUILDING.md`) |
 | Ready-made SX1262 boards (Heltec WiFi LoRa 32 V4.3, LILYGO T-Deck) | on the bench: they receive and transmit, EBYTE modules take their packets since the sync fix of 2026-10-06, and their levels come from published numbers (Heltec 28/24/19/14 dBm, T-Deck 22/20/17/14). Not ridden yet (M8) |
-| nRF52840 boards (Seeed Wio Tracker L1 / L1 Pro), on Zephyr | runs on an L1 Pro and reaches the E220 and E22 as a Heltec does, sharing the bridge and the SX1262 backend with the ESP32 boards; the app and a ride still to do (M8) |
+| nRF52840 boards (Seeed Wio Tracker L1 / L1 Pro), on Zephyr | on an L1 Pro: reaches the E220 and E22 as a Heltec does, pairs and forgets with the app, and carries DMD2's positions to the air; shares the bridge and the SX1262 backend with the ESP32 boards. Not ridden yet (M8) |
 
 The protocol was recovered by static analysis, and the radio layer was measured on the air
 (`docs/PHY-notes.md`). See `docs/ROADMAP.md` for what remains and `docs/BUILDING.md` for
@@ -68,9 +69,10 @@ building, wiring and flashing.
   inserted register and a different configuration-mode pin pair, and the module says which it is
   at init, so there is no flag to get wrong. Contrary to an earlier assumption here, they also
   share a PHY on air-rate index 2 and hear each other perfectly well.
-- The SX1262 backend runs on two ready-made boards, the **Heltec WiFi LoRa 32 V4.3** and the
-  **LILYGO T-Deck**. It receives, and since the sync fix of 2026-10-06 EBYTE modules take its
-  packets: 29-30 of 30 in every pairing across rooms. What each level puts out comes from
+- The SX1262 backend runs on three ready-made boards: the **Heltec WiFi LoRa 32 V4.3** and the
+  **LILYGO T-Deck** (ESP32-S3), and the **Seeed Wio Tracker L1 / L1 Pro** (nRF52840, on
+  Zephyr). It receives, and since the sync fix of 2026-10-06 EBYTE modules take its packets:
+  29-30 of 30 in every pairing across rooms. What each level puts out comes from
   Heltec's gain table for the V4.3's KCT8103L amplifier and from RadioLib's measured settings for
   the bare chip, and the bench's own runs agreed on average. See `docs/PHY-notes.md` and `docs/BUILDING.md`.
 
@@ -86,18 +88,20 @@ switch: there is nothing to be annoyed by when it all works.
 | Three quick flashes, once | Paired phones were just forgotten — the reset took |
 | **Two flashes every 3 s** | The radio is not answering, or is not holding what it was told. Nothing is reaching the air |
 | One flash every 3 s | Alive, but no phone connected yet |
-| Brief single flash | Bytes moved to or from the module |
+| Brief single flash | A packet went to or came from the radio |
 | Dark | Connected, module answering, nothing to say |
 
 One LED cannot carry four facts at once, so this is a priority and not a blend: a module fault
 is never hidden by traffic or by a missing phone. A module that dies while healthy is noticed
 at the next probe, so that pattern can lag by up to 30 seconds.
 
-The brief flash is *radio activity*, not delivery. It means bytes crossed the UART to the
-module, which says nothing about what went out over the air or arrived anywhere — for that,
-watch the `RX→DMD2` counter on the receiving phone.
+The brief flash is *radio activity*, not delivery. On an EBYTE board it means bytes crossed
+the UART to the module; on an SX1262 board, that the chip reported a packet sent or received.
+Neither says the packet arrived anywhere — for that, watch the RX count in the app on the
+receiving phone.
 
-Only the classic ESP32 board is built with an indicator, on GPIO2. See `docs/BUILDING.md`.
+Two boards are built with an indicator: the classic ESP32, on GPIO2, and the Wio Tracker L1,
+on its user LED. See `docs/BUILDING.md`.
 
 ## Legal / RF
 
@@ -116,8 +120,8 @@ Only the classic ESP32 board is built with an indicator, on GPIO2. See `docs/BUI
 - A NOR7E requests the strongest step with LBT off. That is *its* configuration, not a licence
   for ours. Transmit power is a setting in the app (**Settings → TX power**), defaulting to the
   weakest step, and it is DMD's own 0..3 scale rather than dBm — what a level is worth depends
-  on the module fitted, which only the firmware knows. Every board's build carries
-  `-DMIN_POWER_INDEX=0`, so the firmware's floor is lifted and the whole range is reachable at
+  on the module fitted, which only the firmware knows. Every board's build sets
+  `MIN_POWER_INDEX=0`, so the firmware's floor is lifted and the whole range is reachable at
   runtime; the status reports `min_power_level=0` so a build with no floor is never mistaken for
   one that has it. That lift is a lab decision for this proof of concept; the SX1262 boards got
   it only once their levels were known from published numbers (`POWER_PA` in `sx1262.c`).
